@@ -409,7 +409,7 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         Cursor::ResizeNwSe => C::ResizeNwSe,
         Cursor::ResizeNeSw => C::ResizeNeSw,
         Cursor::Rotate => C::Alias,
-        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenContinue => C::Crosshair,
+        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenContinue | Cursor::AnchorPoint => C::Crosshair,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,
         Cursor::HandGrab => C::Grabbing,

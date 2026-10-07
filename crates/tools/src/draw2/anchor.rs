@@ -191,7 +191,7 @@ impl Tool for AnchorTool {
                     Cursor::NotAllowed
                 }
             }
-            _ => Cursor::Pen,
+            _ => Cursor::AnchorPoint,
         }
     }
 }
@@ -201,6 +201,19 @@ mod tests {
     use super::*;
     use crate::testutil::*;
     use vectorcraft_doc::Selection;
+
+    /// The Anchor Point tool has its own caret cursor, not the Pen's start-a-path one.
+    #[test]
+    fn anchor_point_tool_shows_its_caret() {
+        let (d, _) = doc_with_rect();
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let t = AnchorTool::new("anchorPoint");
+        for at in [Point::new(150.0, 101.0), Point::new(20.0, 20.0)] {
+            assert_eq!(t.cursor(&cx, at, Mods::default()), Cursor::AnchorPoint);
+        }
+    }
 
     #[test]
     fn add_and_delete_anchor_clicks() {

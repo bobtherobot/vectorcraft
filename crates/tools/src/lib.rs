@@ -322,6 +322,8 @@ pub enum Cursor {
     PenDelete,
     PenClose,
     PenContinue,
+    /// The Anchor Point tool: a caret, its tip on the anchor it converts.
+    AnchorPoint,
     Text,
     Hand,
     HandGrab,

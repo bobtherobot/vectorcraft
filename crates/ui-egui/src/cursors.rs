@@ -102,6 +102,24 @@ fn pen(p: &mut Glyph, o: Pos2, badge: &str) {
     }
 }
 
+/// The Anchor Point tool's caret (as its toolbar icon): a small hollow square on the anchor at
+/// the hotspot, legs spreading down from its lower corners. Every halo goes under every stroke, so
+/// the legs join the square.
+fn anchor_point(p: &mut Glyph, o: Pos2) {
+    let s = 2.5;
+    let square = vec![o + vec2(-s, -s), o + vec2(s, -s), o + vec2(s, s), o + vec2(-s, s)];
+    let legs = [[o + vec2(-s, s), o + vec2(-7.5, 13.0)], [o + vec2(s, s), o + vec2(7.5, 13.0)]];
+    for leg in legs {
+        p.line_segment(leg, Stroke::new(3.0, HALO));
+    }
+    p.add(Shape::closed_line(square.clone(), Stroke::new(3.0, HALO)));
+    p.add(Shape::convex_polygon(square.clone(), HALO, Stroke::NONE));
+    for leg in legs {
+        p.line_segment(leg, Stroke::new(1.2, INK));
+    }
+    p.add(Shape::closed_line(square, Stroke::new(1.0, INK)));
+}
+
 fn double_arrow(p: &mut Glyph, o: Pos2, dir: egui::Vec2) {
     let d = dir.normalized() * 8.0;
     let n = vec2(-d.y, d.x) * 0.45;
@@ -238,6 +256,7 @@ fn shapes(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenDelete => pen(painter, p, "-"),
         Cursor::PenClose => pen(painter, p, "o"),
         Cursor::PenContinue => pen(painter, p, "/"),
+        Cursor::AnchorPoint => anchor_point(painter, p),
         Cursor::Text => ibeam(painter, p),
         Cursor::AddStop => stop_badge(painter, p, true),
         Cursor::RemoveStop => stop_badge(painter, p, false),
@@ -359,7 +378,7 @@ mod tests {
         assert!(pts.iter().all(|q| q.x >= 10.0 && q.y >= 20.0));
     }
 
-    const ALL: [Cursor; 32] = [
+    const ALL: [Cursor; 33] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -375,6 +394,7 @@ mod tests {
         Cursor::PenDelete,
         Cursor::PenClose,
         Cursor::PenContinue,
+        Cursor::AnchorPoint,
         Cursor::Text,
         Cursor::Hand,
         Cursor::HandGrab,
@@ -432,6 +452,20 @@ mod tests {
         let (one, two) = (bitmap(Cursor::Arrow, 1.0).map(|i| i.size), bitmap(Cursor::Arrow, 2.0).map(|i| i.size));
         let (Some(one), Some(two)) = (one, two) else { panic!("arrow has bitmaps") };
         assert!(two[0] >= one[0] * 2 - 2 && two[1] >= one[1] * 2 - 2, "2x is twice as big: {one:?} {two:?}");
+    }
+
+    /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, ink on
+    /// the square's edge just above it.
+    #[test]
+    fn anchor_point_hotspot_is_inside_its_square() {
+        for ppp in [1.0f32, 2.0] {
+            let Some(img) = bitmap(Cursor::AnchorPoint, ppp) else { panic!("anchor point has a bitmap") };
+            let [hx, hy] = img.hotspot;
+            let px = |x: u16, y: u16| &img.rgba[(usize::from(y) * usize::from(img.size[0]) + usize::from(x)) * 4..][..4];
+            assert_eq!(px(hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
+            let edge = hy - (2.5 * ppp).round() as u16;
+            assert!(px(hx, edge)[0] < 64 && px(hx, edge)[3] > 200, "ink on the square's top edge at {ppp}x");
+        }
     }
 
     /// The cache hands back the same bitmap, so egui-winit (which keys OS cursors by its pointer)
