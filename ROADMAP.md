@@ -101,6 +101,7 @@ grade by behaviour against `plan/illustrator/`, not by whether a menu item exist
   - Save / Don't Save / Cancel before closing or quitting with unsaved documents (tabs, Close, Close All, Quit, window close).
   - Four brightness themes, persistent preferences.
   - Layer Options: double-click a layer's row (the name still renames) or use the Layers panel menu to set its name, colour (a preset or any custom colour), Template, Show, Lock and Print in one undo step.
+  - Dragging a Layers panel row shows a dimmed copy of it under the pointer; dropped on a bottom-bar button (Delete, New Layer, New Sublayer, Make/Release Clipping Mask) it runs that button on the dragged row's layer (Delete removes the row itself).
   - On Windows and Linux the app bar is the window's title bar (its own minimize, maximize and close buttons, drag to move, edges to resize), with the dragon app icon as the brand mark; dialogs and menus size to their content.
 - **Tools:**
   - **Selection:** Selection, Direct/Group Selection, Magic Wand, Lasso.
