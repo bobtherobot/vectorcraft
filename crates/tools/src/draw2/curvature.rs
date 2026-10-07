@@ -184,7 +184,7 @@ impl Tool for CurvatureTool {
         o
     }
     fn cursor(&self, _cx: &ToolContext, _p: Point, _m: Mods) -> Cursor {
-        Cursor::Pen
+        Cursor::Curvature
     }
 }
 
@@ -193,6 +193,16 @@ mod tests {
     use super::*;
     use crate::testutil::*;
     use vectorcraft_doc::Selection;
+
+    /// The Curvature tool has its own cursor, not the Pen's start-a-path one.
+    #[test]
+    fn curvature_tool_shows_its_cursor() {
+        let (d, _) = doc_with_rect();
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        assert_eq!(CurvatureTool::default().cursor(&cx, Point::new(10.0, 10.0), Mods::default()), Cursor::Curvature);
+    }
 
     #[test]
     fn first_click_creates_then_notify_tracks_path() {

@@ -324,6 +324,8 @@ pub enum Cursor {
     PenContinue,
     /// The Anchor Point tool: a caret, its tip on the anchor it converts.
     AnchorPoint,
+    /// The Curvature tool: the pen nib with a curve badge.
+    Curvature,
     Text,
     Hand,
     HandGrab,

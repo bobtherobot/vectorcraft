@@ -93,6 +93,13 @@ fn pen(p: &mut Glyph, o: Pos2, badge: &str) {
         }
         "-" => line(p, b + vec2(0.0, 3.0), b + vec2(6.0, 3.0)),
         "/" => line(p, b + vec2(0.0, 6.0), b + vec2(5.0, 0.0)),
+        "~" => {
+            // A quarter circle bulging up-left, from the badge's bottom-left to its top-right.
+            let c = b + vec2(7.0, 7.0);
+            let arc: Vec<Pos2> = (0..=8).map(|i| c + egui::Vec2::angled(std::f32::consts::PI * (1.0 + i as f32 / 16.0)) * 6.0).collect();
+            p.add(Shape::line(arc.clone(), Stroke::new(3.0, HALO)));
+            p.add(Shape::line(arc, Stroke::new(1.2, INK)));
+        }
         "*" => {
             line(p, b + vec2(0.0, 0.0), b + vec2(6.0, 6.0));
             line(p, b + vec2(6.0, 0.0), b + vec2(0.0, 6.0));
@@ -257,6 +264,7 @@ fn shapes(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenClose => pen(painter, p, "o"),
         Cursor::PenContinue => pen(painter, p, "/"),
         Cursor::AnchorPoint => anchor_point(painter, p),
+        Cursor::Curvature => pen(painter, p, "~"),
         Cursor::Text => ibeam(painter, p),
         Cursor::AddStop => stop_badge(painter, p, true),
         Cursor::RemoveStop => stop_badge(painter, p, false),
@@ -378,7 +386,7 @@ mod tests {
         assert!(pts.iter().all(|q| q.x >= 10.0 && q.y >= 20.0));
     }
 
-    const ALL: [Cursor; 33] = [
+    const ALL: [Cursor; 34] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -395,6 +403,7 @@ mod tests {
         Cursor::PenClose,
         Cursor::PenContinue,
         Cursor::AnchorPoint,
+        Cursor::Curvature,
         Cursor::Text,
         Cursor::Hand,
         Cursor::HandGrab,
