@@ -142,6 +142,9 @@ exposes to agents, and exported by VectorCraft's own renderer. The source files 
 
 ## Quick start
 
+Just want to use it? On Linux, run `launchers/linux/install.sh` for a desktop icon and menu
+entry: it uses your own build or downloads the latest release. See [`launchers/`](launchers/README.md).
+
 ```sh
 cargo run --release -p vectorcraft                          # desktop app
 cargo run --release -p vectorcraft -- examples/dusk-poster.vectorcraft
