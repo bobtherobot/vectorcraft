@@ -156,6 +156,11 @@ Tile Edge Color: Object → Pattern → Tile Edge Color… (`ui.tileEdgeColor`) 
 `color`: `#rrggbb` or a preset name such as "Light Blue"); `ui.dialog.confirm` sets the preference
 `patternTileEdgeColor` (`prefs.set`), the colour pattern editing mode draws the tile edge and the swatch bounds in.
 
+Layer Options: double-clicking a layer's row in the Layers panel (away from its name, which renames) or the panel
+menu's Layer Options… (`ui.layerOptions {id?}`, default the current layer) opens the `layerOptions` dialog (fields
+`name`, `color`: `#rrggbb` or a preset name such as "Light Blue", `template`, `visible`, `locked`, `printable`);
+`ui.dialog.confirm` runs `layer.setProps` as one undo step. Lock and Print are left as they are while Template is on.
+
 Window title bar: on Windows and Linux the window has no OS decorations and the app bar is the title bar. Its
 caption buttons (Minimize, Maximize/Restore, Close) sit at the bar's right end, 46 pt each; they are window chrome,
 not commands, so drive them with `ui.click` if needed. Close runs `app.quit` (the same `saveChanges` questions for

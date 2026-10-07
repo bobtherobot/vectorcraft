@@ -221,6 +221,8 @@ fn row(
     let rename_id = egui::Id::new("layers-rename");
     let renaming: Option<(u64, String)> = ui.data(|d| d.get_temp(rename_id));
     let name_rect = egui::Rect::from_min_max(egui::pos2(x - 2.0, r.top() + 3.0), egui::pos2(r.right() - 44.0, r.bottom() - 3.0));
+    // Where the painted name is: double-clicking it renames, elsewhere on a layer's row opens Layer Options.
+    let mut name_hit = None;
     match renaming {
         Some((rid, mut buf)) if rid == n.id.0 => {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(name_rect));
@@ -251,6 +253,7 @@ fn row(
                 painted_name(n, &name, crate::i18n::current())
             };
             let text = painter.text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, shown, font, t.text);
+            name_hit = Some(text.expand(3.0));
             // A clipping path's name is underlined, a masked object's with a dashed line.
             if clip_path {
                 painter.line_segment([text.left_bottom(), text.right_bottom()], Stroke::new(1.0, t.text));
@@ -291,7 +294,12 @@ fn row(
         }
     }
     if resp.double_clicked() {
-        ui.data_mut(|d| d.insert_temp(egui::Id::new("layers-rename"), (n.id.0, n.display_name())));
+        let on_name = resp.interact_pointer_pos().zip(name_hit).is_some_and(|(p, hit)| hit.contains(p));
+        if n.is_layer() && !on_name {
+            actions.push(("ui.layerOptions".into(), json!({"id": n.id.0})));
+        } else {
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("layers-rename"), (n.id.0, n.display_name())));
+        }
     }
     // Drag to reorder: drop onto a row moves the dragged node above it (into its parent).
     let drag_id = egui::Id::new("layers-drag");
@@ -432,16 +440,17 @@ fn thumb(ui: &Ui, n: &Node, r: egui::Rect) {
 
 /// The Layers panel's (≡) menu.
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
-    const ITEMS: [(&str, &str); 6] = [
+    const ITEMS: [(&str, &str); 7] = [
         ("New Layer…", "layer.new"),
         ("New Sublayer…", "layer.newSublayer"),
         ("Duplicate Layer", "layer.duplicate"),
         ("Delete Layer", "layer.delete"),
+        ("Layer Options…", "ui.layerOptions"),
         ("Make/Release Clipping Mask", "layer.clippingMask.toggle"),
         ("Collect in New Layer", "layer.collectInNew"),
     ];
     for (i, (label, cmd)) in ITEMS.into_iter().enumerate() {
-        if i == 4 {
+        if i == 5 {
             ui.separator();
         }
         if widgets::menu_item(ui, tl!(label), crate::menus::enabled(app, cmd), false) {
@@ -640,6 +649,45 @@ mod tests {
         let st = app.session.active().unwrap();
         assert_eq!(st.doc.node(layer).unwrap().opacity, 1.0);
         assert_eq!(st.doc.node_count(), count);
+    }
+
+    /// Double-click at `pos`: two clicks in quick succession.
+    fn double_click(app: &mut VectorcraftApp, ctx: &egui::Context, pos: egui::Pos2) {
+        frame(app, ctx, vec![egui::Event::PointerMoved(pos)], false);
+        for pressed in [true, false, true, false] {
+            frame(app, ctx, vec![button(pos, pressed)], false);
+        }
+    }
+
+    #[test]
+    fn double_clicking_a_layer_row_opens_layer_options_and_its_name_renames() {
+        let (mut app, layer, _) = two_rects();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let (c, _) = frame(&mut app, &ctx, vec![], false);
+        let rename = |ctx: &egui::Context| ctx.data(|d| d.get_temp::<(u64, String)>(egui::Id::new("layers-rename")));
+        // The blank part of the layer's row, left of the target column.
+        double_click(&mut app, &ctx, c[0] - vec2(22.0, 0.0));
+        let d = app.ui.dialog.as_ref().expect("Layer Options opens");
+        assert_eq!((d.kind.as_str(), &d.fields["id"]), ("layerOptions", &json!(layer.0)));
+        assert!(rename(&ctx).is_none());
+        app.ui.dialog = None;
+        // The name itself renames, as before (a new context: egui would count more clicks as a triple-click).
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui));
+        out.textures_delta.clear();
+        let name = out
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.text() == "Layer 1" => Some(t.visual_bounding_rect().center()),
+                _ => None,
+            })
+            .unwrap();
+        double_click(&mut app, &ctx, name);
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(rename(&ctx).map(|r| r.0), Some(layer.0));
     }
 
     #[test]

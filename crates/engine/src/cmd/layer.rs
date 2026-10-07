@@ -1,7 +1,7 @@
 //! Layers panel, artboards.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{Artboard, LayerColor, NodeId, NodeKind};
+use vectorcraft_doc::{Artboard, LAYER_COLORS, LayerColor, NodeId, NodeKind};
 use vectorcraft_geom::Rect;
 
 use super::*;
@@ -19,7 +19,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Layer Options…",
             ["Window", "Layers"],
             None,
-            "{id, name?, visible?, locked?, template?, printable?, color?: index 0..26}",
+            "{id, name?, visible?, locked?, template?, printable?, color?: preset index 0..26 | preset name (\"Light Blue\", \"Red\"…) | \"#rrggbb\"}",
             has_doc,
             set_props
         ),
@@ -210,6 +210,10 @@ fn set_current(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id").ok_or_else(|| bad("layer.setProps", "missing id"))?;
+    let new_color = match p.get("color") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(layer_color(v).ok_or_else(|| bad("layer.setProps", "color: a preset index 0..26, a preset name or #rrggbb"))?),
+    };
     s.edit("Layer Options", |d, sel| {
         let n = d.node_mut(id).ok_or(EngineError::NoNode(id))?;
         if let Some(v) = str_param(p, "name") {
@@ -228,8 +232,8 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = p.get("printable").and_then(Value::as_bool) {
                 *printable = v;
             }
-            if let Some(v) = p.get("color").and_then(Value::as_u64) {
-                *color = LayerColor::Preset((v % 27) as u8);
+            if let Some(c) = new_color {
+                *color = c;
             }
         }
         // Hidden or locked content can't stay selected.
@@ -240,6 +244,23 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     ok()
+}
+
+/// A `color` param as a layer colour: a preset's index or name, or `#rrggbb` (a preset's when it
+/// is one, else custom).
+fn layer_color(v: &Value) -> Option<LayerColor> {
+    if let Some(i) = v.as_u64() {
+        return Some(LayerColor::Preset((i % LAYER_COLORS.len() as u64) as u8));
+    }
+    let s = v.as_str()?.trim();
+    if let Some(i) = LAYER_COLORS.iter().position(|(name, _)| name.eq_ignore_ascii_case(s)) {
+        return Some(LayerColor::Preset(i as u8));
+    }
+    let [r, g, b, _] = vectorcraft_color::Color::from_hex(s)?.to_rgba8(1.0);
+    Some(match LAYER_COLORS.iter().position(|(_, c)| *c == [r, g, b]) {
+        Some(i) => LayerColor::Preset(i as u8),
+        None => LayerColor::Custom([r, g, b]),
+    })
 }
 
 fn collect(s: &mut Session, _: &Value) -> Result<Value> {
@@ -339,4 +360,39 @@ fn artboard_fit_sel(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let b = st.doc.bounds_of(&st.selection.objects, true).ok_or_else(|| EngineError::Other("no selection bounds".into()))?;
     s.execute("artboard.setProps", &json!({"index": i, "x": b.x0, "y": b.y0, "width": b.width(), "height": b.height()}))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use vectorcraft_doc::{LayerColor, NodeKind};
+
+    use crate::Session;
+
+    fn color(s: &Session, id: u64) -> LayerColor {
+        match &s.doc().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().kind {
+            NodeKind::Layer { color, .. } => *color,
+            _ => panic!("not a layer"),
+        }
+    }
+
+    #[test]
+    fn layer_colour_is_a_preset_index_name_or_hex() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("layer.new", &json!({})).unwrap()["id"].as_u64().unwrap();
+        s.execute("layer.setProps", &json!({"id": id, "color": 3})).unwrap();
+        assert_eq!(color(&s, id), LayerColor::Preset(3));
+        s.execute("layer.setProps", &json!({"id": id, "color": "red"})).unwrap();
+        assert_eq!(color(&s, id), LayerColor::Preset(1));
+        // A preset's RGB is that preset; any other colour is custom.
+        s.execute("layer.setProps", &json!({"id": id, "color": "#4F80FF"})).unwrap();
+        assert_eq!(color(&s, id), LayerColor::Preset(0));
+        s.execute("layer.setProps", &json!({"id": id, "color": "#123456"})).unwrap();
+        assert_eq!(color(&s, id), LayerColor::Custom([0x12, 0x34, 0x56]));
+        // A bad colour changes nothing, not even the other options.
+        assert!(s.execute("layer.setProps", &json!({"id": id, "color": "nope", "name": "X"})).is_err());
+        assert_eq!(color(&s, id), LayerColor::Custom([0x12, 0x34, 0x56]));
+        assert_ne!(s.doc().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().name.as_deref(), Some("X"));
+    }
 }

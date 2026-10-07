@@ -33,6 +33,7 @@ mod gradient_stop;
 pub mod graphic_style_options;
 pub mod halftone;
 pub mod import_pdf;
+pub mod layer_options;
 pub mod liquify;
 pub mod missing_links;
 pub mod new_color_group;
@@ -219,6 +220,7 @@ registry! {
     Saturate: [saturate::KIND] => saturate::SPEC,
     SaveSwatchLibrary: [save_swatch_library::KIND] => save_swatch_library::SPEC,
     TileEdgeColor: [tile_edge_color::KIND] => tile_edge_color::SPEC,
+    LayerOptions: [layer_options::KIND] => layer_options::SPEC,
     EyedropperOptions: [eyedropper::KIND] => eyedropper::SPEC,
     FlattenTransparency: [flatten::KIND] => flatten::SPEC,
     FlattenerPresets: [flattener_presets::KIND] => flattener_presets::SPEC,

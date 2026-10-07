@@ -294,6 +294,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{names: [two or more styles]} open Graphic Style Options (dialog `graphicStyleOptions`, field `name`) to name the style OK merges from them (graphicStyle.merge)",
     ),
     (
+        "ui.layerOptions",
+        "Layer Options…",
+        "",
+        "{id?: a layer (default: the current layer)} open Layer Options (dialog `layerOptions`, fields `name`, `color` (#rrggbb or a preset name such as \"Light Blue\"), `template`, `visible`, `locked`, `printable`); OK sets them with layer.setProps as one undo step",
+    ),
+    (
         "ui.tileEdgeColor",
         "Tile Edge Color…",
         "",
@@ -1001,6 +1007,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             crate::dialogs::graphic_style_options::open_merge(app, names.unwrap_or_default())
         }
         "ui.tileEdgeColor" => crate::dialogs::tile_edge_color::open(app),
+        "ui.layerOptions" => crate::dialogs::layer_options::open(app, p.get("id").and_then(Value::as_u64)),
         "ui.flattenTransparencyDialog" => {
             crate::dialogs::flatten::open(app);
             Ok(Value::Null)
@@ -1489,6 +1496,7 @@ pub fn enabled(app: &VectorcraftApp, id: &str) -> bool {
         "file.export.pdf" | "ui.savePdfDialog" | "ui.fileInfoDialog" | "ui.rasterEffectsSettingsDialog" => app.session.active().is_some(),
         "ui.swatchOptions" | "ui.newSwatch" | "ui.newColorGroup" => app.session.active().is_some(),
         "ui.graphicStyleOptions" => app.session.active().is_some(),
+        "ui.layerOptions" => app.session.active().is_some_and(|d| d.active_layer.is_some()),
         "ui.colorBalanceDialog" | "ui.saturateDialog" => app.session.active().is_some_and(|d| !d.selection.is_empty()),
         "ui.saveSwatchLibrary" => app.session.active().is_some(),
         id if id.starts_with(crate::panels::swatches::USER_SLOT) => crate::panels::swatches::user_library(app, id).is_some(),

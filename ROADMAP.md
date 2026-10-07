@@ -100,6 +100,7 @@ grade by behaviour against `plan/illustrator/`, not by whether a menu item exist
   - A canvas context menu: right-click selects the object under the pointer and lists what applies to the selection (Undo/Redo, clipboard, group, isolation, join, masks, compound paths, guides, Transform, Arrange, Select, Export Selection), or the view commands on empty canvas.
   - Save / Don't Save / Cancel before closing or quitting with unsaved documents (tabs, Close, Close All, Quit, window close).
   - Four brightness themes, persistent preferences.
+  - Layer Options: double-click a layer's row (the name still renames) or use the Layers panel menu to set its name, colour (a preset or any custom colour), Template, Show, Lock and Print in one undo step.
   - On Windows and Linux the app bar is the window's title bar (its own minimize, maximize and close buttons, drag to move, edges to resize), with the dragon app icon as the brand mark; dialogs and menus size to their content.
 - **Tools:**
   - **Selection:** Selection, Direct/Group Selection, Magic Wand, Lasso.
@@ -188,7 +189,7 @@ about 1–1.5 agent-hours each, so the other rows (estimated on the older scale)
 | Type advanced | 4 | 48% | CJK composition for vertical type (ruby, mojikumi, vertical metrics, manual tate-chu-yoko), tab leaders, spell check (open dictionary), Touch Type, Retype; vertical point/area/path type and Type Orientation have initial support | 20–28 |
 | Symbols, blends, envelopes, Repeat, perspective | 5 | 88% | symbol libraries (original), dynamic symbols, envelope Anti-Alias/Preserve Shape output and warp point editing, brush interpolation in blends (M8 fidelity pass done) | 5–8 |
 | Image Trace, graphs, image tools | 3 | 70% | graph Design/Column/Marker, Create Object Mosaic, Crop Image polish (Vector Halftone is done) | 6–10 |
-| Layers, artboards, document setup | 5 | 80% | Layers panel options depth, artboard presets/rearrange polish (Document Setup and New Document are done) | 5–8 |
+| Layers, artboards, document setup | 5 | 80% | Layer Options' Preview and Dim Images, object Options dialog, artboard presets/rearrange polish (Document Setup and New Document are done) | 5–8 |
 | View & navigation | 3 | 70% | New View/Edit Views, multiple windows/arrange, Snap to Pixel/Glyph (print tiling is done) | 9–14 |
 | Guides, grids, smart guides, snapping, rulers | 3 | 75% | global/video rulers, smart-guide preference depth | 4–8 |
 | File formats | 6 | 85% | DWG (no open spec: DXF instead), PSD placement as layers, the remaining fidelity polish; EPS, DXF, EMF/WMF, TIFF, BMP, Targa, PSD export, SVGZ, PDF security, PDF/X, PDF layers and presets are done | 6–10 |
