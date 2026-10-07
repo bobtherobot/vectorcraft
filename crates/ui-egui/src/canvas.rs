@@ -143,6 +143,8 @@ pub fn fit(app: &mut VectorcraftApp, how: &str) {
 pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.available_rect_before_wrap();
+    // egui keeps an OS cursor bitmap from frame to frame: only a hovered canvas sets it again.
+    ui.ctx().set_cursor_image(None);
     // A document that opened, closed or became active since Home was chosen replaces it.
     if app.ui.home.is_some_and(|k| k != crate::menus::home_key(app)) {
         app.ui.home = None;
@@ -368,15 +370,32 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
             // Caps Lock gives precise (crosshair) cursors, like Illustrator; env opt-out for system cursors.
             let custom = std::env::var_os("VECTORCRAFT_SYSTEM_CURSORS").is_none();
-            match ui.input(|i| i.pointer.hover_pos()) {
-                Some(hp) if custom && crate::cursors::paint(&painter, c, hp) => egui::CursorIcon::None,
-                _ => cursor_icon(c),
-            }
+            tool_cursor(ui, &painter, c, custom)
         } else {
             egui::CursorIcon::Default
         };
         ui.ctx().set_cursor_icon(cur);
     }
+}
+
+/// Show tool cursor `c` (its glyph when `custom`) and return the system cursor to set. On the
+/// desktop the glyph is an OS cursor bitmap, which the system moves at hardware speed, with the
+/// nearest system cursor as the fallback; the web can only paint it, which trails the mouse by the
+/// frames in flight.
+fn tool_cursor(ui: &Ui, painter: &egui::Painter, c: Cursor, custom: bool) -> egui::CursorIcon {
+    if !custom {
+        return cursor_icon(c);
+    }
+    if cfg!(target_arch = "wasm32") {
+        return match ui.input(|i| i.pointer.hover_pos()) {
+            Some(hp) if crate::cursors::paint(painter, c, hp) => egui::CursorIcon::None,
+            _ => cursor_icon(c),
+        };
+    }
+    if let Some(img) = crate::cursors::os_image(ui.ctx(), c) {
+        ui.ctx().set_cursor_image(Some(img));
+    }
+    cursor_icon(c)
 }
 
 fn cursor_icon(c: Cursor) -> egui::CursorIcon {
@@ -1421,10 +1440,39 @@ mod tests {
     use vectorcraft_engine::Session;
 
     /// One headless canvas frame on an 800 × 600 window.
-    fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
         let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() };
         let mut out = ctx.run_ui(raw, |ui| show(app, ui));
         out.textures_delta.clear();
+        out
+    }
+
+    /// Over the canvas a tool's glyph cursor is an OS cursor bitmap, which the system moves at
+    /// hardware speed (a painted one trails the mouse), with the nearest system cursor as the
+    /// fallback; a system-cursor tool, or the pointer leaving the canvas, drops the bitmap.
+    #[test]
+    fn glyph_cursors_are_os_cursor_bitmaps() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        app.select_tool("selection");
+        let ctx = egui::Context::default();
+        let at = pos2(400.0, 300.0);
+        // egui hit-tests against the previous frame's widgets.
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at + vec2(1.0, 1.0))]);
+        assert!(out.platform_output.cursor_image.is_some(), "the arrow is an OS cursor");
+        assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Default, "the system arrow is its fallback");
+
+        app.select_tool("hand");
+        let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at + vec2(1.0, 0.0))]);
+        assert_eq!(out.platform_output.cursor_image, None, "the hand is a system cursor");
+        assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Grab);
+
+        app.select_tool("pen");
+        let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        assert!(out.platform_output.cursor_image.is_some(), "the pen is an OS cursor");
+        let out = frame(&mut app, &ctx, vec![egui::Event::PointerGone]);
+        assert_eq!(out.platform_output.cursor_image, None, "off the canvas the bitmap is dropped");
     }
 
     /// The Artboard tool's label holds the artboard's name (never translated); the tools' own

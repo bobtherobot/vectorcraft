@@ -96,7 +96,7 @@ grade by behaviour against `plan/illustrator/`, not by whether a menu item exist
   - Medium Dark theme, categorized and Advanced toolbars, 35 pt document tabs, 33 pt panel tabs.
   - Hint bar, contextual task bar, 19 dock panels with ≡ menus.
   - Localised UI: menus (in-window and native), panels, dialogs, toolbar and Preferences read from per-language catalogs (`crates/ui-egui/src/i18n`, see `docs/development.md`); Traditional Chinese (Taiwan) ships complete, Czech covers every menu label and Japanese the main menus, with system-locale detection on macOS, Windows and Linux, a VectorCraft ▸ Language menu and a Language preference.
-  - Native macOS menu bar, vector tool cursors, a ⌘K command palette, middle-button panning with any tool.
+  - Native macOS menu bar, vector tool cursors (real OS cursors on the desktop, so they keep up with the mouse), a ⌘K command palette, middle-button panning with any tool.
   - A canvas context menu: right-click selects the object under the pointer and lists what applies to the selection (Undo/Redo, clipboard, group, isolation, join, masks, compound paths, guides, Transform, Arrange, Select, Export Selection), or the view commands on empty canvas.
   - Save / Don't Save / Cancel before closing or quitting with unsaved documents (tabs, Close, Close All, Quit, window close).
   - Four brightness themes, persistent preferences.

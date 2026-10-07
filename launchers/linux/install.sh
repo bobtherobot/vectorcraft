@@ -9,12 +9,11 @@
 #     ~/.local/share/vectorcraft/.
 #
 # Usage: launchers/linux/install.sh [--local | --download] [--build] [--no-desktop-icon]
-#                                   [--custom-cursors] [--repo OWNER/NAME]
+#                                   [--repo OWNER/NAME]
 #   --local            use this checkout's build (fails if there is none; add --build)
 #   --download         use the latest release's AppImage, even with a local build or Rust
 #   --build            build the release binary first (needs Rust: https://rustup.rs)
 #   --no-desktop-icon  only add the applications-menu entry
-#   --custom-cursors   keep the app's drawn tool cursors (they trail the mouse by a few frames)
 #   --repo OWNER/NAME  GitHub repository to download from (default: this checkout's origin,
 #                      falling back to storytold/vectorcraft when it has no release)
 set -euo pipefail
@@ -34,7 +33,6 @@ LOCAL_BIN="$TARGET_DIR/release/vectorcraft"
 MODE=auto
 BUILD=0
 DESKTOP_ICON=1
-SYSTEM_CURSORS=1
 REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,9 +40,8 @@ while [ $# -gt 0 ]; do
     --download) MODE=download; shift ;;
     --build) BUILD=1; shift ;;
     --no-desktop-icon) DESKTOP_ICON=0; shift ;;
-    --custom-cursors) SYSTEM_CURSORS=0; shift ;;
     --repo) REPO="${2:-}"; shift 2 ;;
-    -h | --help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h | --help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
     *) echo "unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -140,7 +137,6 @@ esac
 
 # An AppImage normally mounts itself with FUSE; without libfuse2 it can unpack itself instead.
 ENVS=()
-[ "$SYSTEM_CURSORS" = 1 ] && ENVS+=("VECTORCRAFT_SYSTEM_CURSORS=1")
 if [[ "$APP" == *.AppImage ]] && ! "$APP" --version >/dev/null 2>&1; then
   APPIMAGE_EXTRACT_AND_RUN=1 "$APP" --version >/dev/null 2>&1 \
     || die "the downloaded AppImage doesn't start ($APP --version); try building: $0 --local --build"

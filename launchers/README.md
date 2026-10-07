@@ -32,7 +32,6 @@ Options (`--help` lists them):
 | `--download` | use the release AppImage even if you have a local build or Rust |
 | `--local --build` | build from source first (needs [Rust](https://rustup.rs)) |
 | `--no-desktop-icon` | only add the applications-menu entry |
-| `--custom-cursors` | keep the app's drawn tool cursors (they trail the mouse slightly, so system cursors are the default) |
 | `--repo OWNER/NAME` | download from another GitHub repository |
 
 Run it again to update. `launchers/linux/uninstall.sh` removes the launchers, icons and any
