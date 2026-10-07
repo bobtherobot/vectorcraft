@@ -45,8 +45,8 @@ enum DropTarget {
 }
 
 /// The commands a drop of row `src` on `target` runs: what clicking the button does, on `src`'s
-/// layer (the nearest layer holding it). Delete removes `src` itself; Make/Release Clipping Mask
-/// acts on a dragged group too.
+/// layer (the nearest layer holding it). Delete removes `src` itself and New Layer duplicates it,
+/// as in Illustrator; Make/Release Clipping Mask acts on a dragged group too.
 fn drop_actions(doc: &vectorcraft_doc::Document, src: NodeId, target: DropTarget) -> Vec<(String, serde_json::Value)> {
     let Some(n) = doc.node(src) else { return vec![] };
     let layer = if n.is_layer() {
@@ -58,7 +58,8 @@ fn drop_actions(doc: &vectorcraft_doc::Document, src: NodeId, target: DropTarget
     match target {
         DropTarget::Delete if n.is_layer() => vec![("layer.delete".into(), json!({"id": src.0}))],
         DropTarget::Delete => vec![("edit.clear".into(), json!({"ids": [src.0]}))],
-        DropTarget::NewLayer => vec![("layer.setCurrent".into(), json!({"id": layer.0})), ("layer.new".into(), json!({}))],
+        DropTarget::NewLayer if n.is_layer() => vec![("layer.duplicate".into(), json!({"id": src.0}))],
+        DropTarget::NewLayer => vec![("select.set".into(), json!({"ids": [src.0]})), ("edit.duplicate".into(), json!({}))],
         DropTarget::NewSublayer => vec![("layer.newSublayer".into(), json!({"parent": layer.0}))],
         DropTarget::ClippingMask => {
             let id = if matches!(n.kind, NodeKind::Group { .. }) { src } else { layer };
@@ -813,14 +814,22 @@ mod tests {
         // Rows top down: Top, Layer 1 (expanded: its two rectangles).
         let (c, _) = frame(&mut app, &ctx, vec![], false);
         let buttons = bar_buttons(&mut app, &ctx);
-        // Layer 1 dropped on New Layer: a new layer right above it, made current.
+        // Layer 1 dropped on New Layer: duplicated right above it, art and all.
         let shown = drag_row(&mut app, &ctx, c[1] - vec2(22.0, 0.0), buttons[1], "Layer 1");
         assert_eq!(shown, 2, "the row and its ghost under the pointer");
         let after = layers(&app);
         assert_eq!(after.len(), 3);
         assert_eq!((after[0], after[2]), (first, second));
-        assert_eq!(app.session.active().unwrap().active_layer, Some(after[1]));
+        let doc = &app.session.active().unwrap().doc;
+        let copy = doc.node(after[1]).unwrap();
+        assert_eq!((copy.display_name().as_str(), copy.children().unwrap().len()), ("Layer 1 copy", 2));
         assert_eq!(texts(&mut app, &ctx, vec![], "Layer 1"), 1, "the ghost is gone after the drop");
+        // A rectangle dropped on New Layer: the rectangle is duplicated in its layer.
+        let (c, _) = frame(&mut app, &ctx, vec![], false);
+        let in_first = |app: &VectorcraftApp| app.session.active().unwrap().doc.node(first).unwrap().children().unwrap().len();
+        let row_of_a = c.len() - 1;
+        drag_row(&mut app, &ctx, c[row_of_a] - vec2(22.0, 0.0), buttons[1], "<Rectangle>");
+        assert_eq!(in_first(&app), 3);
         // Top dropped on Delete: it goes, the rest stays.
         let (c, _) = frame(&mut app, &ctx, vec![], false);
         drag_row(&mut app, &ctx, c[0] - vec2(22.0, 0.0), buttons[0], "Top");
