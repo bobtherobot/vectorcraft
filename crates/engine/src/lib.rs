@@ -79,8 +79,10 @@ pub struct Interaction {
     pub doc: Arc<Document>,
     pub selection: Selection,
     pub preview: Option<(String, Value)>,
-    /// Per-document state restored on cancel (current layer, isolation).
+    /// Per-document state restored on cancel (current layer, highlighted Layers panel rows,
+    /// isolation).
     pub active_layer: Option<NodeId>,
+    pub layer_rows: Vec<NodeId>,
     pub isolation: Option<NodeId>,
     /// The perspective transform the previews make (`perspective.transform` params): Transform
     /// Again repeats it once the drag is committed.
@@ -102,6 +104,11 @@ pub struct DocState {
     saved_doc: Arc<Document>,
     /// The layer new art goes into (the "current layer" in the Layers panel).
     pub active_layer: Option<NodeId>,
+    /// The rows highlighted in the Layers panel (layers, sublayers, groups or objects, in the order
+    /// they were clicked): what the panel's Duplicate, Delete, Merge, Options… and similar act on.
+    /// Panel state, not art selection: not saved, not undoable (`layer.setCurrent`,
+    /// `layer.highlight`).
+    pub layer_rows: Vec<NodeId>,
     /// Isolation mode container.
     pub isolation: Option<NodeId>,
     pub interaction: Option<Interaction>,
@@ -156,6 +163,7 @@ impl DocState {
             path,
             revision: 1,
             active_layer,
+            layer_rows: vec![],
             isolation: None,
             interaction: None,
             last_transform: None,
@@ -200,6 +208,7 @@ impl DocState {
             self.doc = it.doc;
             self.selection = it.selection;
             self.active_layer = it.active_layer;
+            self.layer_rows = it.layer_rows;
             self.isolation = it.isolation;
             self.revision += 1;
         }
@@ -236,7 +245,13 @@ impl DocState {
         {
             return Some(i);
         }
-        self.active_layer.filter(|l| self.doc.node(*l).is_some_and(|n| n.is_layer() && !n.locked)).or_else(|| self.doc.default_layer())
+        // A sublayer takes new art only while it and the layers around it are shown and unlocked.
+        self.active_layer.filter(|l| self.doc.node(*l).is_some_and(|n| n.is_layer()) && self.doc.is_editable(*l)).or_else(|| self.doc.default_layer())
+    }
+    /// The highlighted Layers panel rows that still exist (ids are reused after undo, so a
+    /// remembered row must still be in the document).
+    pub fn highlighted_rows(&self) -> Vec<NodeId> {
+        self.layer_rows.iter().copied().filter(|id| self.doc.node(*id).is_some()).collect()
     }
     /// The object whose opacity mask View Opacity Mask shows ([`DocState::mask_view`]): only while
     /// its mask is being edited, so leaving editing by any route (undo, deleting the object) ends it.
@@ -278,7 +293,9 @@ fn strip_replay_only(id: &str, p: &mut Value) {
 /// have finite, in-range geometry, so saved files always reload and renderers never see NaN/∞.
 fn doc_sane(d: &Document, sel: &Selection) -> bool {
     let ok = |r: vectorcraft_geom::Rect| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD);
-    d.artboards.iter().all(|a| ok(a.rect)) && sel.objects.iter().all(|id| d.node(*id).and_then(|n| n.geometric_bounds()).is_none_or(ok))
+    d.artboards.iter().all(|a| ok(a.rect))
+        && d.guides.iter().all(|g| g.pos.is_finite() && g.pos.abs() <= MAX_COORD)
+        && sel.objects.iter().all(|id| d.node(*id).and_then(|n| n.geometric_bounds()).is_none_or(ok))
 }
 
 /// Where new art goes (Illustrator's drawing modes, Shift+D cycles).
@@ -397,6 +414,12 @@ pub struct Prefs {
     // Performance
     pub gpu_performance: bool,
     pub animated_zoom: bool,
+    /// Which graphics processor the desktop app asks for at startup (it takes effect after a
+    /// restart): `powerSaving` (the integrated GPU on hybrid-graphics laptops) or `highPerformance`
+    /// (the discrete one). The canvas is rasterized on the CPU and only composited on the GPU, so
+    /// the integrated GPU is plenty; presenting from the discrete GPU through the integrated one
+    /// made some hybrid laptops flicker (#306). Single-GPU machines are unaffected.
+    pub gpu_preference: String,
     pub history_states: u32,
     pub real_time_drawing: bool,
     /// Rasterizer worker threads; -1 = automatic.
@@ -598,6 +621,7 @@ impl Default for Prefs {
             interface_language: s("auto"),
             gpu_performance: true,
             animated_zoom: true,
+            gpu_preference: s("powerSaving"),
             history_states: 500,
             real_time_drawing: true,
             render_threads: -1,
@@ -1062,8 +1086,18 @@ impl Session {
     pub fn select(&mut self, f: impl FnOnce(&Document, &mut Selection)) -> Result<()> {
         self.active_appearance_item = None;
         let st = self.doc_mut()?;
+        let before = st.selection.objects.clone();
         f(&st.doc, &mut st.selection);
         st.selection.prune(&st.doc);
+        // Selecting art makes its layer (or sublayer) the current one, as in the Layers panel of
+        // the reference app: new art then goes beside it.
+        if st.selection.objects != before
+            && let Some(layer) = st.selection.objects.last().and_then(|id| st.doc.layer_containing(*id)).filter(|l| st.doc.is_editable(*l))
+            && st.active_layer != Some(layer)
+        {
+            st.active_layer = Some(layer);
+            st.layer_rows.clear();
+        }
         st.revision += 1;
         // Puppet Warp pins belong to the art they were placed on: another selection starts afresh.
         if st.doc.puppet.as_ref().is_some_and(|p| p.ids != st.selection.objects) {
@@ -1085,6 +1119,7 @@ impl Session {
             selection: st.selection.clone(),
             preview: None,
             active_layer: st.active_layer,
+            layer_rows: st.layer_rows.clone(),
             isolation: st.isolation,
             perspective_again: None,
         });
@@ -1260,6 +1295,8 @@ mod tests_labspots;
 #[cfg(test)]
 mod tests_layerclip;
 #[cfg(test)]
+mod tests_layers;
+#[cfg(test)]
 mod tests_linked_stops;
 #[cfg(test)]
 mod tests_links;
@@ -1269,6 +1306,8 @@ mod tests_linkspanel;
 mod tests_liquify;
 #[cfg(test)]
 mod tests_live;
+#[cfg(test)]
+mod tests_livecorners;
 #[cfg(test)]
 mod tests_maskview;
 #[cfg(test)]
@@ -1387,6 +1426,8 @@ mod tests_tints;
 mod tests_toolsettings;
 #[cfg(test)]
 mod tests_transparencygrid;
+#[cfg(test)]
+mod tests_typearea;
 #[cfg(test)]
 mod tests_units;
 #[cfg(test)]

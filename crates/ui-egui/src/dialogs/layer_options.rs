@@ -1,17 +1,16 @@
-//! Layer Options (double-click a layer in the Layers panel, or the panel menu): the layer's name,
-//! its colour (a preset or a custom colour; selections on the layer are drawn in it), and
-//! Template, Show, Lock and Print. A template layer is locked and doesn't print, so Lock and Print
-//! are disabled while Template is on. OK runs `layer.setProps` as one undo step.
+//! Layer Options (double-click a layer row, or ≡ › Options for Selection…) and the same dialog for
+//! a new layer or sublayer (≡ › New Layer…, Alt-click Create New Layer). Objects' rows get Name,
+//! Show and Lock only.
 //!
-//! Fields: `id`, `name`, `color` (`#rrggbb`, or a preset's name such as "Light Blue"), `template`,
-//! `visible`, `locked`, `printable`.
+//! Fields: `ids` (the rows edited; none for a new layer), `mode` (`edit`, `new` or `newSublayer`),
+//! `layer` (the rows are layers), `name`, `color` (a preset's name such as "Light Blue", or
+//! `#rrggbb`), `template`, `locked`, `visible`, `printable`, `preview`, `dimImages` and
+//! `dimPercent`. OK runs `layer.setProps`, `layer.new` or `layer.newSublayer`.
 
 use serde_json::{Value, json};
-use vectorcraft_color::Color;
-use vectorcraft_doc::{NodeId, NodeKind};
+use vectorcraft_doc::{LAYER_COLORS, LayerColor, Node, NodeId, NodeKind};
 
 use super::swatch_options::{grid, label};
-use super::tile_edge_color::{layer_color_picker, resolve};
 use super::{DialogSpec, form, run_and_close};
 use crate::state::Dialog;
 use crate::{VectorcraftApp, widgets};
@@ -19,126 +18,266 @@ use crate::{VectorcraftApp, widgets};
 /// The dialog kind of Layer Options.
 pub const KIND: &str = "layerOptions";
 
-pub(super) const SPEC: DialogSpec = DialogSpec { heading: |_| tl!("Layer Options").into(), body, confirm, min_width: 320.0, ..DialogSpec::FORM };
+pub(super) const SPEC: DialogSpec = DialogSpec { heading, body, confirm, min_width: 320.0, ..DialogSpec::FORM };
 
-/// Open Layer Options on layer `id` (default: the current layer).
-pub fn open(app: &mut VectorcraftApp, id: Option<u64>) -> Result<Value, String> {
-    let st = app.session.active().ok_or("no document")?;
-    let id = id.map(NodeId).or(st.active_layer).ok_or("no current layer")?;
-    let n = st.doc.node(id).ok_or("no such layer")?;
-    let NodeKind::Layer { template, printable, .. } = &n.kind else { return Err("not a layer".into()) };
-    let [r, g, b] = st.doc.layer_color(id);
+fn heading(d: &Dialog) -> String {
+    if d.bool("layer") || d.str("mode") != "edit" { tl!("Layer Options").into() } else { tl!("Options").into() }
+}
+
+/// A layer colour as the dialog shows it: a preset's name, else `#rrggbb`.
+fn color_field(c: LayerColor) -> String {
+    match c {
+        LayerColor::Preset(i) => LAYER_COLORS.get(i as usize).map_or("Light Blue", |(n, _)| *n).to_string(),
+        LayerColor::Custom([r, g, b]) => format!("#{r:02x}{g:02x}{b:02x}"),
+    }
+}
+
+/// The fields for `n` (a layer or any other row).
+fn fields_of(n: &Node) -> serde_json::Map<String, Value> {
+    let mut f = serde_json::Map::new();
+    f.insert("name".into(), json!(n.display_name()));
+    f.insert("visible".into(), json!(n.visible));
+    f.insert("locked".into(), json!(n.locked));
+    f.insert("layer".into(), json!(n.is_layer()));
+    if let NodeKind::Layer { color, template, printable, preview, dim_images, .. } = &n.kind {
+        f.insert("color".into(), json!(color_field(*color)));
+        f.insert("template".into(), json!(template));
+        f.insert("printable".into(), json!(printable));
+        f.insert("preview".into(), json!(preview));
+        f.insert("dimImages".into(), json!(dim_images.is_some()));
+        f.insert("dimPercent".into(), json!(dim_images.unwrap_or(50)));
+    }
+    f
+}
+
+/// `ui.layerOptions {ids?|id?}`: open Layer Options for rows (default: the highlighted rows, else
+/// the current layer), filled in from the first.
+pub fn open(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
+    let st = app.session.active().ok_or("no document open")?;
+    let ids: Vec<NodeId> = match (p.get("ids").and_then(Value::as_array), p.get("id").and_then(Value::as_u64)) {
+        (Some(a), _) => a.iter().filter_map(Value::as_u64).map(NodeId).collect(),
+        (None, Some(id)) => vec![NodeId(id)],
+        (None, None) => {
+            let rows = st.highlighted_rows();
+            if rows.is_empty() { st.current_layer().into_iter().collect() } else { rows }
+        }
+    };
+    let first = ids.first().and_then(|id| st.doc.node(*id)).ok_or("no such layer or object")?;
+    let mut f = fields_of(first);
+    f.insert("ids".into(), json!(ids.iter().map(|i| i.0).collect::<Vec<_>>()));
+    f.insert("mode".into(), json!("edit"));
+    app.ui.dialog = Some(Dialog { kind: KIND.into(), fields: f });
+    Ok(Value::Null)
+}
+
+/// `ui.newLayer {sublayer?}`: Layer Options for a new layer (or sublayer), with the name and
+/// colour it would get.
+pub fn open_new(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
+    let st = app.session.active().ok_or("no document open")?;
+    let mut layers = vec![];
+    st.doc.walk(|n| {
+        if n.is_layer() {
+            layers.push(n.display_name());
+        }
+    });
+    let mut i = layers.len() + 1;
+    while layers.contains(&format!("Layer {i}")) {
+        i += 1;
+    }
+    let sublayer = p.get("sublayer").and_then(Value::as_bool).unwrap_or(false);
+    let color = LayerColor::Preset((layers.len() % LAYER_COLORS.len()) as u8);
     let fields = json!({
-        "id": id.0,
-        "name": n.display_name(),
-        "color": Color::rgb8(r, g, b).to_hex(),
-        "template": template,
-        "visible": n.visible,
-        "locked": n.locked,
-        "printable": printable,
+        "mode": if sublayer { "newSublayer" } else { "new" }, "layer": true, "name": format!("Layer {i}"), "color": color_field(color),
+        "template": false, "locked": false, "visible": true, "printable": true, "preview": true, "dimImages": false, "dimPercent": 50,
     });
     app.ui.dialog = Some(Dialog::new(KIND, fields));
     Ok(Value::Null)
 }
 
+fn toggle(ui: &mut egui::Ui, d: &mut Dialog, key: &str, text: &str, enabled: bool) -> bool {
+    let v = d.bool(key);
+    let changed = widgets::check(ui, text, v, enabled);
+    if changed {
+        d.fields.insert(key.into(), json!(!v));
+    }
+    changed
+}
+
 fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
+    let layer = d.bool("layer");
+    let many = d.fields.get("ids").and_then(Value::as_array).is_some_and(|a| a.len() > 1);
     grid(ui, |ui| {
-        label(ui, tl!("Name:"));
-        form::text(ui, d, "name", 190.0);
-        ui.end_row();
-        label(ui, tl!("Color:"));
-        layer_color_picker(ui, d, "color");
-        ui.end_row();
+        if !many {
+            label(ui, tl!("Name:"));
+            form::text(ui, d, "name", 190.0);
+            ui.end_row();
+        }
+        if layer {
+            label(ui, tl!("Color:"));
+            ui.horizontal(|ui| {
+                let cur = d.str("color");
+                let names: Vec<&str> = LAYER_COLORS.iter().map(|(n, _)| *n).chain(["Custom"]).collect();
+                let shown = if LAYER_COLORS.iter().any(|(n, _)| n.eq_ignore_ascii_case(&cur)) { cur.clone() } else { "Custom".into() };
+                if let Some((n, _)) = widgets::dropdown(ui, "layer-color", &shown, &names, 140.0).and_then(|i| LAYER_COLORS.get(i)) {
+                    d.fields.insert("color".into(), json!(n));
+                }
+                let [r, g, b] = LAYER_COLORS
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(&cur))
+                    .map(|(_, c)| *c)
+                    .or_else(|| {
+                        vectorcraft_color::Color::from_hex(&cur).map(|c| {
+                            let [r, g, b, _] = c.to_rgba8(1.0);
+                            [r, g, b]
+                        })
+                    })
+                    .unwrap_or(LAYER_COLORS[0].1);
+                let mut rgb = [r, g, b];
+                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    d.fields.insert("color".into(), json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
+                }
+            });
+            ui.end_row();
+        }
     });
     ui.add_space(8.0);
-    let template = d.bool("template");
-    // (key, label, enabled): a template layer is always locked and never prints.
-    let options = [("template", "Template", true), ("visible", "Show", true), ("locked", "Lock", !template), ("printable", "Print", !template)];
-    for (key, text, enabled) in options {
-        let on = d.bool(key);
+    if layer {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            if widgets::check(ui, text, on, enabled) {
-                d.fields.insert(key.into(), json!(!on));
-            }
+            ui.vertical(|ui| {
+                // A template is locked and dims its images; turning it off frees both.
+                if toggle(ui, d, "template", tl!("Template"), true) {
+                    let on = d.bool("template");
+                    d.fields.insert("locked".into(), json!(on));
+                    d.fields.insert("dimImages".into(), json!(on));
+                }
+                toggle(ui, d, "visible", tl!("Show"), true);
+                toggle(ui, d, "preview", tl!("Preview"), true);
+                ui.horizontal(|ui| {
+                    toggle(ui, d, "dimImages", tl!("Dim Images to:"), true);
+                    let mut v = d.f64("dimPercent", 50.0);
+                    if ui.add_enabled(d.bool("dimImages"), egui::DragValue::new(&mut v).range(0.0..=100.0).suffix("%")).changed() {
+                        d.fields.insert("dimPercent".into(), json!(v.round()));
+                    }
+                });
+            });
+            ui.add_space(24.0);
+            ui.vertical(|ui| {
+                let template = d.bool("template");
+                toggle(ui, d, "locked", tl!("Lock"), !template);
+                toggle(ui, d, "printable", tl!("Print"), !template);
+            });
         });
+    } else {
+        toggle(ui, d, "visible", tl!("Show"), true);
+        toggle(ui, d, "locked", tl!("Lock"), true);
     }
     false
 }
 
-fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
-    let id = d.fields.get("id").and_then(Value::as_u64).ok_or("no layer")?;
-    let color = d.str("color");
-    let hex = resolve(&color).ok_or_else(|| format!("`{color}` is not a colour (#rrggbb or a preset name)"))?.to_hex();
-    let template = d.bool("template");
-    let mut params = json!({
-        "id": id,
-        "name": d.str("name"),
-        "color": hex,
-        "template": template,
-        "visible": d.bool("visible"),
-    });
-    // Lock and Print stay as they were while Template is on.
-    if !template {
-        params["locked"] = json!(d.bool("locked"));
-        params["printable"] = json!(d.bool("printable"));
+/// The command and params OK runs.
+pub(crate) fn params(d: &Dialog) -> (&'static str, Value) {
+    let mut p = serde_json::Map::new();
+    let many = d.fields.get("ids").and_then(Value::as_array).is_some_and(|a| a.len() > 1);
+    if !many {
+        p.insert("name".into(), json!(d.str("name")));
     }
-    run_and_close(app, "layer.setProps", params)
+    p.insert("visible".into(), json!(d.bool("visible")));
+    p.insert("locked".into(), json!(d.bool("locked")));
+    if d.bool("layer") {
+        p.insert("color".into(), json!(d.str("color")));
+        p.insert("template".into(), json!(d.bool("template")));
+        p.insert("printable".into(), json!(d.bool("printable")));
+        p.insert("preview".into(), json!(d.bool("preview")));
+        p.insert("dimImages".into(), if d.bool("dimImages") { json!(d.f64("dimPercent", 50.0).clamp(0.0, 100.0)) } else { json!(false) });
+    }
+    match d.str("mode").as_str() {
+        "new" => ("layer.new", Value::Object(p)),
+        "newSublayer" => ("layer.newSublayer", Value::Object(p)),
+        _ => {
+            p.insert("ids".into(), d.fields.get("ids").cloned().unwrap_or(json!([])));
+            ("layer.setProps", Value::Object(p))
+        }
+    }
+}
+
+fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
+    let (cmd, p) = params(d);
+    run_and_close(app, cmd, p)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vectorcraft_doc::LayerColor;
     use vectorcraft_engine::Session;
 
-    fn layer(app: &VectorcraftApp, id: u64) -> vectorcraft_doc::Node {
-        (*app.session.active().unwrap().doc.node(NodeId(id)).unwrap()).clone()
+    fn app() -> VectorcraftApp {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 100, "height": 100})).unwrap();
+        app
     }
 
-    #[test]
-    fn layer_options_set_name_colour_and_options_in_one_step() {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("file.new", json!({})).unwrap();
-        let id = app.run("layer.new", json!({"name": "Ink"})).unwrap()["id"].as_u64().unwrap();
-        app.run("ui.layerOptions", json!({"id": id})).unwrap();
-        let d = app.ui.dialog.as_ref().unwrap();
-        assert_eq!(d.kind, KIND);
-        assert_eq!(d.str("name"), "Ink");
-        assert!(d.bool("visible") && d.bool("printable") && !d.bool("locked"));
-        // Drawn headlessly in the shared frame.
+    fn draw(app: &mut VectorcraftApp) {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let mut out = ctx.run_ui(Default::default(), |ui| super::super::show(&mut app, ui.ctx()));
+        let mut out = ctx.run_ui(Default::default(), |ui| super::super::show(app, ui.ctx()));
         out.textures_delta.clear();
-        let d = app.ui.dialog.as_mut().unwrap();
-        d.fields.insert("name".into(), json!("Sketch"));
-        d.fields.insert("color".into(), json!("#123456"));
-        d.fields.insert("printable".into(), json!(false));
-        super::super::confirm(&mut app).unwrap();
-        assert!(app.ui.dialog.is_none());
-        let n = layer(&app, id);
-        assert_eq!(n.name.as_deref(), Some("Sketch"));
-        let NodeKind::Layer { color, printable, .. } = n.kind else { panic!() };
-        assert_eq!(color, LayerColor::Custom([0x12, 0x34, 0x56]));
-        assert!(!printable);
-        // One undo step brings it all back.
-        app.run("edit.undo", json!({})).unwrap();
-        let n = layer(&app, id);
-        assert_eq!(n.name.as_deref(), Some("Ink"));
-        assert!(matches!(n.kind, NodeKind::Layer { printable: true, color: LayerColor::Preset(_), .. }));
+    }
+
+    fn set(app: &mut VectorcraftApp, k: &str, v: Value) {
+        app.ui.dialog.as_mut().unwrap().fields.insert(k.into(), v);
     }
 
     #[test]
-    fn layer_options_default_to_the_current_layer_and_refuse_objects() {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("file.new", json!({})).unwrap();
+    fn layer_options_edit_the_layer_and_ok_is_one_undo_step() {
+        let mut app = app();
+        let layer = app.session.doc().unwrap().doc.layers[0].id;
         app.run("ui.layerOptions", json!({})).unwrap();
-        let current = app.session.active().unwrap().active_layer.unwrap();
-        assert_eq!(app.ui.dialog.as_ref().unwrap().fields["id"], json!(current.0));
-        app.ui.dialog = None;
-        let rect = app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap()["id"].clone();
-        assert!(app.run("ui.layerOptions", json!({"id": rect})).is_err());
+        let d = app.ui.dialog.clone().unwrap();
+        assert_eq!((d.kind.as_str(), d.str("name"), d.str("color")), (KIND, "Layer 1".to_string(), "Light Blue".to_string()));
+        draw(&mut app);
+        set(&mut app, "name", json!("Sky"));
+        set(&mut app, "color", json!("#00ff00"));
+        set(&mut app, "dimImages", json!(true));
+        set(&mut app, "dimPercent", json!(30));
+        set(&mut app, "preview", json!(false));
+        let undo = app.session.doc().unwrap().history.undo.len();
+        super::super::confirm(&mut app).unwrap();
         assert!(app.ui.dialog.is_none());
+        let n = app.session.doc().unwrap().doc.node(layer).unwrap().clone();
+        assert_eq!(n.display_name(), "Sky");
+        assert!(matches!(n.kind, NodeKind::Layer { color: LayerColor::Custom([0, 255, 0]), dim_images: Some(30), preview: false, .. }));
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo + 1);
+    }
+
+    #[test]
+    fn new_layer_options_make_a_layer_and_objects_get_name_show_and_lock() {
+        let mut app = app();
+        app.run("ui.newLayer", json!({})).unwrap();
+        assert_eq!(app.ui.dialog.as_ref().unwrap().str("name"), "Layer 2");
+        set(&mut app, "name", json!("Ink"));
+        set(&mut app, "template", json!(true));
+        set(&mut app, "locked", json!(true));
+        draw(&mut app);
+        super::super::confirm(&mut app).unwrap();
+        let d = &app.session.doc().unwrap().doc;
+        let top = d.layers.last().unwrap();
+        assert_eq!(top.display_name(), "Ink");
+        assert!(top.is_template() && top.locked);
+        // An object's row: Name, Show and Lock.
+        let r = app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10}));
+        assert!(r.is_ok());
+        app.session.execute("layer.setCurrent", &json!({"id": app.session.doc().unwrap().doc.layers[0].id.0})).unwrap();
+        let rect = app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap()["id"].as_u64().unwrap();
+        app.run("ui.layerOptions", json!({"id": rect})).unwrap();
+        assert!(!app.ui.dialog.as_ref().unwrap().bool("layer"));
+        draw(&mut app);
+        set(&mut app, "name", json!("Box"));
+        set(&mut app, "locked", json!(true));
+        let (cmd, p) = params(app.ui.dialog.as_ref().unwrap());
+        assert_eq!(cmd, "layer.setProps");
+        assert!(p.get("template").is_none());
+        super::super::confirm(&mut app).unwrap();
+        let n = app.session.doc().unwrap().doc.node(NodeId(rect)).unwrap().clone();
+        assert_eq!((n.display_name(), n.locked), ("Box".to_string(), true));
     }
 }

@@ -45,7 +45,7 @@ pub const BASIC: &[(&str, &[&[&str]])] = &[
             &["shapeBuilder", "livePaintBucket", "livePaintSelection", "blend"],
         ],
     ),
-    ("Type", &[&["areaType", "typeOnPath", "verticalType", "verticalAreaType", "verticalTypeOnPath"], &["type", "touchType"]]),
+    ("Type", &[&["areaType", "typeOnPath", "verticalAreaType", "verticalTypeOnPath"], &["type", "verticalType", "touchType"]]),
     ("Navigate", &[&["zoom"], &["hand", "printTiling"], &["rotateView"]]),
     ("Color", &[&["gradient", "mesh"], &["eyedropper", "measure"]]),
 ];
@@ -243,9 +243,24 @@ fn flyout_press(ui: &Ui, resp: &egui::Response, rect: egui::Rect) -> Option<Flyo
 /// Open a tool's options (`tool.options`, a double-click on its button): the Gradient tool's are
 /// the Gradient panel, the Eyedropper's the Eyedropper Options dialog, a Liquify tool's its Tool
 /// Options dialog, the Blend tool's Blend
-/// Options; the Print Tiling tool's resets the print tiling.
+/// Options; the Print Tiling tool's resets the print tiling. As in the reference app, the Hand
+/// tool's fits the artboard in the window, the Zoom tool's shows it at 100%, the Rotate, Scale,
+/// Reflect and Shear tools' are their Object › Transform dialogs, the selection tools' are the
+/// Move dialog, and the Pencil, Paintbrush, Smooth, Blob Brush and Eraser tools' are their Tool
+/// Options.
 pub fn open_options(app: &mut VectorcraftApp, tool: &str) -> Result<serde_json::Value, String> {
     match tool {
+        "hand" => app.run("view.fitArtboard", json!({})),
+        "zoom" => app.run("view.actualSize", json!({})),
+        "rotate" | "scale" | "reflect" | "shear" | "selection" | "directSelection" | "groupSelection" => {
+            let dialog = if crate::canvas::is_selection_tool(tool) { "move" } else { tool };
+            let id = format!("object.{dialog}");
+            if let Some(c) = vectorcraft_engine::find_command(&id) {
+                (c.enabled)(&app.session)?;
+            }
+            crate::menus::invoke(app, &id, json!({}));
+            Ok(json!({ "dialog": dialog }))
+        }
         "gradient" if app.ui.open_panel.as_deref() == Some("gradient") => Ok(json!({ "open": "gradient" })),
         "gradient" => app.run("window.panel", json!({ "panel": "gradient" })),
         "eyedropper" => {
@@ -264,6 +279,8 @@ pub fn open_options(app: &mut VectorcraftApp, tool: &str) -> Result<serde_json::
         "printTiling" => app.run("print.tiling.set", json!({ "reset": true })),
         // The Liquify tools: their Tool Options (the Global Brush Dimensions and the tool's own).
         _ if vectorcraft_tools::settings::LIQUIFY.contains(&tool) => crate::dialogs::liquify::open(app, tool),
+        // The freehand tools: their Tool Options (Fidelity, fill, the tolerances, the brush size).
+        _ if crate::dialogs::freehand::TOOLS.contains(&tool) => crate::dialogs::freehand::open(app, tool),
         _ if vectorcraft_tools::tool_info(tool).is_none() => Err(format!("unknown tool `{tool}`")),
         _ => Err(format!("the {tool} tool has no options")),
     }
@@ -521,7 +538,62 @@ pub(crate) mod tests {
         crate::dialogs::confirm(&mut app).unwrap();
         let o = app.session.prefs.eyedropper;
         assert!(o.pick_up.appearance.transparency && !o.apply.appearance.transparency && o.apply.appearance.fill.color);
-        assert!(app.run("tool.options", json!({"tool": "zoom"})).is_err());
+        assert!(app.run("tool.options", json!({"tool": "lasso"})).is_err());
+    }
+
+    #[test]
+    fn double_clicking_the_hand_zoom_and_transform_tools() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(660.0, 460.0)));
+        app.run("view.setZoom", json!({"zoom": 333, "center": [10, 10]})).unwrap();
+        // Hand: the artboard fits the window. Zoom: 100%.
+        app.run("tool.options", json!({"tool": "hand"})).unwrap();
+        let v = *app.view().unwrap();
+        assert_eq!((v.center.x, v.center.y, v.zoom), (150.0, 100.0, 2.0));
+        app.run("tool.options", json!({"tool": "zoom"})).unwrap();
+        assert_eq!(app.view().unwrap().zoom, 1.0);
+        // The transform tools open their dialogs, like Object › Transform: not with nothing selected.
+        assert_eq!(app.run("tool.options", json!({"tool": "rotate"})), Err("nothing selected".into()));
+        assert!(app.ui.dialog.is_none());
+        let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 40, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        for tool in ["rotate", "scale", "reflect", "shear"] {
+            app.run("tool.options", json!({"tool": tool})).unwrap();
+            assert_eq!(app.ui.dialog.take().map(|d| d.kind), Some(tool.to_string()));
+        }
+        // OK in Rotate turns the selection about its centre.
+        app.run("tool.options", json!({"tool": "rotate"})).unwrap();
+        app.ui.dialog.as_mut().unwrap().fields.insert("angle".into(), json!(90));
+        crate::dialogs::confirm(&mut app).unwrap();
+        let b = app.session.active().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().geometric_bounds().unwrap();
+        assert!((b.x0 - 20.0).abs() < 1e-9 && (b.y0 - 0.0).abs() < 1e-9 && (b.width() - 20.0).abs() < 1e-9, "{b:?}");
+    }
+
+    #[test]
+    fn double_clicking_a_selection_tool_opens_the_move_dialog() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        let ctx = egui::Context::default();
+        // The Selection tool's button is the first one.
+        let selection = frame(&mut app, &ctx, 0.0, vec![])[0];
+        // Nothing selected: Move is disabled, so nothing opens.
+        double_click(&mut app, &ctx, 1.0, selection.center());
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(app.run("tool.options", json!({"tool": "directSelection"})), Err("nothing selected".into()));
+        let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 40, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        double_click(&mut app, &ctx, 2.0, selection.center());
+        assert_eq!(app.ui.dialog.take().map(|d| d.kind), Some("move".to_string()));
+        // The Direct Selection and Group Selection tools open it too.
+        for tool in ["directSelection", "groupSelection"] {
+            app.run("tool.options", json!({"tool": tool})).unwrap();
+            assert_eq!(app.ui.dialog.take().map(|d| d.kind), Some("move".to_string()), "{tool}");
+        }
+        // OK moves the selection by what was typed.
+        app.run("tool.options", json!({"tool": "selection"})).unwrap();
+        app.ui.dialog.as_mut().unwrap().fields.insert("dx".into(), json!("25 pt"));
+        crate::dialogs::confirm(&mut app).unwrap();
+        let b = app.session.active().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().geometric_bounds().unwrap();
+        assert_eq!((b.x0, b.y0), (35.0, 10.0));
     }
 
     #[test]
@@ -631,5 +703,35 @@ pub(crate) mod tests {
         frame(&mut app, &ctx, 8.0 + LONG_PRESS + 0.01, vec![]);
         assert!(app.ui.flyout.is_some(), "a long press on the active tool opens it");
         assert_eq!(app.session.tool_id(), "rectangle");
+    }
+
+    #[test]
+    fn type_button_long_press_selects_vertical_type_in_both_layouts() {
+        for advanced in [false, true] {
+            let mut app = VectorcraftApp::new(Session::new(), Default::default());
+            app.ui.toolbar_advanced = advanced;
+            let all = slots(&app);
+            let index = all.iter().position(|(_, tools)| tools.contains(&"type")).unwrap();
+            assert!(all[index].1.contains(&"verticalType"));
+            for id in ["type", "verticalType", "areaType", "verticalAreaType", "typeOnPath", "verticalTypeOnPath"] {
+                assert_eq!(all.iter().filter(|(_, tools)| tools.contains(&id)).count(), 1);
+            }
+            let ctx = egui::Context::default();
+            let at = frame_in(&mut app, &ctx, 0.0, vec![], 2000.0)[index].center();
+            let pointer = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame_in(&mut app, &ctx, 1.0, vec![Event::PointerMoved(at), pointer(at, true)], 2000.0);
+            frame_in(&mut app, &ctx, 1.36, vec![], 2000.0);
+            frame_in(&mut app, &ctx, 1.4, vec![pointer(at, false)], 2000.0);
+            frame_in(&mut app, &ctx, 1.45, vec![], 2000.0);
+            assert_eq!(app.session.tool_id(), "selection");
+            let tools: Vec<String> = ctx.data(|d| d.get_temp(egui::Id::new("flyout-tools"))).unwrap();
+            let row_index = tools.iter().position(|id| id == "verticalType").unwrap();
+            let menu = ctx.memory(|m| m.area_rect(egui::Id::new("tool-flyout"))).unwrap();
+            let row = egui::pos2(menu.left() + 60.0, menu.top() + 15.0 + row_index as f32 * 30.0);
+            frame_in(&mut app, &ctx, 2.0, vec![Event::PointerMoved(row), pointer(row, true)], 2000.0);
+            frame_in(&mut app, &ctx, 2.05, vec![pointer(row, false)], 2000.0);
+            assert_eq!(app.session.tool_id(), "verticalType");
+            assert_eq!(app.ui.flyout, None);
+        }
     }
 }

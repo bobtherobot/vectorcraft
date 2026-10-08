@@ -123,8 +123,8 @@ fn text_paste(app: &mut VectorcraftApp, s: Option<String>) {
     }
 }
 
-/// Edit-menu commands while the Type tool edits text act on the text (Cut/Copy/Paste/Select
-/// All/Clear). `None` = not intercepted.
+/// Edit-menu commands while the Type tool edits text act on the text (Cut/Copy/Paste/Clear;
+/// Select All is the engine's `select.all`). `None` = not intercepted.
 pub(crate) fn intercept_text_command(app: &mut VectorcraftApp, id: &str) -> Option<Result<Value, String>> {
     if !app.session.tool_wants_text() {
         return None;
@@ -139,7 +139,6 @@ pub(crate) fn intercept_text_command(app: &mut VectorcraftApp, id: &str) -> Opti
             }
         }
         "edit.paste" | "edit.pasteWithoutFormatting" => text_paste(app, None),
-        "select.all" => app.session.set_tool_option("selectAll", &json!(true)),
         "edit.clear" => text_key(app, ToolKey::Delete, Mods::default()),
         _ => return None,
     }
@@ -152,10 +151,10 @@ enum TextInput {
     Copy,
     Cut,
     Paste(Option<String>),
-    SelectAll,
 }
 
-/// Route editing keys (with modifiers), clipboard events and Cmd+A/C/X/V to the Type tool.
+/// Route editing keys (with modifiers), clipboard events and Cmd+C/X/V to the Type tool (Cmd+A is
+/// left to the Select All shortcut, which selects the text being edited).
 pub(crate) fn route_type_input(app: &mut VectorcraftApp, ctx: &egui::Context) {
     CTX.get_or_init(|| ctx.clone());
     let mut todo = vec![];
@@ -193,10 +192,9 @@ pub(crate) fn route_type_input(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     }
                     return false;
                 }
-                if m.command && !m.shift && !m.alt && matches!(key, Key::A | Key::C | Key::X | Key::V) {
+                if m.command && !m.shift && !m.alt && matches!(key, Key::C | Key::X | Key::V) {
                     if *pressed {
                         todo.push(match key {
-                            Key::A => TextInput::SelectAll,
                             Key::C => TextInput::Copy,
                             Key::X => TextInput::Cut,
                             _ => TextInput::Paste(None),
@@ -221,7 +219,6 @@ pub(crate) fn route_type_input(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 }
             }
             TextInput::Paste(s) => text_paste(app, s),
-            TextInput::SelectAll => app.session.set_tool_option("selectAll", &json!(true)),
         }
     }
 }
@@ -241,8 +238,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     };
     let w = ui.available_width();
-    if let Some(f) = widgets::font_dropdown(ui, "ch-font", &s.font_family, w - 4.0) {
-        style(app, json!({ "font": f }));
+    let sample = crate::font_menu::sample_text(app);
+    if let Some(pick) = crate::font_menu::font_menu(ui, "ch-font", &s.font_family, w - 4.0, sample.as_deref(), crate::font_menu::MenuLook::of(app)) {
+        crate::font_menu::apply(app, ui.ctx(), pick);
     }
     let styles = vectorcraft_text::FontDb::global().styles(&s.font_family);
     let snames: Vec<&str> = styles.iter().map(String::as_str).collect();
@@ -397,6 +395,28 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         menu_item(ui, tl!(l), false, false);
     }
     ui.separator();
+    // Character Alignment: where characters smaller than the largest on their line line up, with
+    // the East Asian options.
+    if app.session.prefs.show_east_asian_options {
+        let align = s.as_ref().map(|s| s.char_align);
+        ui.add_enabled_ui(has, |ui| {
+            // Indented like the items beside it (their check column).
+            ui.menu_button(format!("   {}", tl!("Character Alignment")), |ui| {
+                use vectorcraft_doc::CharAlign;
+                for (label, a, key) in [
+                    (tl!("Roman Baseline"), CharAlign::RomanBaseline, "romanBaseline"),
+                    (tl!("Em Box Top/Right"), CharAlign::EmBoxTop, "emBoxTop"),
+                    (tl!("Em Box Center"), CharAlign::EmBoxCenter, "emBoxCenter"),
+                    (tl!("Em Box Bottom/Left"), CharAlign::EmBoxBottom, "emBoxBottom"),
+                ] {
+                    if menu_item(ui, label, true, align == Some(a)) {
+                        format(app, json!({"charAlign": key}));
+                    }
+                }
+            });
+        });
+        ui.separator();
+    }
     for l in ["Standard Vertical Roman Alignment", "Tate-chu-yoko", "Fractional Widths", "System Layout", "No Break"] {
         menu_item(ui, tl!(l), false, l == "Fractional Widths");
     }
@@ -414,5 +434,25 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
             app,
             json!({"kerning": "auto", "baselineShift": 0, "hScale": 100, "vScale": 100, "rotation": 0, "underline": false, "strikethrough": false, "allCaps": false}),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vectorcraft_engine::Session;
+
+    /// Character Alignment is in the panel menu with the East Asian options only (as Mojikumi Set
+    /// and Top-to-Top Leading are in the Paragraph panel).
+    #[test]
+    fn character_alignment_shows_with_the_east_asian_options() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        let id = app.session.execute("text.create", &json!({"x": 20, "y": 50, "text": "雅楽"})).unwrap()["id"].clone();
+        app.session.execute("select.set", &json!({"ids": [id]})).unwrap();
+        let shown = |app: &mut VectorcraftApp| crate::tests_labels::painted_text(app, menu).contains("Character Alignment");
+        assert!(!shown(&mut app));
+        app.session.prefs.show_east_asian_options = true;
+        assert!(shown(&mut app));
     }
 }

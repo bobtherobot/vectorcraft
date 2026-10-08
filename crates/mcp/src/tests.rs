@@ -175,6 +175,15 @@ fn headless_end_to_end() {
     assert_eq!(rect["fill"], "#ff0000", "{rect}");
     assert_eq!(rect["stroke"], "None");
 
+    // A depth-0 inspect is the skeleton: top layers with counts, nothing below them;
+    // a bad slice is a tool error, not a full dump.
+    let r = call(&mut s, 41, "inspect_document", json!({"depth": 0}));
+    let skel: Value = serde_json::from_str(&text_of(&r)).unwrap();
+    assert!(skel["layers"][0].get("children").is_none(), "{skel}");
+    assert_eq!(skel["layers"][0]["childCount"], layer["children"].as_array().unwrap().len());
+    assert_eq!(skel["artboards"], doc["artboards"]);
+    assert_eq!(call(&mut s, 42, "inspect_document", json!({"depth": -1}))["isError"], true);
+
     // Screenshot returns image content (base64 PNG) and text.
     let shot_path = tmp("shot.png");
     let r = call(&mut s, 5, "screenshot", json!({"path": shot_path.to_str().unwrap()}));
@@ -282,6 +291,36 @@ fn headless_path_gesture_undo() {
     let r = call(&mut s, 12, "export", json!({"path": tmp("x.png").to_str().unwrap(), "scale": 0.5}));
     assert_eq!(r["isError"], false, "{r}");
     assert_eq!(&std::fs::read(tmp("x.png")).unwrap()[..4], b"\x89PNG");
+}
+
+/// inspect_document reads back the paint type's characters show, as add_text and set_paint give it.
+#[test]
+fn inspect_document_reports_the_paint_of_type() {
+    let mut s = server();
+    let r = call(&mut s, 2, "add_text", json!({"text": "HI", "x": 50, "y": 60, "size": 24, "color": "#ff0000"}));
+    assert_eq!(r["isError"], false, "{r}");
+    let id = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["id"].clone();
+    let node = |s: &mut Server, n: u64| {
+        let v: Value = serde_json::from_str(&text_of(&call(s, n, "inspect_document", json!({})))).unwrap();
+        v["layers"][0]["children"].as_array().unwrap().iter().find(|c| c["id"] == id).cloned().unwrap()
+    };
+    let t = node(&mut s, 3);
+    assert_eq!((t["fill"].as_str(), t["stroke"].as_str()), (Some("#ff0000"), Some("None")), "{t}");
+    let r = call(&mut s, 4, "set_paint", json!({"fill": "#0000ff", "stroke": "#00ff00", "strokeWidth": 3, "ids": [id]}));
+    assert_eq!(r["isError"], false, "{r}");
+    let t = node(&mut s, 5);
+    assert_eq!((t["fill"].as_str(), t["stroke"].as_str(), t["strokeWidth"].as_f64()), (Some("#0000ff"), Some("#00ff00"), Some(3.0)), "{t}");
+}
+
+/// save_file says it saves in the document's own format or the one the path's extension picks.
+#[test]
+fn save_file_describes_the_formats_it_writes() {
+    let tools = tool_definitions();
+    let d = tools.iter().find(|t| t["name"] == "save_file").and_then(|t| t["description"].as_str()).unwrap();
+    for ext in [".vectorcraft", ".vctemplate", ".pdf", ".svg", ".svgz", ".ai"] {
+        assert!(d.contains(ext), "{ext}: {d}");
+    }
+    assert!(d.contains("its own format"), "{d}");
 }
 
 #[test]
@@ -473,4 +512,29 @@ fn oversized_screenshot_and_png_export_are_errors() {
     // The session is still alive and a small screenshot works.
     let r = call(&mut s, 4, "screenshot", json!({"scale": 0.01}));
     assert_eq!(r["isError"], false, "{r}");
+}
+
+/// Preferences reach agents' gestures (#394): `prefs.set` Object Selection by Path Only, then a
+/// click inside a filled square selects nothing; Command Click to Select Objects Behind, a
+/// Cmd-click selects the square underneath.
+#[test]
+fn selection_preferences_apply_to_pointer_gestures() {
+    let mut s = server();
+    let square = |s: &mut Server, id: u64, x: u64| {
+        let r = call(s, id, "draw_shape", json!({"shape": "rectangle", "x": x, "y": 100, "width": 100, "height": 100, "fill": "#ff0000"}));
+        serde_json::from_str::<Value>(&text_of(&r)).unwrap()["id"].as_u64().unwrap()
+    };
+    let (back, front) = (square(&mut s, 1, 100), square(&mut s, 2, 150));
+    let click = |s: &mut Server, id: u64, x: f64, mods: Value| {
+        let events = json!([{"kind": "down", "x": x, "y": 125}, {"kind": "up", "x": x, "y": 125}]);
+        let r = call(s, id, "pointer_gesture", json!({"tool": "selection", "events": events, "mods": mods}));
+        assert_eq!(r["isError"], false, "{r}");
+        serde_json::from_str::<Value>(&text_of(&r)).unwrap()["selection"].clone()
+    };
+    assert_eq!(click(&mut s, 3, 175.0, json!({})), json!([front]));
+    assert_eq!(click(&mut s, 4, 175.0, json!({"cmd": true})), json!([back]), "Cmd-click selects behind");
+    let r = call(&mut s, 5, "run_command", json!({"command": "prefs.set", "params": {"key": "objectSelectionByPathOnly", "value": true}}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(click(&mut s, 6, 225.0, json!({})), json!([]), "path only: the fill doesn't select");
+    assert_eq!(click(&mut s, 7, 250.0, json!({})), json!([front]), "the path does");
 }

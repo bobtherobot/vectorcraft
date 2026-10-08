@@ -3,12 +3,15 @@
 //! fifth of the size reads as a space). Fonts are named from the file's base font name (its
 //! subset prefix dropped, the family matched against the fonts available); a font that isn't
 //! available keeps its name, and the text shows in the fallback font until it is.
+//!
+//! Glyphs each turned a little further along a curve (type set on a path: apps write each glyph
+//! with its own placement) make one type-on-a-path object, its path through the glyphs' baseline.
 
 use std::collections::HashMap;
 
-use kurbo::{Affine, Point, Vec2};
+use kurbo::{Affine, BezPath, Point, Vec2};
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{CharStyle, TextObject, TextRun};
+use vectorcraft_doc::{CharStyle, ParaDirection, TextKind, TextObject, TextRun};
 
 /// One glyph's placement: its baseline origin, advance direction, size and horizontal scale.
 #[derive(Clone, Copy, Debug)]
@@ -43,6 +46,13 @@ impl Placement {
     fn up(&self) -> Vec2 {
         Vec2::new(self.dir.y, -self.dir.x)
     }
+}
+
+/// A glyph set vertically (WMode 1: no horizontal advance) and the top centre of its em box: a
+/// column of them is vertical type.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Upright {
+    pub top: Point,
 }
 
 /// What a run of type is drawn with: its font (cache key, family and style), size, horizontal
@@ -93,26 +103,90 @@ pub(crate) struct TextLine {
     next: Point,
     /// The last glyph's origin.
     last: Point,
+    /// The last glyph's baseline direction.
+    last_dir: Vec2,
+    /// Each glyph's baseline origin, then where the last one ends.
+    baseline: Vec<Point>,
     runs: Vec<(Look, String)>,
+    /// The first glyph was set vertically ([`Upright`]).
+    upright: Option<Upright>,
+    /// The glyphs make a column (vertical type), each below the last.
+    column: bool,
 }
+
+/// The most a glyph on a curve turns from the one before it (about 20°).
+const CURVE_TURN_COS: f64 = 0.94;
 
 impl TextLine {
     pub fn new(at: Placement, opacity: f32) -> Self {
-        Self { at, opacity, next: at.origin, last: at.origin, runs: vec![] }
+        Self { at, opacity, next: at.origin, last: at.origin, last_dir: at.dir, baseline: vec![], runs: vec![], upright: None, column: false }
+    }
+
+    /// Add glyph `text` set vertically (`upright`) if it continues this column (or makes this
+    /// line's single glyph a column): below the last one, in the same column. `false`: it starts
+    /// another line.
+    pub fn push_upright(&mut self, look: &Look, at: Placement, opacity: f32, upright: Upright, text: &str) -> bool {
+        let down = -self.at.up();
+        let size = self.at.size.max(at.size);
+        let Some((last, run)) = self.runs.last_mut() else {
+            self.runs.push((look.clone(), text.to_string()));
+            (self.upright, self.next, self.last) = (Some(upright), at.origin + down * at.size, at.origin);
+            return true;
+        };
+        let across = (at.origin - self.at.origin).dot(self.at.dir);
+        let step = (at.origin - self.next).dot(down);
+        // Only glyphs set vertically (WMode 1) come here, so a second one below the first, one em
+        // on or letter-spaced up to another em, makes a column.
+        let first_step = (at.origin - self.last).dot(down);
+        let starts_column = !self.column && self.upright.is_some() && first_step > size * 0.95 && first_step < size * 2.0;
+        let in_column = (self.column || starts_column)
+            && opacity == self.opacity
+            && at.dir.dot(self.at.dir) > 0.9995
+            && across.abs() < size * 0.6
+            && step > -size * 0.3
+            && step < size * 1.2;
+        if !in_column {
+            return false;
+        }
+        self.column = true;
+        // Letter-spaced Japanese is common: a gap reads as a space only when a whole em is left
+        // out (the tracking set in `finish` keeps narrower gaps).
+        if step > size * 0.9 && !run.ends_with(' ') && !text.starts_with(' ') {
+            run.push(' ');
+        }
+        if last.takes(look) {
+            run.push_str(text);
+        } else {
+            self.runs.push((look.clone(), text.to_string()));
+        }
+        self.next = at.origin + down * at.size;
+        self.last = at.origin;
+        true
     }
 
     /// Add glyph `text` drawn with `look` at `at` (advancing `advance` points) at `opacity` if
     /// it continues this line; `false`: it starts another.
     pub fn push(&mut self, look: &Look, at: Placement, opacity: f32, advance: f64, text: &str) -> bool {
+        // A vertical line (even a single upright glyph) takes no horizontal glyphs.
+        if self.column || self.upright.is_some() {
+            return false;
+        }
         if let Some((last, run)) = self.runs.last_mut() {
             let size = self.at.size.max(at.size);
-            let gap = (at.origin - self.next).dot(self.at.dir);
+            let gap = (at.origin - self.next).dot(self.last_dir);
             let on_line = opacity == self.opacity
                 && at.dir.dot(self.at.dir) > 0.9995
                 && (at.origin - self.at.origin).dot(self.at.up()).abs() < size * 0.15
                 && gap > -size * 0.3
                 && gap < size * 3.0;
-            if !on_line {
+            // Or on a curve: turned a little from the glyph before it, and starting about where
+            // that one ends.
+            let on_curve = !on_line
+                && opacity == self.opacity
+                && at.dir.dot(self.last_dir) > CURVE_TURN_COS
+                && at.dir.dot(self.last_dir) < 0.99999
+                && (at.origin - self.next).hypot() < size * 0.6;
+            if !on_line && !on_curve {
                 return false;
             }
             // A gap wider than a fifth of an em reads as a space.
@@ -127,9 +201,40 @@ impl TextLine {
         } else {
             self.runs.push((look.clone(), text.to_string()));
         }
-        self.next = at.origin + self.at.dir * advance;
+        self.next = at.origin + at.dir * advance;
         self.last = at.origin;
+        self.last_dir = at.dir;
+        self.baseline.push(at.origin);
         true
+    }
+
+    /// Has the baseline turned (more than about 3° from the first glyph to the last)?
+    fn curved(&self) -> bool {
+        self.last_dir.dot(self.at.dir) < 0.9986
+    }
+
+    /// A smooth path through the glyphs' baseline origins and the end of the last glyph, an em
+    /// further (Catmull-Rom through the points, as cubic Béziers).
+    fn baseline_path(&self) -> Option<BezPath> {
+        let mut pts = self.baseline.clone();
+        // On past the end of the last glyph by an em, so rounding in the spacing doesn't push it
+        // off the end of the path (where type on a path stops).
+        pts.push(self.next);
+        pts.push(self.next + self.last_dir * self.at.size);
+        let first = *pts.first()?;
+        // Finite placements far out can still overflow once an em is added: no path then.
+        if pts.len() < 3 || !pts.iter().all(|p| p.is_finite()) {
+            return None;
+        }
+        let mut bp = BezPath::new();
+        bp.move_to(first);
+        for (i, seg) in pts.windows(2).enumerate() {
+            let &[p1, p2] = seg else { continue };
+            let p0 = *pts.get(i.wrapping_sub(1)).unwrap_or(&p1);
+            let p3 = *pts.get(i + 2).unwrap_or(&p2);
+            bp.curve_to(p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2);
+        }
+        Some(bp)
     }
 
     /// A stroke (`stroke`: paint and width) over the glyph just drawn at `at` in `font` (fill
@@ -144,6 +249,8 @@ impl TextLine {
 
     /// The point type object and its opacity.
     pub fn finish(mut self) -> Option<(TextObject, f32)> {
+        // Turned along a curve: type on a path through the glyphs.
+        let path = if self.curved() { self.baseline_path() } else { None };
         if let Some((_, last)) = self.runs.last_mut() {
             last.truncate(last.trim_end().len());
         }
@@ -155,7 +262,46 @@ impl TextLine {
         let first = runs.next()?;
         let mut t = TextObject::point(Point::ORIGIN, &first.text, first.style);
         t.runs.extend(runs);
-        t.xf = Affine::translate(self.at.origin.to_vec2()) * Affine::rotate(self.at.dir.atan2());
+        if self.upright.is_none() {
+            to_logical(&mut t);
+        }
+        let angle = self.at.dir.atan2();
+        t.xf = Affine::translate(self.at.origin.to_vec2()) * Affine::rotate(angle);
+        let db = vectorcraft_text::FontDb::global();
+        if let Some(path) = path {
+            t.kind = TextKind::OnPath { path: vectorcraft_geom::PathData::from_bezpath(&path), start: 0.0 };
+            t.xf = Affine::IDENTITY;
+            t.cached_bounds = Some(vectorcraft_text::layout(db, &t).bounds);
+            return Some((t, self.opacity));
+        }
+        let (start, along) = match self.upright {
+            // Vertical point type (a column, or a single upright glyph) is anchored at the top
+            // centre of its first em box.
+            Some(u) => {
+                t.vertical = true;
+                t.xf = Affine::translate(u.top.to_vec2()) * Affine::rotate(angle);
+                (self.at.origin, -self.at.up())
+            }
+            _ => (self.at.origin, self.at.dir),
+        };
+        // Tracking that makes the line as long as in the file: the PDF placed each glyph, the
+        // layout sets them by their advances. Spread over the gaps between characters (tracking
+        // follows each character, the last one's past the end of the line).
+        let length = (self.next - start).dot(along);
+        let laid = vectorcraft_text::layout(db, &t);
+        let natural: f64 = laid.glyphs.iter().map(|g| g.advance).sum();
+        let chars: usize = t.runs.iter().map(|r| r.text.chars().count()).sum();
+        let size = self.at.size;
+        let mut bounds = laid.bounds;
+        if chars > 1 && length.is_finite() && (length - natural).abs() > size * 0.01 {
+            let tracking = ((length - natural) / (chars - 1) as f64 / size * 1000.0).clamp(-1000.0, 1000.0).round();
+            for r in &mut t.runs {
+                r.style.tracking = tracking;
+            }
+            // Tracked: laid out again for its bounds.
+            bounds = vectorcraft_text::layout(db, &t).bounds;
+        }
+        t.cached_bounds = Some(bounds);
         Some((t, self.opacity))
     }
 }
@@ -226,4 +372,21 @@ impl Families {
             None => (spaced(strip_ps(fam)).trim().to_string(), style, false),
         }
     }
+}
+
+/// Hebrew or Arabic comes from a PDF in visual order (each glyph where it is drawn): put `t`'s text
+/// back in logical order, with the paragraph direction that shows it as drawn.
+fn to_logical(t: &mut TextObject) {
+    let Some((order, rtl)) = vectorcraft_text::logical_order(&t.plain_text()) else { return };
+    let chars: Vec<(char, usize)> = t.runs.iter().enumerate().flat_map(|(i, r)| r.text.chars().map(move |c| (c, i))).collect();
+    let mut runs: Vec<(usize, String)> = Vec::with_capacity(t.runs.len());
+    for &(c, i) in order.iter().filter_map(|&k| chars.get(k)) {
+        match runs.last_mut() {
+            Some((run, text)) if *run == i => text.push(c),
+            _ => runs.push((i, c.to_string())),
+        }
+    }
+    let runs = runs.into_iter().filter_map(|(i, text)| Some(TextRun { text, style: t.runs.get(i)?.style.clone() })).collect();
+    t.runs = runs;
+    t.para.direction = Some(if rtl { ParaDirection::RightToLeft } else { ParaDirection::LeftToRight });
 }

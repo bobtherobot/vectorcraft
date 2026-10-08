@@ -109,6 +109,7 @@ pub fn num_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value:
     if !editing {
         buf = shown.clone();
     }
+    take_dialog_focus(ui, id, &buf);
     let resp = ui
         .allocate_ui_with_layout(vec2(width, 26.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_width(width);
@@ -132,9 +133,67 @@ pub fn num_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value:
         })
         .inner;
     select_all_on_focus(ui, &resp, &buf);
+    // ↑/↓ step in the field's unit.
+    let stepped = step_with_arrows(ui, &resp, &mut buf, |b| Some(unit.from_pt(unit.parse(b)?)), |v| unit.format(unit.to_pt(v)));
     let commit = resp.lost_focus() && buf != shown;
     ui.data_mut(|d| d.insert_temp(id, buf.clone()));
-    if commit { unit.parse(&buf) } else { None }
+    if commit { unit.parse(&buf) } else { stepped.map(|v| unit.to_pt(v)) }
+}
+
+/// ↑/↓ in focused numeric field `resp` step the number `buf` shows (`read` parses it, `show`
+/// formats it) by one (Shift: ten, Ctrl/Cmd: a tenth), applied at once as in Illustrator's panels
+/// and dialogs. The new text replaces `buf`, all selected so typing replaces it. Returns the new
+/// number when a step was taken.
+fn step_with_arrows(ui: &Ui, resp: &Response, buf: &mut String, read: impl Fn(&str) -> Option<f64>, show: impl Fn(f64) -> String) -> Option<f64> {
+    // Memory focus, as the field's highlight and its typing use: `Response::has_focus` also needs the
+    // window to report keyboard focus.
+    if !ui.memory(|m| m.has_focus(resp.id)) {
+        return None;
+    }
+    use egui::{Key, Modifiers};
+    let mut steps = 0.0;
+    ui.input_mut(|i| {
+        // Most specific first: a plain pattern would also take Shift+↑.
+        for (mods, size) in [(Modifiers::SHIFT, 10.0), (Modifiers::COMMAND, 0.1), (Modifiers::NONE, 1.0)] {
+            let up = i.count_and_consume_key(mods, Key::ArrowUp) as f64;
+            let down = i.count_and_consume_key(mods, Key::ArrowDown) as f64;
+            steps += size * (up - down);
+        }
+    });
+    if steps == 0.0 {
+        return None;
+    }
+    // Rounded as fields show it (no 12.300000001).
+    let v = ((read(buf)? + steps) * 1000.0).round() / 1000.0;
+    *buf = show(v);
+    ui.data_mut(|d| d.insert_temp(resp.id, buf.clone()));
+    select_all(ui, resp.id, buf);
+    Some(v)
+}
+
+/// The flag `dialogs::show` raises while it draws the body of a dialog that has just opened; the
+/// first field drawn takes it ([`take_dialog_focus`]).
+pub(crate) fn dialog_focus_flag() -> egui::Id {
+    egui::Id::new("dialog-focus-first-field")
+}
+
+/// If field `id` (showing `text`) is the first field of a dialog that has just opened, give it the
+/// keyboard focus with all of `text` selected: typing replaces the value and Enter applies it.
+pub(crate) fn take_dialog_focus(ui: &Ui, id: egui::Id, text: &str) {
+    // A new window's first frame only measures its contents: nothing can take focus yet.
+    if ui.is_sizing_pass() || ui.data_mut(|d| d.remove_temp::<bool>(dialog_focus_flag())).is_none() {
+        return;
+    }
+    select_all(ui, id, text);
+    ui.memory_mut(|m| m.request_focus(id));
+}
+
+/// Select all of `text` in text field `id`.
+fn select_all(ui: &Ui, id: egui::Id, text: &str) {
+    let mut st = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+    let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+    st.cursor.set_char_range(Some(all));
+    st.store(ui.ctx(), id);
 }
 
 /// Numeric fields take the whole text, unit included, when they gain focus or are double-clicked
@@ -143,10 +202,8 @@ fn select_all_on_focus(ui: &Ui, resp: &Response, text: &str) {
     if !(resp.gained_focus() || resp.double_clicked()) {
         return;
     }
-    if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
-        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
-        st.cursor.set_char_range(Some(all));
-        st.store(ui.ctx(), resp.id);
+    if egui::TextEdit::load_state(ui.ctx(), resp.id).is_some() {
+        select_all(ui, resp.id, text);
         ui.ctx().request_repaint();
     }
 }
@@ -219,23 +276,26 @@ pub fn mixed_field(
     width: f32,
 ) -> Option<f64> {
     let id = ui.id().with(id);
-    let shown = value
-        .map(|value| {
-            let s = format!("{:.*}", decimals, value);
-            let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
-            format!("{s}{suffix}")
-        })
-        .unwrap_or_default();
-    let (buf, resp) = recessed_text(ui, id, &shown, width, 1);
-    select_all_on_focus(ui, &resp, &buf);
-    if resp.lost_focus() && buf != shown {
-        // The suffix (and %, °) may follow any operand: `45*2°`, `50% / 2`.
+    let show = |value: f64| {
+        let s = format!("{:.*}", decimals, value);
+        let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
+        format!("{s}{suffix}")
+    };
+    // The suffix (and %, °) may follow any operand: `45*2°`, `50% / 2`.
+    let read = |buf: &str| {
         let suffix = suffix.trim();
-        let bare = if suffix.is_empty() { buf.clone() } else { buf.replace(suffix, "") };
+        let bare = if suffix.is_empty() { buf.to_string() } else { buf.replace(suffix, "") };
         vectorcraft_doc::parse_number(&bare.replace(['%', '°'], ""))
-    } else {
-        None
-    }
+    };
+    let shown = value.map(show).unwrap_or_default();
+    let (mut buf, resp) = recessed_text(ui, id, &shown, width, 1);
+    select_all_on_focus(ui, &resp, &buf);
+    // ↑/↓ step at the field's precision (a count ignores Ctrl/Cmd's tenth).
+    let stepped = step_with_arrows(ui, &resp, &mut buf, read, show).map(|v| {
+        let scale = 10f64.powi(decimals.min(6) as i32);
+        (v * scale).round() / scale
+    });
+    if resp.lost_focus() && buf != shown { read(&buf) } else { stepped.filter(|&v| Some(v) != value) }
 }
 
 /// Draw a paint preview (swatch chip) into `rect`.
@@ -444,7 +504,7 @@ pub fn dropdown_with(
 /// The recessed combo box of [`dropdown`] showing `current`; `list` draws the options and returns
 /// the chosen one. A `searchable` list (a search field over a list it scrolls itself) stays open
 /// while it is clicked: it closes itself when an option is chosen.
-fn combo<R>(
+pub(crate) fn combo<R>(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     current: &str,
@@ -468,61 +528,6 @@ fn combo<R>(
                 .flatten()
         })
         .inner
-}
-
-/// The font family dropdown: every family available (the installed fonts included), with a search
-/// field over the list that filters it as you type (Enter picks the first match). Returns the
-/// chosen family.
-pub fn font_dropdown(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, current: &str, width: f32) -> Option<String> {
-    let state = ui.id().with(&id).with("font-search");
-    combo(ui, id, current, width, true, |ui| {
-        // Each time the list opens: unfiltered, with the current font in view. Typing goes to the
-        // search field.
-        let pass = ui.ctx().cumulative_pass_nr();
-        // (the last pass the list was drawn in, the pass it opened in)
-        let (last, opened) = ui.data(|d| d.get_temp::<(u64, u64)>(state)).unwrap_or_default();
-        let opened = if last + 1 < pass || last == 0 { pass } else { opened };
-        let field = state.with("query");
-        ui.data_mut(|d| {
-            d.insert_temp(state, (pass, opened));
-            if opened == pass {
-                d.insert_temp(field, String::new());
-            }
-        });
-        // Its first two passes: a popup sizes itself in the first, invisibly.
-        let opening = pass <= opened + 1;
-        if ui.memory(|m| m.focused().is_none()) {
-            ui.memory_mut(|m| m.request_focus(field.with("edit")));
-        }
-        let query = search_field(ui, field, "Search").to_lowercase();
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let families = vectorcraft_text::FontDb::global().menu_family_list();
-        let (mut chosen, mut first) = (None, None);
-        // The search field stays put over the list as it scrolls.
-        menu_scroll(ui, |ui| {
-            for f in families.iter().filter(|f| query.is_empty() || f.to_lowercase().contains(&query)) {
-                first.get_or_insert(f);
-                let r = ui.add(egui::Button::selectable(f == current, f.as_str()));
-                if opening && f == current {
-                    r.scroll_to_me(Some(egui::Align::Center));
-                }
-                if r.clicked() {
-                    chosen = Some(f.clone());
-                }
-            }
-        });
-        match first {
-            None => {
-                dim_label(ui, "No matching fonts");
-            }
-            Some(f) if enter && chosen.is_none() => chosen = Some(f.clone()),
-            _ => {}
-        }
-        if chosen.is_some() {
-            ui.close();
-        }
-        chosen
-    })
 }
 
 /// The body of a menu or popup list: as tall as its items up to the bottom of the window, and
@@ -1140,8 +1145,25 @@ pub enum PanelDrag {
     /// `ids`); the panel moves it to where it is dropped.
     GraphicStyle(String),
     /// The selected art, dragged off the canvas with the Selection tool: the Graphic Styles panel
-    /// makes a style of the first object (`graphicStyle.new`).
+    /// makes a style of the first object (`graphicStyle.new`), the Symbols panel a symbol of it all
+    /// (`symbol.new`), the Swatches panel a pattern swatch of a copy (`object.pattern.make`) and the
+    /// Brushes panel an Art brush (`brush.new`).
     Art(Vec<vectorcraft_doc::NodeId>),
+    /// A Symbols panel symbol: the canvas places an instance of it centred where it is dropped
+    /// (`symbol.place`).
+    Symbol(String),
+    /// A Brushes panel brush (`def`: its definition, for the chip at the pointer): the path it is
+    /// dropped on takes it (`brush.apply`).
+    Brush { name: String, def: serde_json::Value },
+}
+
+/// A panel list `zone` that takes art dragged off the canvas: outlined while art is held over it;
+/// → the dragged ids when it is released there.
+pub fn art_drop(ui: &Ui, zone: &Response) -> Option<Vec<u64>> {
+    let drag = zone.dnd_hover_payload::<PanelDrag>()?;
+    let PanelDrag::Art(ids) = &*drag else { return None };
+    ui.painter().rect_stroke(zone.rect, 0.0, Stroke::new(1.5, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+    zone.dnd_release_payload::<PanelDrag>().map(|_| ids.iter().map(|id| id.0).collect())
 }
 
 /// The Swatches panel rows a drag from that panel moves: the swatch, None, Registration or colour
@@ -1192,7 +1214,7 @@ pub fn doc_preview(ui: &Ui, key: &str, size: Vec2, build: impl FnOnce(f64, f64) 
     use std::collections::HashMap;
     thread_local! {
         static RENDERER: RefCell<vectorcraft_render::Renderer> = RefCell::new(vectorcraft_render::Renderer::new());
-        static CACHE: RefCell<HashMap<String, egui::TextureHandle>> = RefCell::new(HashMap::new());
+        static CACHE: crate::graphics::TexCache<HashMap<String, egui::TextureHandle>> = crate::graphics::TexCache::default();
     }
     let ppp = ui.ctx().pixels_per_point() as f64;
     let (w, h) = (size.x as f64, size.y as f64);

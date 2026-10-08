@@ -526,6 +526,92 @@ fn save_and_recall_selection() {
     assert!(s.execute("select.recall", &json!({"name": "Pair"})).is_err());
 }
 
+#[test]
+fn edit_selection_needs_a_saved_selection_and_a_free_name() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[a]);
+    // Edit Selection… is off until something is saved.
+    assert!(s.execute("select.editSaved", &json!({"name": "Selection 1", "newName": "A"})).is_err());
+    s.execute("select.save", &json!({"name": "One"})).unwrap();
+    s.execute("select.save", &json!({"name": "Two"})).unwrap();
+    // A name already saved can't be taken; both selections keep theirs.
+    assert!(s.execute("select.editSaved", &json!({"name": "One", "newName": " Two "})).is_err());
+    assert_eq!(s.execute("select.savedList", &json!({})).unwrap(), json!(["One", "Two"]));
+    // Renaming to its own name, or a blank name, changes nothing; a free name renames.
+    s.execute("select.editSaved", &json!({"name": "One", "newName": "One"})).unwrap();
+    s.execute("select.editSaved", &json!({"name": "One", "newName": "  "})).unwrap();
+    s.execute("select.editSaved", &json!({"name": "One", "newName": " Uno "})).unwrap();
+    assert_eq!(s.execute("select.savedList", &json!({})).unwrap(), json!(["Uno", "Two"]));
+}
+
+#[test]
+fn saved_selections_live_in_the_document() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    let b = rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    let list = |s: &mut Session| s.execute("select.savedList", &json!({})).unwrap();
+    sel(&mut s, &[a]);
+    s.execute("select.save", &json!({"name": "A"})).unwrap();
+    sel(&mut s, &[a, b]);
+    s.execute("select.save", &json!({"name": "Both"})).unwrap();
+    // They travel with the file.
+    let loaded = vectorcraft_format::load(&vectorcraft_format::save_file(&s.doc().unwrap().doc)).unwrap();
+    assert_eq!(loaded.saved_selections.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["A", "Both"]);
+    // Saving is an undo step.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(list(&mut s), json!(["A"]));
+    // An existing name is replaced by the current selection.
+    sel(&mut s, &[b]);
+    s.execute("select.save", &json!({"name": "A"})).unwrap();
+    s.execute("select.none", &json!({})).unwrap();
+    assert_eq!(s.execute("select.recall", &json!({"name": "A"})).unwrap()["count"], 1);
+    assert_eq!(selected(&s), vec![b]);
+    // Objects deleted since are left out of a recall.
+    sel(&mut s, &[a, b]);
+    s.execute("select.save", &json!({"name": "Pair"})).unwrap();
+    sel(&mut s, &[a]);
+    s.execute("edit.clear", &json!({})).unwrap();
+    assert_eq!(s.execute("select.recall", &json!({"name": "Pair"})).unwrap()["count"], 1);
+}
+
+#[test]
+fn edit_selection_applies_several_edits_as_one_step() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[a]);
+    for n in ["A", "B", "C"] {
+        s.execute("select.save", &json!({ "name": n })).unwrap();
+    }
+    let list = |s: &mut Session| s.execute("select.savedList", &json!({})).unwrap();
+    // Edits name the selections as they are, so two can swap names; a delete goes with them.
+    s.execute("select.editSaved", &json!({"edits": [{"name": "A", "newName": "B"}, {"name": "B", "newName": "A"}, {"name": "C", "delete": true}]}))
+        .unwrap();
+    assert_eq!(list(&mut s), json!(["B", "A"]));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(list(&mut s), json!(["A", "B", "C"]));
+    // Two ending with one name, or an unknown name, change nothing.
+    assert!(s.execute("select.editSaved", &json!({"edits": [{"name": "A", "newName": "B"}]})).is_err());
+    assert!(s.execute("select.editSaved", &json!({"edits": [{"name": "Z", "delete": true}]})).is_err());
+    assert_eq!(list(&mut s), json!(["A", "B", "C"]));
+}
+
+#[test]
+fn a_document_keeps_at_most_25_saved_selections() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[a]);
+    for i in 0..25 {
+        s.execute("select.save", &json!({ "name": format!("S{i}") })).unwrap();
+    }
+    assert!(s.execute("select.save", &json!({"name": "One too many"})).is_err());
+    // A name already saved is replaced even when the list is full.
+    s.execute("select.save", &json!({"name": "S3"})).unwrap();
+    // Unnamed saves take the first free "Selection N".
+    s.execute("select.editSaved", &json!({"name": "S0", "delete": true})).unwrap();
+    assert_eq!(s.execute("select.save", &json!({})).unwrap()["name"], "Selection 1");
+}
+
 // ---------- Type ----------
 
 #[test]
@@ -654,6 +740,99 @@ fn ruler_guides_and_lock() {
     assert!(s.execute("guide.remove", &json!({"index": 0})).is_err());
 }
 
+fn guides(s: &Session) -> Vec<(bool, f64)> {
+    s.doc().unwrap().doc.guides.iter().map(|g| (g.vertical, g.pos)).collect()
+}
+
+fn selected_guides(s: &Session) -> Vec<usize> {
+    s.doc().unwrap().selection.guides.clone()
+}
+
+/// #414: ruler guides are selected, moved, copied, nudged and deleted like art, over commands.
+#[test]
+fn ruler_guides_select_move_and_delete() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    for (vertical, pos) in [(true, 100.0), (false, 50.0), (true, 300.0)] {
+        s.execute("guide.add", &json!({"vertical": vertical, "pos": pos})).unwrap();
+    }
+    sel(&mut s, &[a]);
+    // Selecting guides deselects the art; toggle adds and removes.
+    assert_eq!(s.execute("guide.select", &json!({"indexes": [0]})).unwrap()["selected"], json!([0]));
+    assert!(selected(&s).is_empty());
+    assert_eq!(s.execute("guide.select", &json!({"indexes": [1], "toggle": true})).unwrap()["selected"], json!([0, 1]));
+    assert_eq!(s.execute("guide.list", &json!({})).unwrap()[1], json!({"index": 1, "vertical": false, "pos": 50.0, "selected": true}));
+    assert!(s.execute("guide.select", &json!({"indexes": [7]})).is_err());
+    // A move takes each selected guide along its own axis, in one undo step.
+    let n = undo_len(&s);
+    s.execute("guide.move", &json!({"dx": 10, "dy": -5})).unwrap();
+    assert_eq!(guides(&s), [(true, 110.0), (false, 45.0), (true, 300.0)]);
+    assert_eq!(undo_len(&s), n + 1);
+    // Alt: copies, which are then the selection.
+    s.execute("guide.move", &json!({"dx": 20, "copy": true})).unwrap();
+    assert_eq!(guides(&s).len(), 5);
+    assert_eq!(&guides(&s)[3..], [(true, 130.0), (false, 45.0)]);
+    assert_eq!(selected_guides(&s), [3, 4]);
+    // The arrow keys nudge them.
+    s.execute("object.nudge", &json!({"dx": 1, "dy": 0, "big": true})).unwrap();
+    assert_eq!(guides(&s)[3], (true, 140.0));
+    // Delete (edit.clear) deletes the selected guides; the others keep their places.
+    s.execute("guide.select", &json!({"indexes": [1, 3]})).unwrap();
+    assert_eq!(s.execute("guide.list", &json!({})).unwrap().as_array().unwrap().len(), 5);
+    s.execute("edit.clear", &json!({})).unwrap();
+    assert_eq!(guides(&s), [(true, 110.0), (true, 300.0), (false, 45.0)]);
+    assert!(selected_guides(&s).is_empty());
+    assert!(s.doc().unwrap().doc.node(a).is_some(), "the art stays");
+    // Removing one keeps the rest of the selection pointing at the same guides.
+    s.execute("guide.select", &json!({"indexes": [1, 2]})).unwrap();
+    assert_eq!(s.execute("guide.remove", &json!({"index": 0})).unwrap()["count"], 1);
+    assert_eq!((guides(&s), selected_guides(&s)), (vec![(true, 300.0), (false, 45.0)], vec![0, 1]));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((guides(&s).len(), selected_guides(&s)), (3, vec![1, 2]));
+    // Out of range positions are refused.
+    assert!(s.execute("guide.move", &json!({"index": 0, "pos": 1e300})).is_err());
+    assert!(s.execute("guide.add", &json!({"vertical": true, "pos": -1e300})).is_err());
+    // Locking deselects them, and they can't be picked again until unlocked.
+    s.execute("view.guides.lock", &json!({"locked": true})).unwrap();
+    assert!(selected_guides(&s).is_empty());
+    assert!(matches!(s.execute("guide.select", &json!({"indexes": [0]})), Err(EngineError::Disabled(..))));
+    assert!(matches!(s.execute("edit.clear", &json!({})), Err(EngineError::Disabled(..))));
+}
+
+/// #414: the Selection tool picks a ruler guide over the art and drags it in one undo step; with
+/// guides hidden or locked the press goes to the art.
+#[test]
+fn selection_tool_drags_a_ruler_guide() {
+    use vectorcraft_tools::{PointerEvent, PointerKind};
+    let mut s = session();
+    let a = rect(&mut s, 100.0, 100.0, 100.0, 100.0);
+    s.execute("guide.add", &json!({"vertical": true, "pos": 150})).unwrap();
+    s.execute("select.none", &json!({})).unwrap();
+    let v = ViewInfo { smart_guides: false, ..Default::default() };
+    s.select_tool("selection", v).unwrap();
+    let drag = |s: &mut Session, v: ViewInfo, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, from.0, from.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, to.0, to.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, to.0, to.1), v).unwrap();
+    };
+    let n = undo_len(&s);
+    drag(&mut s, v, (151.0, 120.0), (171.0, 140.0));
+    assert_eq!(guides(&s), [(true, 170.0)]);
+    assert_eq!(selected_guides(&s), [0]);
+    assert!(selected(&s).is_empty());
+    assert_eq!(bounds(&s, a).x0, 100.0, "the art stays");
+    assert_eq!(undo_len(&s), n + 1);
+    assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Move Guide");
+    // Hidden guides: the press takes the art.
+    let hidden = ViewInfo { guides: false, ..v };
+    drag(&mut s, hidden, (170.0, 120.0), (180.0, 120.0));
+    assert_eq!((guides(&s), bounds(&s, a).x0), (vec![(true, 170.0)], 110.0));
+    // Locked guides too.
+    s.execute("view.guides.lock", &json!({"locked": true})).unwrap();
+    drag(&mut s, v, (170.0, 120.0), (180.0, 120.0));
+    assert_eq!((guides(&s), bounds(&s, a).x0), (vec![(true, 170.0)], 120.0));
+}
+
 // ---------- File ----------
 
 #[test]
@@ -706,4 +885,17 @@ fn every_new_command_has_params_doc_and_menu() {
         let c = find_command(id).unwrap_or_else(|| panic!("{id}"));
         assert!(!c.params.is_empty() && !c.menu.is_empty(), "{id}");
     }
+}
+
+#[test]
+fn saved_selection_names_are_trimmed_and_capped() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[a]);
+    let long = "n".repeat(1000);
+    let name = s.execute("select.save", &json!({ "name": format!(" {long} ") })).unwrap()["name"].clone();
+    assert_eq!(name.as_str().map(|n| n.chars().count()), Some(vectorcraft_doc::SavedSelection::MAX_NAME));
+    s.execute("select.editSaved", &json!({"name": name, "newName": format!("{long}é")})).unwrap();
+    let list = s.execute("select.savedList", &json!({})).unwrap();
+    assert_eq!(list[0].as_str().map(|n| n.chars().count()), Some(vectorcraft_doc::SavedSelection::MAX_NAME));
 }

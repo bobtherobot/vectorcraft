@@ -13,6 +13,8 @@ pub struct ViewInfo {
     pub zoom: f64,
     pub outline: bool,
     pub smart_guides: bool,
+    /// View → Show Guides: the ruler guides show (and, unlocked, can be picked).
+    pub guides: bool,
     pub snap_to_grid: bool,
     pub show_bbox: bool,
     /// View → Snap to Pixel: drawing and moving land on whole pixels (points at 72 ppi).
@@ -31,6 +33,7 @@ impl Default for ViewInfo {
             zoom: 1.0,
             outline: false,
             smart_guides: true,
+            guides: true,
             snap_to_grid: false,
             show_bbox: true,
             snap_to_pixel: false,
@@ -56,8 +59,21 @@ impl Session {
         self.tool.id()
     }
 
-    /// Switch tools (finishing any pending tool work first).
+    /// Choose a tool (the toolbar, its shortcut, MCP), finishing any pending tool work first.
     pub fn select_tool(&mut self, id: &str, view: ViewInfo) -> Result<()> {
+        // Choosing a perspective tool shows the document's perspective grid; Hide Grid hides it
+        // again, the tool staying chosen.
+        if matches!(id, "perspectiveGrid" | "perspectiveSelection")
+            && self.active().is_some_and(|d| !vectorcraft_tools::distort::perspective::PerspectiveGrid::current(&d.doc).visible)
+        {
+            crate::cmd::distortcmds::silent(self, |g| g.visible = true)?;
+        }
+        self.switch_tool(id, view)
+    }
+
+    /// Switch to tool `id` without choosing it afresh (back from a temporary tool: a hidden
+    /// perspective grid stays hidden), finishing any pending tool work first.
+    pub fn switch_tool(&mut self, id: &str, view: ViewInfo) -> Result<()> {
         if self.tool.id() == id {
             return Ok(());
         }
@@ -121,6 +137,7 @@ impl Session {
             paint: &self.paint,
             outline: view.outline,
             smart_guides: view.smart_guides,
+            guides: view.guides && !self.menu.guides_locked,
             snap_to_grid: view.snap_to_grid,
             show_bbox: view.show_bbox,
             snap_to_pixel: view.snap_to_pixel,
@@ -138,6 +155,12 @@ impl Session {
             paste_plain_text: self.prefs.paste_text_formatting == "plain",
             slices_hidden: self.menu.slices_hidden,
             slices_locked: self.menu.slices_locked,
+            auto_add_delete: !self.prefs.disable_auto_add_delete,
+            selection_tolerance: self.prefs.selection_tolerance,
+            path_only: self.prefs.object_selection_by_path_only,
+            double_click_isolate: self.prefs.double_click_to_isolate,
+            select_behind: self.prefs.ctrl_click_selects_behind,
+            highlight_anchors: self.prefs.highlight_anchors_on_hover,
             screen: view.screen,
             plane_widget: self.prefs.perspective_widget.show.then_some(self.prefs.perspective_widget.position),
         };
@@ -246,13 +269,16 @@ impl Session {
         if let Some(d) = self.active() {
             let w = self.prefs.perspective_widget;
             let place = w.show.then_some(WidgetPlace { screen: view.screen.as_ref(), corner: w.position });
-            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays_in(&d.doc, 1.0 / view.zoom.max(1e-9), self.tool.id(), place));
+            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays_in(&d.doc, 1.0 / view.zoom.max(1e-9), place));
         }
         v
     }
 
+    /// The pointer the active tool shows at `p` (General › Use Precise Cursors makes the drawing
+    /// tools' a crosshair, [`Cursor::precise`]).
     pub fn cursor(&mut self, p: Point, mods: Mods, view: ViewInfo) -> Cursor {
-        self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods))
+        let c = self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods));
+        if self.prefs.use_precise_cursors { c.precise() } else { c }
     }
 
     pub fn tool_options(&self) -> Value {

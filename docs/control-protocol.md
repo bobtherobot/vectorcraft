@@ -3,17 +3,28 @@
 `vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). One JSON request per line:
 `{"id": 1, "method": "ui.inspect", "params": {}}` → `{"id": 1, "ok": true, "result": {...}}` or `{"id":1,"ok":false,"error":"..."}`.
 
+**Only requests are read.** Every line must be a JSON object with a string `method` (`id` and `params`
+are optional; blank lines are skipped). Anything else gets one error reply
+(`{"ok": false, "error": "… closing the connection"}`) and the server **closes the connection**, so
+nothing sent after it on that connection runs. That covers text that isn't JSON, a JSON array or number,
+an object without `method`, invalid UTF-8, and a line longer than 4 MiB. An HTTP request (for example a
+web page's cross-origin `fetch` to `127.0.0.1:<port>`) therefore can't smuggle a command in its body:
+its request line is rejected first. At most 16 connections are served at once; further ones get an error
+line and are closed. Clients that get an error reply should reconnect. The port has no authentication,
+so only enable it while you use it. Transport: `apps/vectorcraft/src/control_server.rs`.
+
 | Method | Params | |
 |---|---|---|
 | `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | | every command with label, shortcut, params doc, enablement |
-| `document.inspect` | | layer tree, selection, history, paint defaults |
+| `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does |
 | `ui.inspect` | | tool, UI state, view, canvas rect, window size, perf, background saves and exports still running |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
 | `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
 | `ui.tool.select` / `ui.tool.list` | `{tool}` | |
 | `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | synthetic keyboard input |
+| `ui.wheel` | `{x, y, dy?, dx?, unit?: "line"\|"point", shift?, alt?, cmd?}` | a mouse wheel turn over screen point (x, y): `dy` notches up (+) or down, `dx` sideways. Over the canvas the wheel scrolls and Cmd- or Alt-wheel zooms; with the `zoomWithMouseWheel` preference the wheel zooms about the pointer, Shift-wheel scrolls up and down and Cmd-wheel (Ctrl on Windows and Linux) sideways |
 | `ui.set` | `{brightness?, panel?, rulers?, outline?, grid?, smartGuides?, boundingBox?, controlBar?}` | |
 | `ui.dialog.set` / `.confirm` / `.cancel` | `{field, value}` | fill and submit the open dialog |
 | `ui.screenshot` | `{path?}` | capture the window (PNG). Needs a presented frame: with the screen locked or the window minimized/covered it fails after ~8 s with an explanatory error |
@@ -77,8 +88,13 @@ point (`paint.freeform.selectPoint`); its fields are `color` (hex), `opacity` an
 Tool options: double-clicking a tool button runs `tool.options {tool}`. For `gradient` it opens the Gradient panel;
 for `eyedropper` it opens Eyedropper Options, an `eyedropperOptions` dialog (fields `sampleSize` 1/3/5, `pickUp` and
 `apply`, the attribute trees of `eyedropper.setOptions`) whose `ui.dialog.confirm` runs `eyedropper.setOptions` (what
-`appearance.copyFrom` copies). Gradient tool handles snap to
-anchors, edges and smart guides; Shift constrains them to 45° steps from the `constrainAngle` preference.
+`appearance.copyFrom` copies). For `hand` it fits the artboard in the window (`view.fitArtboard`) and for `zoom` it
+shows 100% (`view.actualSize`). For `rotate`, `scale`, `reflect` and `shear` it opens the same dialog as Object ›
+Transform (dialog kind = the tool id), or fails with `nothing selected`. For `selection`, `directSelection` and
+`groupSelection` it opens the Move dialog (kind `move`), with the same failure. `ui.key` Enter with one of those seven
+tools opens its dialog too (nothing happens without a selection), with the transform tools' `origin` at their reference
+point. Gradient tool handles snap to anchors, edges and smart guides; Shift constrains them to 45° steps from the
+`constrainAngle` preference.
 
 Effect dialogs: `engine.execute {command: "effect.dialog", params: {effect, index?, item?}}` opens the `effect` dialog
 (fields: the effect's parameters, `preview`). With `index` it edits that applied effect of `item` (null: the object's
@@ -156,11 +172,6 @@ Tile Edge Color: Object → Pattern → Tile Edge Color… (`ui.tileEdgeColor`) 
 `color`: `#rrggbb` or a preset name such as "Light Blue"); `ui.dialog.confirm` sets the preference
 `patternTileEdgeColor` (`prefs.set`), the colour pattern editing mode draws the tile edge and the swatch bounds in.
 
-Layer Options: double-clicking a layer's row in the Layers panel (away from its name, which renames) or the panel
-menu's Layer Options… (`ui.layerOptions {id?}`, default the current layer) opens the `layerOptions` dialog (fields
-`name`, `color`: `#rrggbb` or a preset name such as "Light Blue", `template`, `visible`, `locked`, `printable`);
-`ui.dialog.confirm` runs `layer.setProps` as one undo step. Lock and Print are left as they are while Template is on.
-
 Window title bar: on Windows and Linux the window has no OS decorations and the app bar is the title bar. Its
 caption buttons (Minimize, Maximize/Restore, Close) sit at the bar's right end, 46 pt each; they are window chrome,
 not commands, so drive them with `ui.click` if needed. Close runs `app.quit` (the same `saveChanges` questions for
@@ -172,6 +183,14 @@ forward (`paint.toggleActive {fill}`) and open a popover with the Swatches panel
 a swatch clicked there runs `paint.setFill` / `paint.setStroke`. Panel keys (Color F6, Color Guide Shift+F3,
 Appearance Shift+F6, Graphic Styles Shift+F5, Stroke Cmd+F10, Gradient Cmd+F9, Transparency Cmd+Shift+F10) run
 `window.panel {panel}` and can be pressed with `ui.key`; `ui.menu.list` shows them on the Window menu's items.
+`window.panel` takes a panel id in any case or the panel's display label (`"Layers"`, `"Color Guide"`).
+
+Collapsing the dock: `window.collapseDock {collapsed?}` (the » at the top of the dock; omitted toggles) hides the
+Properties | Layers | Libraries group and puts its three panels as icons at the top of the icon column, under a «
+that expands them again. While collapsed, those icons and `window.panel {panel: "properties"|"layers"|"libraries"}`
+pop the panel out next to the column like the other icon panels (`ui.dock_collapsed`, `ui.open_panel` in
+`ui.inspect`); expanding with one popped out shows its tab. The state is saved with the preferences and in user
+workspaces; the built-in workspaces expand the dock.
 
 Flatten Transparency: `ui.flattenTransparencyDialog` opens the `flattenTransparency` dialog for the selection
 (fields `preset`: a preset name, setting it loads that preset's options; the option keys of
@@ -235,6 +254,11 @@ Width Point Edit: double-clicking a width point with the Width tool, or `ui.widt
 `adjustAdjoining`). `ui.dialog.confirm` runs `stroke.widthPoint.set` with them; `ui.dialog.set {field: "discard",
 value: true}` then confirm (the Delete button) removes the point with `stroke.widthPoint.remove`.
 
+Corners: double-clicking a Live Corners widget with the Selection or Direct Selection tool, or `ui.corners {id?,
+corners?}`, opens the `corners` dialog for a live rectangle's corners (the Direct-Selected ones, else all four; fields
+`id`, `corners`: indices 0–3 clockwise from the top-left, `kind`: round, invertedRound or chamfer, `radius` in points;
+`kind` or `radius` is absent while the corners differ). `ui.dialog.confirm` runs `object.setLiveShape` with them.
+
 Perspective plane options: double-clicking a plane widget of the perspective grid, or `ui.perspectivePlane {plane}`,
 opens the `perspectivePlane` dialog (fields `plane`: left, right or ground; `location`: points along the plane's
 normal; `objects`: none, move or copy). `ui.dialog.confirm` runs `perspective.plane.move` with them.
@@ -274,8 +298,13 @@ Paste placement: through the app, `edit.paste` and `edit.pasteWithoutFormatting`
 paste at the centre of the view. The Paste menu items are enabled while the system clipboard holds something to
 paste (SVG, PDF, text or a bitmap on the desktop; SVG on the web), even with nothing copied in the app (looked at up
 to four times a second; `ui.menu.list` shows it). The Layers panel menu (≡ on
-the dock's tab strip while Layers shows) lists the layer commands and Paste Remembers Layers
-(`layer.pasteRemembersLayers`, checked when on).
+the dock's tab strip while Layers shows) lists the layer commands (New Layer…, Duplicate and Delete Selection,
+Options for Selection…, clipping mask, isolation, Locate Object, Merge Selected, Flatten Artwork, Collect in New
+Layer, Release to Layers, Reverse Order, Template, Hide/Outline/Lock Others or Show/Preview/Unlock All Layers), Paste
+Remembers Layers (`layer.pasteRemembersLayers`, checked when on) and Panel Options…. Layer Options is the
+`layerOptions` dialog (`ui.layerOptions {ids?}`, `ui.newLayer {sublayer?}`), Panel Options the `layersPanelOptions`
+dialog (`ui.layersPanelOptions`), and `ui.layersExpand {ids?, open?}` opens or closes rows; see the Layers panel
+section of `docs/mcp.md` for the row commands (`layer.setCurrent`, `layer.highlight`, `layer.move`…).
 
 File Info: File → File Info… (`file.info` from the menu or Cmd+Alt+Shift+I; `ui.fileInfoDialog` for agents) opens the
 `fileInfo` dialog. Its fields are what `file.info` reports (`title`, `author`, `authorTitle`, `description`,
@@ -434,7 +463,7 @@ from)}` opens too: dialog `printPreset`, the Print dialog's settings fields plus
 Export… are `print.presets.delete`, `print.presets.import` and `print.presets.export`; `ui.dialog.confirm` closes.
 Opening a `.vcprintpresets` file with `app.open` imports its presets.
 
-Modifiers on synthetic input: `ui.key`, `ui.click` and `ui.drag` take `shift`, `alt`, `ctrl` and `cmd` (Command on
+Modifiers on synthetic input: `ui.key`, `ui.click`, `ui.drag` and `ui.wheel` take `shift`, `alt`, `ctrl` and `cmd` (Command on
 macOS, Ctrl elsewhere), and the app holds them for the frames the input spans, as if the keys were down: a key's
 press, its `text` and its release; a click's press and release; a drag from the press through every move to the
 release. Every handler sees them (Shift+arrow nudges by the big increment, Alt+arrow nudges a copy, Shift-clicking a
@@ -494,6 +523,12 @@ then the tool's options `detail`, `simplify` and `simplifyOn` (Warp, Twirl, Puck
 `complexity`, `affectAnchors`, `affectIn` and `affectOut` (Scallop, Crystallize, Wrinkle), `horizontal` and
 `vertical` (Wrinkle, %), and `showBrush`. `ui.dialog.confirm` runs `tool.setOption {tool, values}`. `ui.pointer`
 events take `pressure` (0..1, default 1): it is the Liquify intensity while Use Pressure Pen is on.
+
+Freehand Tool Options: double-clicking the Pencil, Paintbrush, Smooth, Blob Brush or Eraser tool
+(`tool.options {tool: "pencil"}`) opens a `freehandOptions` dialog. Its fields are `tool` and the options the tool
+keeps: `fidelity` (pt; Pencil, Paintbrush, Smooth), `fill` (Pencil, Paintbrush), `closeWithin` and `editWithin` (screen
+pixels, 0 turns it off; Pencil, Paintbrush) and `size` (pt; Blob Brush, Eraser). `ui.dialog.confirm` runs
+`tool.setOption {tool, values}`.
 
 `ui.pointer` events also take `holdMs` (0..60000): the pointer then holds still that long, button down, before the
 next event. Twirl, Pucker and Bloat keep applying while held (a repeat of the last point every 0.1 s), exactly as

@@ -1,9 +1,10 @@
 //! The system clipboard's formats: Copy and Cut publish every flavour the engine makes
 //! ([`Session::clipboard_flavours`](vectorcraft_engine::Session::clipboard_flavours): text, SVG,
-//! PDF, PNG), and a Paste first turns what another app copied (SVG, PDF, an EMF, text, a bitmap)
-//! into the internal clipboard with the `clipboard.import*` commands. The host installs the
-//! platform side as [`Services::system_clipboard`](crate::Services::system_clipboard); without it
-//! (the web) Copy publishes SVG text through egui and Paste takes SVG text only.
+//! PDF, PNG), and a Paste first turns what another app copied (SVG, PDF, an EMF, text, a bitmap,
+//! or a copied file that is one of them) into the internal clipboard with the `clipboard.import*`
+//! commands. The host installs the platform side as
+//! [`Services::system_clipboard`](crate::Services::system_clipboard); without it (the web) Copy
+//! publishes SVG text through egui and Paste takes SVG text only.
 
 use serde_json::{Value, json};
 use vectorcraft_engine::cmd::clipboard::{EMF, Flavour, PASTE_ORDER, PDF, SVG, TEXT, looks_like_svg};
@@ -87,6 +88,14 @@ impl VectorcraftApp {
             self.clipboard_published = None;
             format!("Couldn't paste from the clipboard: {e}")
         })
+    }
+
+    /// The text on the system clipboard, if any.
+    pub(crate) fn system_clipboard_text(&mut self) -> Option<String> {
+        match self.services.system_clipboard.as_mut() {
+            Some(cb) => cb.read(&[TEXT]).map(|f| String::from_utf8_lossy(&f.data).into_owned()),
+            None => self.services.clipboard_read.as_mut().and_then(|read| read()),
+        }
     }
 
     /// Does the system clipboard hold something Paste can take (with nothing copied in the app)?

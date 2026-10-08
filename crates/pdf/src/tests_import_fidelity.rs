@@ -1,11 +1,11 @@
 //! Import fidelity: soft masks → opacity masks, isolated and knockout groups, tiling patterns →
 //! pattern swatches, text → point type, mesh shadings → gradient meshes, gradient stop opacity
-//! and shading Extend flags.
+//! and shading Extend flags; strokes stay live strokes.
 
 use std::sync::Arc;
 
 use vectorcraft_color::{BlendMode, Color, Gradient, GradientKind, GradientPaint, GradientStop, Paint};
-use vectorcraft_doc::{Appearance, AppearanceItem, Document, Knockout, Node, NodeId, NodeKind, OpacityMask};
+use vectorcraft_doc::{Appearance, AppearanceItem, Document, Knockout, LineCap, LineJoin, Node, NodeId, NodeKind, OpacityMask};
 use vectorcraft_geom::{Rect, shapes};
 use vectorcraft_testkit::pdf::{PdfPage, first_extra, pdf_with};
 
@@ -358,4 +358,89 @@ fn appearance_items_are_untouched_for_plain_art() {
     assert_eq!(nodes.iter().filter(|n| n.path_data().is_some()).count(), 2);
     assert!(nodes.iter().all(|n| n.mask.is_none() && !matches!(n.kind, NodeKind::Group { .. })));
     assert!(matches!(nodes.iter().find(|n| n.appearance.stroke().is_some()).unwrap().appearance.items[0], AppearanceItem::Stroke(_)));
+}
+
+/// Type set on a path (each glyph placed and turned along a curve, as apps write it) comes back
+/// as type on a path through the glyphs, not as a straight line; straight type stays point type.
+#[test]
+fn glyphs_turned_along_a_curve_become_type_on_a_path() {
+    // "ARCHING" along an arc of radius 100 around (150, 0), each glyph where the one before
+    // it ends (Helvetica's advances), clockwise from 135° (PDF y up: the arc bulges upwards).
+    let mut content = String::from("BT /F1 18 Tf ");
+    let mut a = 135f64.to_radians();
+    for (c, adv) in "ARCHING".chars().zip([667.0, 722.0, 722.0, 722.0, 278.0, 722.0, 778.0]) {
+        let (x, y) = (150.0 + 100.0 * a.cos(), 100.0 * a.sin());
+        // The baseline's direction is the tangent, clockwise along the arc.
+        let (dx, dy) = (a.sin(), -a.cos());
+        content.push_str(&format!("{dx:.5} {dy:.5} {:.5} {dx:.5} {x:.3} {y:.3} Tm ({c}) Tj ", -dy));
+        a -= adv / 1000.0 * 18.0 / 100.0;
+    }
+    content.push_str("ET");
+    let t = texts(&open(&one_page(&content, HELVETICA, &[])));
+    assert_eq!(t.len(), 1, "one text object: {t:?}");
+    let text: String = t[0].runs.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(text, "ARCHING");
+    let vectorcraft_doc::TextKind::OnPath { path, .. } = &t[0].kind else { panic!("type on a path: {:?}", t[0].kind) };
+    let b = path.bounds().unwrap();
+    assert!(b.height() > 15.0, "the path curves: {b:?}");
+    // Every glyph fits on the path, the last one too.
+    assert_eq!(vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t[0]).glyphs.len(), 7);
+    // Straight type with a slight rotation stays one point type object.
+    let straight = texts(&open(&one_page("BT /F1 18 Tf 0.98481 0.17365 -0.17365 0.98481 20 40 Tm (Straight) Tj ET", HELVETICA, &[])));
+    assert_eq!(straight.len(), 1);
+    assert!(matches!(straight[0].kind, vectorcraft_doc::TextKind::Point), "{:?}", straight[0].kind);
+}
+
+/// The leaves (objects that aren't groups or clipping paths) of a document.
+fn objects(d: &Document) -> Vec<Node> {
+    all(d).into_iter().filter(|n| !n.is_container() && !matches!(n.kind, NodeKind::Path { clipping: true, .. })).collect()
+}
+
+#[test]
+fn an_object_written_as_a_fill_and_a_closed_stroke_stays_one_path_with_a_live_stroke() {
+    // As Illustrator writes an object: the fill of the outline left open, then the stroke of it
+    // closed, each in its own transform. Two subpaths: one ending on its start, one not.
+    let outline = "0 0 m -20 1 l -30 -12 l -30 30 l 0 0 l 5 5 m 10 5 l 10 10 l";
+    let content = format!(
+        "0.2 0.2 0.2 rg q 1 0 0 1 50 50 cm {outline} f Q 1 1 1 RG 1.5 w 1 J 1 j 4 M [3 2] 1 d q 1 0 0 1 50 50 cm {} S Q",
+        outline.replace(" 5 5 m", " h 5 5 m") + " h"
+    );
+    let d = open(&one_page(&content, "", &[]));
+    let objs = objects(&d);
+    assert_eq!(objs.len(), 1, "one object, not a fill and a separate stroke: {objs:#?}");
+    let n = &objs[0];
+    assert_eq!(fill_color(n), Some(Color::rgb(0.2, 0.2, 0.2)));
+    let st = n.appearance.stroke().expect("a live stroke");
+    assert_eq!(st.paint.color(), Some(Color::WHITE));
+    assert!((st.width - 1.5).abs() < 1e-6);
+    assert_eq!((st.cap, st.join), (LineCap::Round, LineJoin::Round));
+    assert!((st.miter_limit - 4.0).abs() < 1e-6);
+    let dash = st.dash.as_ref().expect("dashed");
+    assert_eq!((dash.pattern.as_slice(), dash.offset), (&[3.0, 2.0][..], 1.0));
+    // The stroke's outline: both subpaths closed, as they were stroked.
+    let p = n.path_data().unwrap();
+    assert_eq!(p.subpaths.len(), 2);
+    assert!(p.is_closed());
+}
+
+#[test]
+fn different_outlines_filled_and_stroked_stay_apart() {
+    let d = open(&one_page("1 0 0 rg 10 10 m 40 10 l 40 40 l f 0 0 1 RG 10 10 m 40 10 l 40 40 l 10 40 l h S 0 g 50 50 m 60 60 l S", "", &[]));
+    let objs = objects(&d);
+    assert_eq!(objs.len(), 3);
+    assert!(objs[0].appearance.stroke().is_none() && objs[1].appearance.fill().is_none());
+}
+
+#[test]
+fn a_stroke_under_a_stretched_transform_stays_a_stroke() {
+    // Stretched twice as wide: the stroke keeps its average width (√2 × 2 pt) rather than
+    // becoming a filled outline.
+    let d = open(&one_page("0 0 1 RG 2 w q 2 0 0 1 0 0 cm 10 10 m 40 10 l 40 40 l S Q", "", &[]));
+    let objs = objects(&d);
+    assert_eq!(objs.len(), 1);
+    assert!(objs[0].appearance.fill().is_none());
+    let st = objs[0].appearance.stroke().expect("a stroke");
+    assert!((st.width - 2.0 * 2f64.sqrt()).abs() < 1e-6, "{}", st.width);
+    let b = objs[0].geometric_bounds().unwrap();
+    assert!((b.x0 - 20.0).abs() < 1e-6 && (b.x1 - 80.0).abs() < 1e-6, "{b:?}");
 }

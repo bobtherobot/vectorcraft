@@ -1444,7 +1444,11 @@ impl Exporter<'_> {
         let name = format!("{} {}", face.family, face.style);
         let font = match face.embedding() {
             Embedding::Subset => {
-                let font = krilla::text::Font::new(face.file_data().to_vec().into(), face.face_index()).map(|f| (f, face.units_per_em()));
+                // A named instance of a variable font is embedded instanced (its own outlines and
+                // widths, not the default instance's).
+                let coords: Vec<(krilla::text::Tag, f32)> = face.variations().iter().map(|(t, v)| (krilla::text::Tag::new(t), *v)).collect();
+                let font =
+                    krilla::text::Font::new_variable(face.file_data().to_vec().into(), face.face_index(), &coords).map(|f| (f, face.units_per_em()));
                 if font.is_none() {
                     self.warn(format!("the font “{name}” can't be embedded: its text is exported as outlines"));
                 }
@@ -1466,8 +1470,8 @@ impl Exporter<'_> {
     }
 
     /// Image `key` placed `size` points wide and high, resampled and compressed as the Compression
-    /// settings say ([`crate::images::recode`]); cached by key (and size when images are
-    /// resampled).
+    /// settings say ([`crate::images::recode`], [`crate::images::recode_cmyk`] for CMYK images);
+    /// cached by key (and size when images are resampled).
     fn load_image(&mut self, key: &str, size: (f64, f64)) -> Option<Image> {
         let c = self.compression;
         let sized = [c.color.downsample, c.gray.downsample, c.mono.downsample].iter().any(|d| *d != crate::Downsample::None);
@@ -1479,7 +1483,11 @@ impl Exporter<'_> {
         let doc = self.doc;
         let out = self.out.clone();
         let img = doc.images.get(key).and_then(|blob| {
-            let r = crate::images::recode(&blob.bytes, size, c, interpolate, out.pixels());
+            let r = if blob.is_cmyk() {
+                crate::images::recode_cmyk(blob, size, c, interpolate, out.cmyk_pixels())
+            } else {
+                crate::images::recode(&blob.bytes, size, c, interpolate, out.pixels())
+            };
             if let Some(w) = r.warning {
                 self.warn(w);
             }

@@ -166,7 +166,13 @@ fn rect_of(p: &Value, cmd: &str) -> Result<Rect> {
 fn rectangle(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.rectangle")?;
     let radius = f64_or(p, "radius", 0.0).max(0.0);
-    let live = LiveShape::Rectangle { w: r.width(), h: r.height(), radii: [radius; 4], xf: Affine::translate(r.origin().to_vec2()) };
+    let live = LiveShape::Rectangle {
+        w: r.width(),
+        h: r.height(),
+        radii: [radius; 4],
+        kinds: Default::default(),
+        xf: Affine::translate(r.origin().to_vec2()),
+    };
     let label = if radius > 0.0 { "Rounded Rectangle" } else { "Rectangle" };
     add_art(s, label, path_kind(live.to_path(), Some(live)), None)
 }
@@ -402,6 +408,7 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("");
     let mut t = TextObject::point(Point::new(x, y), text, new_type_style(s, p));
     t.vertical = p.get("vertical").and_then(Value::as_bool).unwrap_or(false);
+    t.para = new_type_para();
     if let Some(a) = p.get("area") {
         let w = f64_or(a, "width", 200.0);
         let h = f64_or(a, "height", 100.0);
@@ -410,6 +417,13 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
     let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t);
     t.cached_bounds = Some(lay.bounds);
     add_node(s, "Type", NodeKind::Text(Box::new(t)), Appearance::default(), None)
+}
+
+/// The paragraph attributes new type gets (the Type tools, `text.create`): aligned to the start of
+/// each paragraph's direction (left, right for Hebrew and Arabic), Japanese punctuation composed
+/// with Line-end Punctuation Half Width. Imported text keeps its own.
+pub(crate) fn new_type_para() -> vectorcraft_doc::ParaStyle {
+    vectorcraft_doc::ParaStyle { justify: vectorcraft_doc::Justify::Auto, mojikumi: vectorcraft_doc::Mojikumi::LineEndHalf, ..Default::default() }
 }
 
 /// The character style new type gets: `size`, `font`, `style` and `color` from `p`, else the

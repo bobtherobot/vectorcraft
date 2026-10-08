@@ -452,3 +452,302 @@ fn device_settings_are_accepted_and_change_nothing() {
     assert_eq!(objects(&r.document).len(), 1, "{:?}", r.warnings);
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
 }
+
+/// Check that `body` draws one square, blue: it sets blue when what it checks holds, else red.
+fn blue(body: &str) {
+    let r = read(&format!("{body} 10 10 80 80 rectfill"));
+    let o = objects(&r.document);
+    assert_eq!(o.len(), 1, "{body}: {:?}", r.warnings);
+    assert_eq!(fill(&o[0]), Some(&Paint::solid(Color::rgb(0.0, 0.0, 1.0))), "{body}");
+    assert!(r.warnings.is_empty(), "{body}: {:?}", r.warnings);
+}
+
+/// Check that PostScript `cond` leaves `true`.
+fn check(cond: &str) {
+    blue(&format!("{cond} {{ 0 0 1 setrgbcolor }} {{ 1 0 0 setrgbcolor }} ifelse"));
+}
+
+#[test]
+fn the_generic_category_defines_new_categories() {
+    // #234: the reference app's prolog.
+    blue("/Generic /Category findresource pop 0 0 1 setrgbcolor");
+    blue(
+        "[/CSA /Gradient /Procedure] { /Generic /Category findresource dup length dict copy /Category defineresource pop } forall 0 0 1 setrgbcolor",
+    );
+    let define = "[/CSA /Gradient] { /Generic /Category findresource dup length dict copy /Category defineresource pop } forall \
+                  /G1 << /Kind 7 >> /Gradient defineresource pop";
+    check(&format!("{define} /G1 /Gradient findresource /Kind get 7 eq"));
+    check(&format!("{define} /Gradient /Category resourcestatus {{ pop pop true }} {{ false }} ifelse"));
+    check(&format!("{define} /G1 /Gradient resourcestatus {{ pop pop true }} {{ false }} ifelse"));
+    check(&format!("{define} /G1 /Gradient undefineresource /G1 /Gradient resourcestatus not"));
+    check(&format!("{define} {{ /G2 /Gradient findresource }} stopped"));
+    // Unknown categories aren't instances of Category; a category is a dictionary.
+    check("/Nonsense /Category resourcestatus not");
+    check("{ /Nonsense /Category findresource } stopped");
+    check("{ /X 5 /Category defineresource } stopped");
+}
+
+#[test]
+fn clipsave_and_cliprestore_bring_the_clip_back() {
+    // #234.
+    blue("clipsave 0 0 50 50 rectclip cliprestore 0 0 1 setrgbcolor");
+    // The fill after cliprestore covers the whole square, unclipped.
+    let r = read("clipsave 0 0 50 50 rectclip 1 0 0 setrgbcolor 0 0 10 10 rectfill cliprestore 0 0 1 setrgbcolor 10 10 80 80 rectfill");
+    let o = objects(&r.document);
+    assert_eq!(o.len(), 2, "{:?}", r.warnings);
+    assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }), "{:?}", o[0].kind);
+    assert!(matches!(o[1].kind, NodeKind::Path { clipping: false, .. }), "{:?}", o[1].kind);
+    assert!(near(bounds(&o[1]), Rect::new(10.0, 10.0, 90.0, 90.0)), "{:?}", bounds(&o[1]));
+    // Nested, leaving the rest of the graphics state alone.
+    let r = read(
+        "0 0 60 60 rectclip clipsave 0 0 20 20 rectclip clipsave 0 0 5 5 rectclip cliprestore 0 1 0 setrgbcolor cliprestore \
+         10 10 80 80 rectfill",
+    );
+    let NodeKind::Group { children, clip: true } = &objects(&r.document)[0].kind else { panic!("{:?}", r.warnings) };
+    assert!(near(bounds(&children[0]), Rect::new(0.0, 40.0, 60.0, 100.0)), "{:?}", bounds(&children[0]));
+    assert_eq!(fill(&children[1]), Some(&Paint::solid(Color::rgb(0.0, 1.0, 0.0))));
+    // grestore undoes the clipsaves after its gsave; cliprestore with nothing saved does nothing.
+    let o = objects(&read("cliprestore gsave clipsave 0 0 50 50 rectclip grestore cliprestore 10 10 80 80 rectfill").document);
+    assert!(matches!(o[0].kind, NodeKind::Path { .. }), "{:?}", o[0].kind);
+}
+
+#[test]
+fn languagelevel_is_an_integer_and_runs() {
+    // #234.
+    blue(
+        "/Level2? systemdict /languagelevel known dup { pop systemdict /languagelevel get 2 ge } if def \
+         Level2? { 0 0 1 setrgbcolor } { 1 0 0 setrgbcolor } ifelse",
+    );
+    check("languagelevel 3 eq");
+    check("{ languagelevel } bind exec 3 eq");
+}
+
+#[test]
+fn intervals_share_their_arrays_and_strings() {
+    // #234: astore into a subarray stores into the array.
+    blue("/a 4 array def 1 2 a 0 2 getinterval astore pop a 0 get 1 eq { 0 0 1 setrgbcolor } { 1 0 0 setrgbcolor } ifelse");
+    // put, putinterval and copy into an interval; an interval of an interval.
+    check("/a [0 0 0 0 0] def a 1 3 getinterval 1 2 getinterval 0 7 put a 2 get 7 eq");
+    check("/a [0 0 0 0] def a 2 2 getinterval 0 [8 9] putinterval a 3 get 9 eq");
+    check("/a [0 0 0 0] def [5 6] a 1 2 getinterval copy pop a 2 get 6 eq");
+    check("/s (abcd) def s 1 2 getinterval 0 (XY) putinterval s (aXYd) eq");
+    check("/s (abcd) def s 2 1 getinterval 0 90 put s (abZd) eq");
+    check("/s 8 string def 42 s 2 6 getinterval cvs pop s 2 2 getinterval (42) eq");
+    // The same interval is the same object; another one is not.
+    check("/a 4 array def a 0 2 getinterval a 0 2 getinterval eq");
+    check("/a 4 array def a 0 2 getinterval a 0 3 getinterval ne a 0 2 getinterval a 1 2 getinterval ne and");
+    // Reads and writes stay inside the interval.
+    check("/a [1 2 3 4] def { a 1 2 getinterval 2 get } stopped { a 1 2 getinterval 2 0 put } stopped and");
+    check("/a [1 2 3 4] def a 1 2 getinterval length 2 eq a 1 2 getinterval aload pop 3 eq exch 2 eq and and");
+    check("/n 0 def [1 2 3 4] 1 2 getinterval { n add /n exch def } forall n 5 eq");
+    // A procedure from an interval runs only its part.
+    check("{ 1 2 3 } 1 2 getinterval cvx exec add 5 eq");
+    // The prolog's stack save: the operands into part of one array, and back.
+    check(
+        "/stk 10 array def /lev 3 array def 1 2 3 count dup lev exch 0 exch put stk exch 0 exch getinterval astore pop \
+         clear stk 0 lev 0 get getinterval aload pop add add 6 eq",
+    );
+}
+
+#[test]
+fn resourceforall_enumerates_matching_names() {
+    // #234.
+    blue("(*) { pop } 128 string /Category resourceforall 0 0 1 setrgbcolor");
+    let count = |template: &str| format!("/n 0 def ({template}) {{ pop /n n 1 add def }} 128 string /ProcSet resourceforall n");
+    let define = "[/Foo /Fop /Bar /F*x] { 1 dict /ProcSet defineresource pop } forall";
+    check(&format!("{define} {} 4 eq", count("*")));
+    check(&format!("{define} {} 2 eq", count("Fo?")));
+    check(&format!("{define} {} 3 eq", count("F*")));
+    check(&format!("{define} {} 1 eq", count("F\\\\*x")));
+    check(&format!("{define} {} 0 eq", count("Q*")));
+    check(&format!("{define} {} 1 eq", count("*a*")));
+    // Each name is copied into the scratch string; exit stops.
+    check(&format!("{define} /last () def (B*) {{ dup length string copy /last exch def }} 8 string /ProcSet resourceforall last (Bar) eq"));
+    check(&format!("{define} /n 0 def (*) {{ pop /n n 1 add def exit }} 8 string /ProcSet resourceforall n 1 eq"));
+    // A scratch string too small for the names, as the prolog probes it.
+    check(&format!("{define} {{ (*) {{ pop }} 2 string /ProcSet resourceforall }} stopped"));
+    check("/n 0 def (Gen*) { pop /n n 1 add def } 16 string /Category resourceforall n 1 eq");
+}
+
+#[test]
+fn the_standard_dictionaries_are_dictionaries_in_systemdict() {
+    // The reference app's EPS prolog looks them up by name rather than running them.
+    check("systemdict /userdict get type /dicttype eq");
+    check("/globaldict where { /globaldict get begin currentdict globaldict eq end } { false } ifelse");
+    check("systemdict /systemdict get systemdict eq systemdict /statusdict known and");
+    check("userdict /x 5 put systemdict /userdict get /x get 5 eq");
+    check("/errordict load /handleerror known errordict $error eq and");
+    check("SharedFontDirectory type /dicttype eq");
+}
+
+#[test]
+fn dictstack_and_internaldict_answer() {
+    check("10 array dictstack length countdictstack eq");
+    check("userdict begin 10 array dictstack dup length 1 sub get userdict eq end");
+    check("{ 1 array dictstack } stopped");
+    check("1183615869 internaldict /k 1 put 1183615869 internaldict /k get 1 eq");
+    check("currentsystemparams /MaxPatternCache get type /integertype eq");
+    check("<< /MaxPatternItem currentsystemparams /MaxPatternCache get >> setuserparams currentuserparams /MaxFontItem known");
+}
+
+#[test]
+fn an_executable_filter_runs_its_data_as_a_program() {
+    // A string run as a program through a filter (0 and an empty string set no end of data).
+    check("(1 2 add) 0 () /SubFileDecode filter cvx exec 3 eq");
+    check("(1 2 add) 0 () /SubFileDecode filter dup xcheck not exch cvx xcheck and");
+    check("(abcd) 2 () /SubFileDecode filter 8 string readstring pop (ab) eq");
+    check("{ (1 add) 0 () /SubFileDecode filter cvx exec } stopped");
+    // The data following it in the file: `74727565` is `true`.
+    check("currentfile /ASCIIHexDecode filter cvx exec 74727565>");
+    // A literal file is only pushed.
+    check("(1 2 add) 0 () /SubFileDecode filter exec type /filetype eq");
+}
+
+#[test]
+fn flushfile_skips_the_data_of_a_filter() {
+    // Metadata that isn't PostScript, skipped up to its end marker.
+    blue("currentfile 0 (%%EndPacket) /SubFileDecode filter flushfile\n<?xml version=\"1.0\"?><x a=\"(\"/>\n%%EndPacket\n0 0 1 setrgbcolor");
+}
+
+/// Executable files are untrusted programs too: running one inside itself stops at the nesting
+/// limit, and the program's own file runs once. Type laid out in a loop (`cshow` on a long
+/// string, `stringwidth` in `loop`) counts against the operation budget like the loop itself.
+#[test]
+fn hostile_executable_files_and_type_loops_are_refused() {
+    let refused = |body: &str, why: &str| {
+        let e = import(&eps(body)).err().unwrap_or_default();
+        assert!(e.contains(why), "{body}: {e}");
+    };
+    refused("/p { (p) 0 () /SubFileDecode filter cvx exec } def p", "too deeply");
+    refused("/p { (p) 0 () /SubFileDecode filter cvx exec } def { p } stopped pop p", "too deeply");
+    refused("/a { (b) 0 () /SubFileDecode filter cvx exec } def /b { (a) 0 () /SubFileDecode filter cvx exec } def a", "too deeply");
+    refused("/Helvetica findfont 10 scalefont setfont { pop pop pop } 1000000 string cshow", "too long");
+    // The program's own file, made executable, is already running.
+    blue("currentfile cvx exec currentfile flushfile 0 0 1 setrgbcolor");
+}
+
+#[test]
+fn cshow_runs_its_procedure_for_each_character() {
+    check("/n 0 def { pop pop pop /n n 1 add def } (abc) cshow n 3 eq");
+    // Each call gets the character's code and width.
+    check("/c 0 def { pop pop /c exch def } (A) cshow c 65 eq");
+    check(
+        "/Helvetica findfont 10 scalefont setfont /w 0 def { pop w add /w exch def pop } (ab) cshow \
+         (ab) stringwidth pop w sub abs 0.001 lt",
+    );
+}
+
+/// A `w` × `h` 8-bit palette TIFF with an alpha sample (`ExtraSamples` [1]), uncompressed in
+/// strips of `per` rows, in either byte order, as the reference app writes its EPS previews:
+/// pixel (x, y) is entry `(x + y) % 3` of a red, green, blue map, at alpha `12 x`.
+fn palette_tiff(w: u16, h: u16, per: u16, big: bool) -> Vec<u8> {
+    let u16b = |v: u16| if big { v.to_be_bytes() } else { v.to_le_bytes() };
+    let u32b = |v: u32| if big { v.to_be_bytes() } else { v.to_le_bytes() };
+    // Shorts in an entry, left-justified.
+    let shorts = |v: &[u16]| -> [u8; 4] {
+        let mut f = [0; 4];
+        for (i, s) in v.iter().enumerate() {
+            f[2 * i..2 * i + 2].copy_from_slice(&u16b(*s));
+        }
+        f
+    };
+    let row = u32::from(w) * 2;
+    let mut out = vec![];
+    out.extend(if big { *b"MM\0*" } else { *b"II*\0" });
+    out.extend([0; 4]);
+    let data_at = out.len() as u32;
+    for y in 0..h {
+        for x in 0..w {
+            out.extend([((x + y) % 3) as u8, (x * 12) as u8]);
+        }
+    }
+    let map_at = out.len() as u32;
+    for (c, full) in [0xFFFF, 0x8000, 0xFFFF].into_iter().enumerate() {
+        for i in 0..256 {
+            out.extend(u16b(if i == c { full } else { 0 }));
+        }
+    }
+    let strips: Vec<u16> = (0..h.div_ceil(per)).collect();
+    let offsets_at = out.len() as u32;
+    for k in &strips {
+        out.extend(u32b(data_at + u32::from(k * per) * row));
+    }
+    let counts_at = out.len() as u32;
+    for k in &strips {
+        out.extend(u32b(u32::from(per.min(h - k * per)) * row));
+    }
+    let ifd = out.len() as u32;
+    out[4..8].copy_from_slice(&u32b(ifd));
+    let n = strips.len() as u32;
+    let entries: [(u16, u16, u32, [u8; 4]); 12] = [
+        (256, 3, 1, shorts(&[w])),
+        (257, 3, 1, shorts(&[h])),
+        (258, 3, 2, shorts(&[8, 8])),
+        (259, 3, 1, shorts(&[1])),
+        (262, 3, 1, shorts(&[3])),
+        (273, 4, n, u32b(if n == 1 { data_at } else { offsets_at })),
+        (277, 3, 1, shorts(&[2])),
+        (278, 3, 1, shorts(&[per])),
+        (279, 4, n, u32b(if n == 1 { u32::from(h) * row } else { counts_at })),
+        (284, 3, 1, shorts(&[1])),
+        (320, 3, 768, u32b(map_at)),
+        (338, 3, 1, shorts(&[1])),
+    ];
+    out.extend(u16b(entries.len() as u16));
+    for (tag, kind, count, field) in entries {
+        out.extend(u16b(tag));
+        out.extend(u16b(kind));
+        out.extend(u32b(count));
+        out.extend(field);
+    }
+    out.extend([0; 4]);
+    out
+}
+
+#[test]
+fn a_palette_preview_with_alpha_is_placed() {
+    // #234: the program fails, so the preview is placed.
+    let ps = eps("0 0 1 setrgbcolor 10 10 80 80 rectfill frobnicate");
+    for (big, per) in [(false, 5), (true, 5), (false, 10), (true, 3)] {
+        let tiff = palette_tiff(20, 10, per, big);
+        let r = import(&crate::dos_eps(&ps, &tiff).unwrap()).unwrap();
+        assert!(r.preview, "{big} {per}");
+        assert!(r.warnings[0].contains("preview"), "{:?}", r.warnings);
+        let o = objects(&r.document);
+        let NodeKind::Image(im) = &o[0].kind else { panic!("{:?}", o[0].kind) };
+        assert_eq!((im.width, im.height), (20, 10));
+        assert!(near(bounds(&o[0]), Rect::new(0.0, 0.0, 100.0, 100.0)));
+        let png = image::load_from_memory(&r.document.images[&im.key].bytes).unwrap().to_rgba8();
+        for (x, y) in [(0, 0), (1, 0), (2, 0), (19, 9), (7, 4), (3, 6)] {
+            let [r, g, b] = [[255, 0, 0], [0, 128, 0], [0, 0, 255]][((x + y) % 3) as usize];
+            assert_eq!(png.get_pixel(x, y).0, [r, g, b, (x * 12) as u8], "({x}, {y}) {big} {per}");
+        }
+    }
+}
+
+#[test]
+fn a_damaged_palette_preview_is_refused_without_panicking() {
+    let tiff = palette_tiff(20, 10, 5, false);
+    assert!(crate::tiff::palette_rgba(&tiff).is_some());
+    // Cut anywhere before the last entry's value (the directory is at the end): nothing.
+    for cut in 0..tiff.len() - 6 {
+        assert!(crate::tiff::palette_rgba(&tiff[..cut]).is_none(), "{cut}");
+    }
+    // Any byte changed: a picture or nothing.
+    for big in [false, true] {
+        let tiff = palette_tiff(20, 10, 5, big);
+        for at in 0..tiff.len() {
+            for v in [0, 1, 2, 0x7f, 0x80, 0xff] {
+                let mut t = tiff.clone();
+                t[at] = v;
+                let _ = crate::tiff::palette_rgba(&t);
+            }
+        }
+    }
+    // A damaged preview of an unreadable program: the hard error.
+    let ps = eps("frobnicate");
+    for t in [&tiff[..tiff.len() / 2], b"II*\0garbage", &[0; 64]] {
+        let e = import(&crate::dos_eps(&ps, t).unwrap()).unwrap_err();
+        assert!(e.contains("can't be read"), "{e}");
+    }
+}

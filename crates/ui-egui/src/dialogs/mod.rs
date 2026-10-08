@@ -15,9 +15,11 @@ pub mod color_guide_options;
 mod color_picker;
 mod command;
 pub mod confirm;
+pub mod corners;
 mod document_setup;
 pub mod dxf_import;
 pub mod dxf_options;
+pub mod edit_selection;
 mod effect;
 pub mod envelope;
 pub mod eps_options;
@@ -29,11 +31,13 @@ pub mod file_info;
 pub mod flatten;
 pub mod flattener_presets;
 mod form;
+pub mod freehand;
 mod gradient_stop;
 pub mod graphic_style_options;
 pub mod halftone;
 pub mod import_pdf;
 pub mod layer_options;
+pub mod layers_panel_options;
 pub mod liquify;
 pub mod missing_links;
 pub mod new_color_group;
@@ -220,7 +224,6 @@ registry! {
     Saturate: [saturate::KIND] => saturate::SPEC,
     SaveSwatchLibrary: [save_swatch_library::KIND] => save_swatch_library::SPEC,
     TileEdgeColor: [tile_edge_color::KIND] => tile_edge_color::SPEC,
-    LayerOptions: [layer_options::KIND] => layer_options::SPEC,
     EyedropperOptions: [eyedropper::KIND] => eyedropper::SPEC,
     FlattenTransparency: [flatten::KIND] => flatten::SPEC,
     FlattenerPresets: [flattener_presets::KIND] => flattener_presets::SPEC,
@@ -229,6 +232,7 @@ registry! {
     SpotColors: [spot_colors::KIND] => spot_colors::SPEC,
     TransformEach: [transform_each::KIND] => transform_each::SPEC,
     WidthPoint: [width_point::KIND] => width_point::SPEC,
+    Corners: [corners::KIND] => corners::SPEC,
     SavePdf: [save_pdf::KIND] => save_pdf::SPEC,
     SvgOptions: [svg_options::KIND] => svg_options::SPEC,
     NewDocumentMore: [new_document::MORE] => new_document::MORE_SPEC,
@@ -265,10 +269,14 @@ registry! {
     PerspectiveGrid: [perspective_grid::KIND] => perspective_grid::SPEC,
     Envelope: [envelope::WARP, envelope::MESH, envelope::OPTIONS] => envelope::SPEC,
     LiquifyOptions: [liquify::KIND] => liquify::SPEC,
+    FreehandOptions: [freehand::KIND] => freehand::SPEC,
     PerspectiveGridPresets: [perspective_presets::KIND] => perspective_presets::SPEC,
     PerspectiveGridOptions: [perspective_options::KIND] => perspective_options::SPEC,
     BlendOptions: [blend_options::KIND] => blend_options::SPEC,
+    EditSelection: [edit_selection::KIND] => edit_selection::SPEC,
     PerspectivePlane: [perspective_plane::KIND] => perspective_plane::SPEC,
+    LayerOptions: [layer_options::KIND] => layer_options::SPEC,
+    LayersPanelOptions: [layers_panel_options::KIND] => layers_panel_options::SPEC,
 }
 
 /// The button labels the shared dialog frame can show (OK, discard and the fixed Cancel/Close),
@@ -312,10 +320,24 @@ pub fn confirm(app: &mut VectorcraftApp) -> DialogResult {
 
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     about::show(app, ctx);
+    // The kind of dialog shown last frame: a different one (or none) means this one just opened, and
+    // its first field is to take the keyboard focus (`focus_id`, until a field takes it).
+    let (shown_id, focus_id) = (egui::Id::new("dialog-shown"), egui::Id::new("dialog-focus-pending"));
     let Some(mut d) = app.ui.dialog.clone() else {
         app.ui.dialog_file = None;
+        ctx.data_mut(|m| {
+            m.remove::<String>(shown_id);
+            m.remove::<bool>(focus_id);
+        });
         return;
     };
+    let focus_first = ctx.data_mut(|m| {
+        if m.get_temp::<String>(shown_id).as_deref() != Some(d.kind.as_str()) {
+            m.insert_temp(shown_id, d.kind.clone());
+            m.insert_temp(focus_id, true);
+        }
+        m.get_temp::<bool>(focus_id).unwrap_or(false)
+    });
     let spec = spec(&d.kind);
     if let Some(window) = spec.window {
         return window(app, ctx);
@@ -345,7 +367,16 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.set_max_width(spec.max_width.map_or(room, |w| w.min(room)));
             ui.label(egui::RichText::new(heading.as_str()).font(theme::semibold(16.0)).color(t.text));
             ui.add_space(12.0);
+            // Just opened: its first field takes the keyboard focus, as in the reference app (type a
+            // value, press Enter). Only the body's fields can take it.
+            if focus_first {
+                ui.data_mut(|m| m.insert_temp(widgets::dialog_focus_flag(), true));
+            }
             cancel = (spec.body)(app, ui, &mut d);
+            // Taken (the flag is gone): done. Still there (the window's measuring frame): next frame.
+            if focus_first && ui.data_mut(|m| m.remove_temp::<bool>(widgets::dialog_focus_flag())).is_none() {
+                ui.data_mut(|m| m.remove::<bool>(focus_id));
+            }
             ui.add_space(16.0);
             // The button row is as wide as the fields above it and as tall as the buttons: a
             // right-to-left layout would otherwise take all the room left in the window, so the

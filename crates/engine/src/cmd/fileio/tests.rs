@@ -104,6 +104,17 @@ fn webp_opens_at_its_pixel_size() {
 }
 
 #[test]
+fn cmyk_tiffs_keep_their_inks_and_other_tiffs_become_png() {
+    let inks = vectorcraft_doc::cmyk::Inks::new(2, 1, vec![0, 102, 255, 0, 10, 20, 30, 40]).unwrap();
+    let tiff = vectorcraft_doc::ImageBlob::cmyk_tiff(&inks).unwrap();
+    let r = raster_image(&tiff.bytes).unwrap();
+    assert_eq!((r.width, r.height, r.blob.mime.as_str()), (2, 1, "image/tiff"));
+    assert_eq!(r.blob.cmyk(), Some(inks));
+    let rgb = raster_image(&image_bytes(2, 1, image::ImageFormat::Tiff)).unwrap();
+    assert_eq!(rgb.blob.mime, "image/png");
+}
+
+#[test]
 fn content_beats_a_wrong_extension() {
     let png = image_bytes(2, 2, image::ImageFormat::Png);
     assert_eq!(detect("photo.jpg", &png).unwrap().id, "png");
@@ -148,6 +159,39 @@ fn open_exts_cover_every_readable_format() {
     assert_eq!(filters[0], ("All readable files", OPEN_EXTS));
     assert_eq!(filters.len(), 6 + FORMATS.iter().filter(|f| f.read).count(), "and swatch libraries, flattener, PDF and print presets, plug-ins");
     assert_eq!(filters.last(), Some(&("Plug-ins", crate::cmd::plugin::EXTS)), "File › Open installs plug-ins");
+}
+
+/// The extensions usage texts list for export: one per writable format, each picking that format
+/// (`.png` picks PNG; PNG-8 is asked for by `format`).
+#[test]
+fn export_extensions_name_every_writable_format() {
+    let exts = export_extensions();
+    assert_eq!(
+        exts,
+        [
+            "vectorcraft",
+            "svg",
+            "svgz",
+            "pdf",
+            "png",
+            "jpg",
+            "gif",
+            "webp",
+            "tif",
+            "bmp",
+            "vctemplate",
+            "txt",
+            "dxf",
+            "eps",
+            "emf",
+            "wmf",
+            "tga",
+            "psd"
+        ]
+    );
+    for e in exts {
+        assert!(format_for_name(&format!("x.{e}")).is_some_and(|f| f.write), "{e}");
+    }
 }
 
 #[test]

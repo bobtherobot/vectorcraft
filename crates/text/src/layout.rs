@@ -3,12 +3,13 @@
 use std::ops::Range;
 
 use kurbo::{Affine, BezPath, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point, Rect, Shape, Vec2};
-use vectorcraft_doc::{CharStyle, Justify, ParaStyle, PathEffect, TextKind, TextObject};
+use unicode_bidi::{BidiInfo, Level};
+use vectorcraft_doc::{CharStyle, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathEffect, TextKind, TextObject};
 
 use crate::composer::{Breakpoint, compose};
 use crate::fontdb::FontDb;
 use crate::hyphen::hyphen_points;
-use crate::shape::{SGlyph, Tcy, cap_x_heights, hyphen_glyph, no_line_end, no_line_start, shape_range, style_metrics};
+use crate::shape::{Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, no_line_end, no_line_start, punct, shape_range, style_metrics};
 use crate::{Composer, FirstBaseline, LayoutOptions, LineInfo, OtFeatures, PositionedGlyph, TextLayout};
 
 const EPS: f64 = 1e-6;
@@ -33,20 +34,20 @@ impl Ctx<'_> {
         find(b).or_else(|| b.checked_sub(1).and_then(find)).or_else(|| self.runs.first().map(|(_, s)| *s)).unwrap_or(&self.default)
     }
 
-    fn shape_para(&self, r: Range<usize>) -> Vec<SGlyph> {
+    /// Shape paragraph `r` (its bidi resolution `bidi`).
+    fn shape_para(&self, r: Range<usize>, bidi: Option<&BidiInfo<'_>>) -> Vec<SGlyph> {
         let mut v = Vec::with_capacity(r.len());
-        shape_range(self.db, self.text, r, &self.runs, &self.opts.features, &mut v);
+        let levels = bidi.map_or(&[][..], |b| &b.levels);
+        shape_range(self.db, self.text, r, &self.runs, &self.opts.features, levels, &mut v);
         if self.vertical {
             tate_chu_yoko(&mut v, |g| self.style_at(g.byte).size);
-            // An upright glyph advances at least one em down the column (the vertical advance of
-            // CJK fonts), centred in it: a narrow mark like § must not overlap its neighbours.
-            for g in v.iter_mut().filter(|g| stands_upright(g)) {
-                let natural = g.face.advance(g.gid) * g.sx;
-                let em = g.face.units_per_em() * g.sx;
-                if natural < em && g.adv > 0.0 {
-                    g.dx += (em - natural) * 0.5;
-                    g.adv += em - natural;
-                }
+            // An upright glyph advances down the column by its vertical advance (the font's vertical
+            // metrics; without them at least one em, as CJK fonts' is), centred across it: a narrow
+            // mark like § must not overlap its neighbours.
+            for g in v.iter_mut().filter(|g| g.adv > 0.0 && stands_upright(g)) {
+                let extra = upright_cell(g) - g.face.advance(g.gid) * g.sx;
+                g.dx += extra * 0.5;
+                g.adv += extra;
             }
         }
         v
@@ -54,7 +55,12 @@ impl Ctx<'_> {
 
     fn emit(&mut self, g: &SGlyph, pre: Affine, origin: Point, angle: f64, advance: f64, line: usize) {
         let src = self.db.outline(&g.face, g.gid);
-        let local = Affine::rotate(-g.rotation.to_radians()) * Affine::translate((g.dx, g.dy - g.bshift)) * Affine::scale_non_uniform(g.sx, g.sy);
+        // A glyph whose leading space was taken off (mojikumi) is drawn that much earlier: an
+        // upright one in vertical type by turning about a point that much higher.
+        let upright = self.vertical && !self.on_path && g.tcy.is_none() && stands_upright(g);
+        let lead = if upright { 0.0 } else { g.lead };
+        let local =
+            Affine::rotate(-g.rotation.to_radians()) * Affine::translate((g.dx - lead, g.dy - g.bshift)) * Affine::scale_non_uniform(g.sx, g.sy);
         let mut m = pre * local;
         if self.vertical && self.on_path {
             // Vertical path type keeps the baseline path and turns each glyph across it.
@@ -63,14 +69,20 @@ impl Ctx<'_> {
             // Tate-chu-yoko: the block set across the column, centred on its em of it.
             let em = self.style_at(g.byte).size;
             let start = origin.x - t.pen;
-            let centre = Point::new(start + em * 0.5, origin.y - EM_CENTER * em);
+            let centre = Point::new(start + em * 0.5, origin.y - g.face.ideographic_centre() * em);
             let across = Affine::translate((centre.x - t.width * 0.5 + t.ink - origin.x, 0.0));
             let squeeze = Affine::translate((centre.x, 0.0)) * Affine::scale_non_uniform(t.squeeze, 1.0) * Affine::translate((-centre.x, 0.0));
             m = Affine::rotate_about(-std::f64::consts::FRAC_PI_2, centre) * squeeze * across * m;
         } else if self.vertical && stands_upright(g) {
-            // Turned about the centre of its em box, which the column's centre line runs through.
+            // Turned about the centre of its cell, which the column's centre line runs through: the
+            // middle of its own cell, not of its advance (tracking and justification add space
+            // after the cell, and must not push the glyph off the centre line).
             let em = self.style_at(g.byte).size;
-            m = Affine::rotate_about(-std::f64::consts::FRAC_PI_2, Point::new(origin.x + advance * 0.5, origin.y - EM_CENTER * em)) * m;
+            let cell = if g.adv > 0.0 { upright_cell(g) } else { advance };
+            m = Affine::rotate_about(
+                -std::f64::consts::FRAC_PI_2,
+                Point::new(origin.x + cell * 0.5 - g.lead, origin.y - upright_centre(g, cell, em)),
+            ) * m;
         }
         // Control characters (tabs) and soft hyphens draw nothing (fonts map them to .notdef).
         let outline = if src.elements().is_empty() || g.is_soft_hyphen() || g.ch.is_control() {
@@ -95,6 +107,8 @@ impl Ctx<'_> {
             font_id,
             gid: g.gid,
             xf: m,
+            // Vertical type keeps its logical order down the column.
+            rtl: g.level.is_rtl() && !self.vertical,
         });
     }
 }
@@ -149,7 +163,11 @@ pub fn layout_with(db: &FontDb, t: &TextObject, opts: &LayoutOptions) -> TextLay
     let line_xf = match &t.kind {
         _ if !vertical => Affine::IDENTITY,
         TextKind::OnPath { .. } => Affine::IDENTITY,
-        TextKind::Point => Affine::translate((-EM_CENTER * cx.style_at(0).size, 0.0)) * QUARTER_TURN,
+        TextKind::Point => {
+            let first = cx.style_at(0);
+            let centre = db.face(&first.font_family, &first.font_style).map_or(EM_CENTER, |f| f.ideographic_centre());
+            Affine::translate((-centre * first.size, 0.0)) * QUARTER_TURN
+        }
         _ => QUARTER_TURN,
     };
     match &t.kind {
@@ -214,8 +232,138 @@ fn tate_chu_yoko(g: &mut [SGlyph], size: impl Fn(&SGlyph) -> f64) {
     }
 }
 
+/// Half an em of `g`'s size when it is full-width Japanese punctuation of kind `kind` (its
+/// advance an em, give or take a tenth), the space that mojikumi can take off.
+fn punct_half(g: &SGlyph, kind: Punct) -> Option<f64> {
+    if punct(g.ch)? != kind || g.tcy.is_some() {
+        return None;
+    }
+    let em = g.face.units_per_em();
+    ((g.face.advance(g.gid) - em).abs() <= em * 0.1).then_some(em * 0.5 * g.sx)
+}
+
+/// Mojikumi (JLREQ 3.1.4): consecutive punctuation shares one half-em space. A closing bracket,
+/// comma or full stop followed by punctuation loses the space after it; an opening bracket after
+/// another loses the space before it. Returns which glyphs lost the space after them (a line
+/// ending in one takes nothing more off).
+fn compress_punctuation(sg: &mut [SGlyph]) -> Vec<bool> {
+    let mut lost_after = vec![false; sg.len()];
+    for j in 1..sg.len() {
+        let (before, after) = sg.split_at_mut(j);
+        let (Some(a), Some(b)) = (before.last_mut(), after.first_mut()) else { continue };
+        if punct(b.ch).is_none() {
+            continue;
+        }
+        if let Some(h) = punct_half(a, Punct::Closing) {
+            a.adv -= h;
+            if let Some(l) = lost_after.get_mut(j - 1) {
+                *l = true;
+            }
+        } else if punct(a.ch) == Some(Punct::Opening)
+            && let Some(h) = punct_half(b, Punct::Opening)
+        {
+            b.adv -= h;
+            b.lead += h;
+        }
+    }
+    lost_after
+}
+
+/// The space between Japanese and Latin letters or digits (JLREQ 3.2.2: a quarter em of the
+/// Japanese characters' size), with Line-end Punctuation Half Width.
+const WAKAN_AKI: f64 = 0.25;
+
+/// A Japanese character for the space next to Latin text: kana and kanji (and full-width
+/// letters, and the iteration and abbreviation marks 々 〆 〇), not punctuation or symbols, nor
+/// Hangul (Korean sets a word space instead).
+fn is_japanese_letter(c: char) -> bool {
+    if matches!(c, '々' | '〆' | '〇') {
+        return true;
+    }
+    is_cjk(c)
+        && !matches!(
+            c as u32,
+            0x3000..=0x303F | 0x3130..=0x318F | 0xAC00..=0xD7AF | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 | 0xFF3B..=0xFF40 | 0xFF5B..=0xFF65 | 0xFFA0..=0xFFDC
+        )
+        && c != '・'
+        && punct(c).is_none()
+}
+
+/// A Latin letter or digit (or another script's letter), set proportionally.
+fn is_latin_letter(c: char) -> bool {
+    c.is_alphanumeric() && !is_cjk(c)
+}
+
+/// Mojikumi (JLREQ 3.2.2): a quarter em between a Japanese character and a Latin letter or digit,
+/// either way round, added after the first of the two. Returns what each glyph got after it (taken
+/// off again when the line ends there).
+fn space_japanese_and_latin(sg: &mut [SGlyph]) -> Vec<f64> {
+    let mut added = vec![0.0; sg.len()];
+    for j in 1..sg.len() {
+        let (before, after) = sg.split_at_mut(j);
+        let (Some(a), Some(b)) = (before.last_mut(), after.first()) else { continue };
+        if a.tcy.is_some() || b.tcy.is_some() {
+            continue;
+        }
+        let japanese = if is_japanese_letter(a.ch) && is_latin_letter(b.ch) {
+            Some(&*a)
+        } else if is_latin_letter(a.ch) && is_japanese_letter(b.ch) {
+            Some(b)
+        } else {
+            None
+        };
+        if let Some(g) = japanese {
+            let aki = WAKAN_AKI * g.face.units_per_em() * g.sx;
+            a.adv += aki;
+            if let Some(x) = added.get_mut(j - 1) {
+                *x = aki;
+            }
+        }
+    }
+    added
+}
+
+/// The size of `g`'s em, in points.
+fn glyph_em(g: &SGlyph) -> f64 {
+    g.face.units_per_em() * g.sy
+}
+
+/// How far up (line space) Character Alignment `a` moves glyph `g` on a line whose largest em is
+/// `line_em`: the glyph's em box top, centre or bottom onto the line's (the em box running from
+/// its centre less half an em to its centre plus half an em above the baseline). Nothing on the
+/// Roman baseline, or for the line's largest characters.
+fn align_shift(g: &SGlyph, a: vectorcraft_doc::CharAlign, line_em: f64) -> f64 {
+    use vectorcraft_doc::CharAlign;
+    let k = match a {
+        CharAlign::RomanBaseline => return 0.0,
+        CharAlign::EmBoxTop => 0.5,
+        CharAlign::EmBoxCenter => 0.0,
+        CharAlign::EmBoxBottom => -0.5,
+    };
+    (g.face.ideographic_centre() + k) * (line_em - glyph_em(g)).max(0.0)
+}
+
+/// The length an upright glyph takes down the column before tracking and justification: its
+/// vertical advance (the font's vertical metrics), else its advance, at least one em.
+fn upright_cell(g: &SGlyph) -> f64 {
+    match g.face.vertical_glyph(g.gid) {
+        Some((advance, _)) => advance * g.sy,
+        None => (g.face.advance(g.gid) * g.sx).max(g.face.units_per_em() * g.sx),
+    }
+}
+
+/// Height above the baseline (line space) of the centre of an upright glyph's `cell`, the point it
+/// turns about: from the font's vertical metrics, the cell hanging from the glyph's vertical origin;
+/// else the centre of the ideographic em box ([`EM_CENTER`] of the size `em`).
+fn upright_centre(g: &SGlyph, cell: f64, em: f64) -> f64 {
+    match g.face.vertical_glyph(g.gid) {
+        Some((_, origin)) => origin * g.sy - cell * 0.5,
+        None => EM_CENTER * em,
+    }
+}
+
 /// Height of the centre of the ideographic em box above the baseline, in ems (the em box runs
-/// from 0.12 em below the baseline to 0.88 em above it).
+/// from 0.12 em below the baseline to 0.88 em above it), for fonts without vertical metrics.
 const EM_CENTER: f64 = 0.38;
 
 /// A quarter turn clockwise (y down), exact: line space → text space for vertical type.
@@ -456,11 +604,14 @@ struct Metrics {
     lead: f64,
     cap: f64,
     xh: f64,
+    /// Height of the top of the ideographic em box above the baseline.
+    top: f64,
 }
 
 impl Metrics {
     fn of(g: &SGlyph) -> Self {
-        Self { asc: g.ascent, desc: g.descent, lead: g.leading, cap: g.cap, xh: g.xh }
+        let em = g.face.units_per_em() * g.sy;
+        Self { asc: g.ascent, desc: g.descent, lead: g.leading, cap: g.cap, xh: g.xh, top: (g.face.ideographic_centre() + 0.5) * em }
     }
     fn max(g: &[SGlyph]) -> Option<Self> {
         let mut it = g.iter();
@@ -471,6 +622,7 @@ impl Metrics {
             lead: m.lead.max(g.leading),
             cap: m.cap.max(g.cap),
             xh: m.xh.max(g.xh),
+            top: m.top.max(Self::of(g).top),
         }))
     }
     /// Distance from the frame top to the first baseline.
@@ -497,6 +649,9 @@ struct Pen<'r> {
     fb_min: f64,
     /// Further spans at the current baseline (text wrapping on both sides of an object).
     queued: Vec<(f64, f64, f64)>,
+    /// Leading measured from em box top to em box top: where the next line's em box top goes.
+    model: LeadingModel,
+    next_top: Option<f64>,
 }
 
 impl Pen<'_> {
@@ -505,7 +660,7 @@ impl Pen<'_> {
     /// The `bool` is true for a further span at the previous line's baseline.
     fn place(&mut self, est: Metrics, ind_l: f64, ind_r: f64) -> Option<(f64, f64, f64, bool)> {
         let Some(regions) = self.regions else {
-            let b = self.prev.map_or(0.0, |b| b + est.lead + self.pending);
+            let b = self.prev.map_or(0.0, |b| self.next_baseline(b, est));
             return Some((b, f64::NEG_INFINITY, f64::INFINITY, false));
         };
         if !self.queued.is_empty() {
@@ -515,8 +670,9 @@ impl Pen<'_> {
         loop {
             let r = regions.get(self.ri)?;
             let mut baseline = match self.prev {
+                None if self.model == LeadingModel::EmBoxTop => r.top() + est.top.max(self.fb_min),
                 None => r.top() + est.first_baseline(self.fb, self.fb_min),
-                Some(b) => b + est.lead + self.pending,
+                Some(b) => self.next_baseline(b, est),
             };
             loop {
                 if baseline + est.desc > r.bottom() + 0.01 {
@@ -549,6 +705,18 @@ impl Pen<'_> {
     }
     fn bottom(&self) -> f64 {
         self.regions.and_then(|r| r.get(self.ri)).map_or(f64::INFINITY, |r| r.bottom())
+    }
+    /// The baseline of the line after the one at `prev`, for a line of metrics `est`.
+    fn next_baseline(&self, prev: f64, est: Metrics) -> f64 {
+        match (self.model, self.next_top) {
+            (LeadingModel::EmBoxTop, Some(top)) => top + est.top + self.pending,
+            _ => prev + est.lead + self.pending,
+        }
+    }
+    /// A line was set at `baseline` with metrics `m`: where the next one goes from.
+    fn settled(&mut self, baseline: f64, m: Metrics) {
+        self.prev = Some(baseline);
+        self.next_top = Some(baseline - m.top + m.lead);
     }
 }
 
@@ -649,6 +817,18 @@ fn kinsoku_between(before: char, after: Option<char>) -> bool {
 
 #[cfg(test)]
 #[test]
+fn japanese_letters_for_the_latin_space_are_kana_kanji_and_marks_not_hangul_or_punctuation() {
+    for c in ['あ', 'カ', '漢', '々', '〆', '〇', 'Ａ'] {
+        assert!(is_japanese_letter(c), "{c}");
+    }
+    // Hangul in every form: syllables, compatibility jamo (ㄱ ㅏ), half-width jamo (ﾡ).
+    for c in ['한', 'ㄱ', 'ㅏ', '\u{FFA1}', '。', '「', '・', '、', 'a'] {
+        assert!(!is_japanese_letter(c), "{c}");
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn kinsoku_keeps_closing_marks_off_line_starts_and_opening_ones_off_line_ends() {
     for (a, b) in [('字', '。'), ('弧', '」'), ('」', '、'), ('ャ', 'ー'), ('カ', 'ッ'), ('「', 'か'), ('（', '雅')] {
         assert!(!kinsoku_between(a, Some(b)), "{a}{b}");
@@ -717,7 +897,7 @@ fn candidates(text: &str, g: &[SGlyph], hyphenate: bool) -> Vec<Breakpoint> {
 /// Every-line composition of paragraph glyphs `sg` if applicable (justified area text with uniform
 /// line metrics); `None` falls back to the greedy single-line composer.
 fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>) -> Option<Vec<(usize, bool)>> {
-    let justified = !matches!(para.justify, Justify::Left | Justify::Center | Justify::Right);
+    let justified = !matches!(para.justify, Justify::Auto | Justify::Left | Justify::Center | Justify::Right);
     if cx.opts.composer != Composer::EveryLine || !justified || pen.regions.is_none() || sg.len() < 2 {
         return None;
     }
@@ -737,7 +917,7 @@ fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>) ->
         let w = x1 - x0 - ind_l - para.right_indent;
         widths.push(w);
         acc += w.max(1.0);
-        sim.prev = Some(b);
+        sim.settled(b, m);
         sim.pending = 0.0;
         if acc > total * 1.6 + 4.0 * w.max(1.0) {
             break;
@@ -751,13 +931,32 @@ fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>) ->
 }
 
 fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Option<&[Region]>) {
-    let mut pen = Pen { regions, ri: 0, prev: None, pending: 0.0, fb: cx.opts.first_baseline, fb_min: cx.opts.first_baseline_min, queued: vec![] };
+    let mut pen = Pen {
+        regions,
+        ri: 0,
+        prev: None,
+        pending: 0.0,
+        fb: cx.opts.first_baseline,
+        fb_min: cx.opts.first_baseline_min,
+        queued: vec![],
+        model: para.leading_model,
+        next_top: None,
+    };
     'paras: for (pi, pr) in paras.iter().enumerate() {
-        let sg = cx.shape_para(pr.clone());
+        let text = cx.text;
+        let bidi = para_bidi(text.get(pr.clone()).unwrap_or_default(), para.direction);
+        let rtl = is_rtl(bidi.as_ref());
+        let mut sg = cx.shape_para(pr.clone(), bidi.as_ref());
+        // Japanese composition: consecutive punctuation shares one half-em space.
+        let compressed = if para.mojikumi == Mojikumi::LineEndHalf { compress_punctuation(&mut sg) } else { vec![] };
+        // …and a quarter em between Japanese and Latin text.
+        let wakan = if para.mojikumi == Mojikumi::LineEndHalf { space_japanese_and_latin(&mut sg) } else { vec![] };
         let pm = {
             let (asc, desc, lead) = style_metrics(cx.db, cx.style_at(pr.start));
-            let (cap, xh) = cap_x_heights(cx.db, cx.style_at(pr.start));
-            Metrics { asc, desc, lead, cap, xh }
+            let st = cx.style_at(pr.start);
+            let (cap, xh) = cap_x_heights(cx.db, st);
+            let centre = cx.db.face(&st.font_family, &st.font_style).map_or(EM_CENTER, |f| f.ideographic_centre());
+            Metrics { asc, desc, lead, cap, xh, top: (centre + 0.5) * st.size * st.v_scale / 100.0 }
         };
         if pi > 0 {
             pen.pending += para.space_before;
@@ -787,6 +986,10 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 let m = Metrics::max(&sg[i..end]).unwrap_or(pm);
                 baseline += if same_baseline || (pen.regions.is_none() && first_in_region) {
                     0.0
+                } else if pen.model == LeadingModel::EmBoxTop {
+                    // The em box top is fixed (the frame's top, or the line above's): the baseline
+                    // hangs from it by this line's tallest em box.
+                    if first_in_region { m.top.max(pen.fb_min) - est.top.max(pen.fb_min) } else { m.top - est.top }
                 } else if first_in_region {
                     m.first_baseline(pen.fb, pen.fb_min) - est.first_baseline(pen.fb, pen.fb_min)
                 } else {
@@ -811,8 +1014,18 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 trimmed -= 1;
             }
             let hyphen = (hyph && end > i).then(|| hyphen_glyph(&sg[end - 1]));
-            let w: f64 = sg[i..trimmed].iter().map(|g| g.adv).sum::<f64>() + hyphen.as_ref().map_or(0.0, |h| h.adv);
+            // Mojikumi: a closing bracket, comma or full stop ending the line is set half width, and
+            // no Japanese–Latin space is left at the end of a line.
+            let end_trim = match trimmed.checked_sub(1).filter(|&k| k >= i && para.mojikumi == Mojikumi::LineEndHalf) {
+                Some(k) => {
+                    let half = if compressed.get(k).copied().unwrap_or(false) { None } else { sg.get(k).and_then(|g| punct_half(g, Punct::Closing)) };
+                    half.unwrap_or(0.0) + wakan.get(k).copied().unwrap_or(0.0)
+                }
+                None => 0.0,
+            };
+            let w: f64 = sg[i..trimmed].iter().map(|g| g.adv).sum::<f64>() + hyphen.as_ref().map_or(0.0, |h| h.adv) - end_trim;
             let (align, justify) = match para.justify {
+                Justify::Auto => (if rtl { 2 } else { 0 }, false),
                 Justify::Left => (0, false),
                 Justify::Center => (1, false),
                 Justify::Right => (2, false),
@@ -822,15 +1035,32 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 Justify::JustifyAll => (0, true),
             };
             let justify = justify && regions.is_some();
-            let (mut per_space, mut per_gap) = (0.0, 0.0);
+            let (mut per_space, mut per_gap, mut per_cjk) = (0.0, 0.0, 0.0);
             let spaces = sg[i..trimmed].iter().filter(|g| g.is_space()).count();
+            // Japanese (and Chinese) lines are justified between their characters (JLREQ 3.8): the
+            // gaps next to a CJK character, not inside a Latin word or a tate-chu-yoko block.
+            let cjk_gap = |j: usize| {
+                j + 1 < trimmed
+                    && sg
+                        .get(j)
+                        .zip(sg.get(j + 1))
+                        .is_some_and(|(a, b)| !a.is_space() && !b.is_space() && !b.continues_tcy() && a.ch != '\t' && (is_cjk(a.ch) || is_cjk(b.ch)))
+            };
+            let cjk_gaps = (i..trimmed).filter(|&j| cjk_gap(j)).count();
             if justify && (width - w).abs() > EPS {
-                if spaces > 0 {
+                if cjk_gaps > 0 && width > w {
+                    // Spread over the CJK gaps and the word spaces alike.
+                    let per = (width - w) / (cjk_gaps + spaces) as f64;
+                    (per_space, per_cjk) = (per, per);
+                } else if spaces > 0 {
                     // Composed lines may shrink word spaces (never below zero).
                     per_space =
                         ((width - w) / spaces as f64).max(-sg[i..trimmed].iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min));
-                } else if para.justify == Justify::JustifyAll && trimmed - i > 1 && width > w {
-                    per_gap = (width - w) / (trimmed - i - 1) as f64;
+                } else if para.justify == Justify::JustifyAll && width > w {
+                    let gaps = sg.get(i + 1..trimmed).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count());
+                    if gaps > 0 {
+                        per_gap = (width - w) / gaps as f64;
+                    }
                 }
             }
             let start_x = if justify {
@@ -850,24 +1080,44 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
             };
             let li = cx.out.lines.len();
             let glyph_start = cx.out.glyphs.len();
-            let mut x = start_x;
+            // Character Alignment lines smaller characters up with the line's largest em box.
+            let line_em = sg.get(i..end).map_or(0.0, |line| line.iter().map(glyph_em).fold(0.0, f64::max));
             let mut x_end = start_x;
             // Tab stops are measured from the frame's left edge (point type: the origin).
             let tab_origin = if regions.is_some() { x0 } else { 0.0 };
-            for (j, g) in sg.iter().enumerate().take(end).skip(i) {
+            let line_start = sg.get(i).map_or(pr.start, |g| g.byte);
+            let line_end = sg.get(end).map_or(pr.end, |g| g.byte);
+            let order = visual_order(bidi.as_ref().filter(|_| !cx.vertical), pr.start, line_start..line_end, &sg[i..end]);
+            // RTL's logical trailing spaces precede the visible content. Keep them outside
+            // the aligned content extent, just as LTR trailing spaces extend to its right.
+            let leading_space_width: f64 =
+                order.iter().take_while(|&&offset| i + offset >= trimmed).filter_map(|&offset| sg.get(i + offset)).map(|g| g.adv).sum();
+            let mut x = start_x - leading_space_width;
+            for offset in order {
+                let j = i + offset;
+                let Some(g) = sg.get(j) else { continue };
                 let mut adv = g.adv;
+                if j + 1 == trimmed {
+                    adv -= end_trim;
+                }
                 if g.ch == '\t' {
                     adv = tab_advance(&para.tabs, tab_origin, x, &sg[j + 1..trimmed.max(j + 1)]);
                 } else if j < trimmed {
                     if g.is_space() {
                         adv += per_space;
-                    } else if j + 1 < trimmed {
+                    } else if per_cjk != 0.0 {
+                        if cjk_gap(j) {
+                            adv += per_cjk;
+                        }
+                    } else if j + 1 < trimmed && sg.get(j + 1).is_some_and(|next| !next.continues_tcy()) {
+                        // Between glyphs, never inside a tate-chu-yoko block (one cell).
                         adv += per_gap;
                     }
                 }
-                cx.emit(g, Affine::translate((x, baseline)), Point::new(x, baseline), 0.0, adv, li);
+                let y = baseline - align_shift(g, cx.style_at(g.byte).char_align, line_em);
+                cx.emit(g, Affine::translate((x, y)), Point::new(x, y), 0.0, adv, li);
                 x += adv;
-                if j + 1 == trimmed {
+                if j < trimmed {
                     x_end = x;
                 }
             }
@@ -878,6 +1128,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 x_end = hx + h.adv;
             }
             cx.out.lines.push(LineInfo {
+                rtl: rtl && !cx.vertical,
                 baseline,
                 x0: start_x,
                 x1: x_end,
@@ -889,7 +1140,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 glyph_end: cx.out.glyphs.len(),
                 avail: if regions.is_some() { (ax0, ax1) } else { (start_x, x_end) },
             });
-            pen.prev = Some(baseline);
+            pen.settled(baseline, m);
             // Further spans of this line band share the settled baseline.
             for q in &mut pen.queued {
                 q.0 = baseline;
@@ -942,9 +1193,20 @@ impl ArcPath {
 fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &BezPath, start: f64, closed: bool, effect: PathEffect) {
     cx.out.on_path = true;
     let mut sg = Vec::new();
+    // The first paragraph's direction aligns the line (Auto) and sets the caret's.
+    let mut rtl = None;
     for pr in paras {
-        sg.extend(cx.shape_para(pr.clone()));
+        let text = cx.text;
+        let bidi = para_bidi(text.get(pr.clone()).unwrap_or_default(), para.direction);
+        rtl.get_or_insert(is_rtl(bidi.as_ref()) && !cx.vertical);
+        let shaped = cx.shape_para(pr.clone(), bidi.as_ref());
+        for i in visual_order(bidi.as_ref().filter(|_| !cx.vertical), pr.start, pr.clone(), &shaped) {
+            if let Some(g) = shaped.get(i) {
+                sg.push(g.clone());
+            }
+        }
     }
+    let rtl = rtl.unwrap_or(false);
     let ap = ArcPath::new(path);
     let m = Metrics::max(&sg).map(|m| (m.asc, m.desc)).unwrap_or_else(|| {
         let s = style_metrics(cx.db, cx.style_at(0));
@@ -954,6 +1216,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
     if ap.segs.is_empty() {
         cx.out.overflow = !sg.is_empty();
         cx.out.lines.push(LineInfo {
+            rtl,
             baseline: 0.0,
             x0: 0.0,
             x1: 0.0,
@@ -972,6 +1235,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
     let avail = if closed { ap.len } else { ap.len - s_start };
     let w: f64 = sg.iter().map(|g| g.adv).sum();
     let s0 = match para.justify {
+        Justify::Auto if rtl => s_start + (avail - w).max(0.0),
         Justify::Center | Justify::JustifyCenter => s_start + ((avail - w) * 0.5).max(0.0),
         Justify::Right | Justify::JustifyRight => s_start + (avail - w).max(0.0),
         _ => s_start,
@@ -1026,6 +1290,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
     let (ps, _) = ap.at(if closed { s0.rem_euclid(ap.len) } else { s0 });
     let (pe, _) = ap.at(if closed { (s0 + x).rem_euclid(ap.len) } else { s0 + x });
     cx.out.lines.push(LineInfo {
+        rtl,
         baseline: ps.y,
         x0: ps.x,
         x1: pe.x,
@@ -1037,4 +1302,51 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
         glyph_end: cx.out.glyphs.len(),
         avail: (0.0, ap.len),
     });
+}
+
+/// The bidirectional resolution (UAX #9) of paragraph `text`, its base direction `direction` or,
+/// without one, from its first strong character. `None` for the usual paragraph with nothing right
+/// to left in it (no right-to-left character or direction), which skips the algorithm.
+pub(crate) fn para_bidi(text: &str, direction: Option<ParaDirection>) -> Option<BidiInfo<'_>> {
+    use unicode_bidi::BidiClass::{AL, AN, FSI, R, RLE, RLI, RLO};
+    let rtl_set = direction == Some(ParaDirection::RightToLeft);
+    if !rtl_set && !text.chars().any(|c| matches!(unicode_bidi::bidi_class(c), R | AL | AN | RLE | RLO | RLI | FSI)) {
+        return None;
+    }
+    let level = direction.map(|d| if d == ParaDirection::RightToLeft { Level::rtl() } else { Level::ltr() });
+    Some(BidiInfo::new(text, level))
+}
+
+/// Does the paragraph run right to left ([`para_bidi`])?
+pub(crate) fn is_rtl(bidi: Option<&BidiInfo<'_>>) -> bool {
+    bidi.and_then(|b| b.paragraphs.first()).is_some_and(|p| p.level.is_rtl())
+}
+
+/// The visual order of a line's `glyphs` (indices into them), whole shaping clusters reordered
+/// (UAX #9 L1–L2) for the line `line` (bytes of the text) of the paragraph starting at byte
+/// `paragraph_start`; their own order when nothing is right to left (`bidi` None).
+fn visual_order(bidi: Option<&BidiInfo<'_>>, paragraph_start: usize, line: Range<usize>, glyphs: &[SGlyph]) -> Vec<usize> {
+    let Some((bidi, para)) = bidi.filter(|b| b.has_rtl()).and_then(|b| Some((b, b.paragraphs.first()?))) else {
+        return (0..glyphs.len()).collect();
+    };
+    if glyphs.is_empty() {
+        return vec![];
+    }
+    let levels = bidi.reordered_levels(para, line.start.saturating_sub(paragraph_start)..line.end.saturating_sub(paragraph_start));
+    let mut clusters: Vec<Range<usize>> = Vec::new();
+    for (i, g) in glyphs.iter().enumerate() {
+        if i > 0 && glyphs.get(i - 1).is_some_and(|p| p.byte == g.byte) {
+            if let Some(c) = clusters.last_mut() {
+                c.end = i + 1;
+            }
+        } else {
+            clusters.push(i..i + 1);
+        }
+    }
+    let cluster_levels: Vec<_> = clusters
+        .iter()
+        .filter_map(|c| glyphs.get(c.start))
+        .map(|g| levels.get(g.byte.saturating_sub(paragraph_start)).copied().unwrap_or(g.level))
+        .collect();
+    unicode_bidi::BidiInfo::reorder_visual(&cluster_levels).into_iter().filter_map(|i| clusters.get(i)).flat_map(|c| c.clone()).collect()
 }

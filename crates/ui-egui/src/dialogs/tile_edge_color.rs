@@ -25,38 +25,32 @@ pub fn open(app: &mut VectorcraftApp) -> Result<Value, String> {
 }
 
 /// `color` (a preset's name or a hex colour) as a colour.
-pub(super) fn resolve(color: &str) -> Option<Color> {
+fn resolve(color: &str) -> Option<Color> {
     match LAYER_COLORS.iter().find(|(name, _)| name.eq_ignore_ascii_case(color.trim())) {
         Some((_, [r, g, b])) => Some(Color::rgb8(*r, *g, *b)),
         None => Color::from_hex(color),
     }
 }
 
-/// A layer colour picker bound to `d.fields[key]` (`#rrggbb`): the presets by name, Custom when
-/// it is none of them, and a swatch that picks any colour.
-pub(super) fn layer_color_picker(ui: &mut egui::Ui, d: &mut Dialog, key: &str) {
-    let color = resolve(&d.str(key)).unwrap_or(Color::BLACK);
+fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
+    let color = resolve(&d.str("color")).unwrap_or(Color::BLACK);
     let [r, g, b, _] = color.to_rgba8(1.0);
     let preset = LAYER_COLORS.iter().position(|(_, c)| *c == [r, g, b]);
     let names: Vec<&str> = LAYER_COLORS.iter().map(|(n, _)| *n).chain(["Custom"]).collect();
-    ui.horizontal(|ui| {
-        if let Some((_, [r, g, b])) =
-            widgets::dropdown(ui, key, names[preset.unwrap_or(LAYER_COLORS.len())], &names, 140.0).and_then(|i| LAYER_COLORS.get(i))
-        {
-            d.fields.insert(key.into(), json!(Color::rgb8(*r, *g, *b).to_hex()));
-        }
-        // Any other colour (the preset list shows Custom then).
-        let mut rgb = [r, g, b];
-        if ui.color_edit_button_srgb(&mut rgb).changed() {
-            d.fields.insert(key.into(), json!(Color::rgb8(rgb[0], rgb[1], rgb[2]).to_hex()));
-        }
-    });
-}
-
-fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     grid(ui, |ui| {
         label(ui, tl!("Color:"));
-        layer_color_picker(ui, d, "color");
+        ui.horizontal(|ui| {
+            if let Some((_, [r, g, b])) =
+                widgets::dropdown(ui, "tile-edge", names[preset.unwrap_or(LAYER_COLORS.len())], &names, 140.0).and_then(|i| LAYER_COLORS.get(i))
+            {
+                d.fields.insert("color".into(), json!(Color::rgb8(*r, *g, *b).to_hex()));
+            }
+            // Any other colour (the preset list shows Custom then).
+            let mut rgb = [r, g, b];
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                d.fields.insert("color".into(), json!(Color::rgb8(rgb[0], rgb[1], rgb[2]).to_hex()));
+            }
+        });
         ui.end_row();
     });
     false

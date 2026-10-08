@@ -1,16 +1,21 @@
 //! The Selection tool (V): click/shift-click, marquee, move (Alt copies, Shift constrains),
 //! bounding-box scale (Shift proportional, Alt from centre) and rotate (outside corners, Shift 45°),
-//! drag a live rectangle's corner widget to round its corners, double-click to enter isolation mode.
+//! drag a live rectangle's corner widget to round its corners (Alt-click cycles their kind,
+//! double-click opens the Corners dialog), double-click to enter isolation mode (Double Click To
+//! Isolate), Cmd/Ctrl-click to select the object behind (Command Click to Select Objects Behind),
+//! click or drag a ruler guide ([`crate::rulerguide`]).
 //! The bounding box stands at the selection's own angle after a rotation, so its handles scale
-//! along the objects' axes.
+//! along the objects' axes. A handle drag resizes area type's frame (the type area) instead of
+//! scaling its type: the text reflows at its size.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::hit::{hit_test, marquee};
+use vectorcraft_doc::hit::{hit_test, marquee, objects_at};
 use vectorcraft_doc::{NodeId, OrientedBox};
 use vectorcraft_geom::{Affine, Point, Rect};
 
 use crate::bbox::{Handle, hit_handle, in_rotate_zone, move_delta, rotate_for_drag, scale_for_drag};
-use crate::corners::{CornerDrag, over_widget};
+use crate::corners::{self, CornerDrag, over_widget};
+use crate::rulerguide::GuideEdit;
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, json_ids};
 
 #[derive(Clone, Debug, Default)]
@@ -28,6 +33,8 @@ enum State {
     Scaling {
         handle: Handle,
         bx: OrientedBox,
+        /// Area type is selected: its frame resizes (`typeAreas`), its type keeps its size.
+        areas: bool,
     },
     Rotating {
         center: Point,
@@ -49,6 +56,7 @@ pub struct SelectionTool {
     guides: Vec<Overlay>,
     targets: Option<crate::guides::Targets>,
     start_bounds: Option<Rect>,
+    guide: GuideEdit,
 }
 
 pub fn matrix_json(a: Affine) -> Value {
@@ -96,18 +104,27 @@ impl Tool for SelectionTool {
     }
 
     fn busy(&self) -> bool {
-        !matches!(self.state, State::Idle)
+        !matches!(self.state, State::Idle) || self.guide.busy()
     }
 
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
+        if let Some(out) = self.guide.pointer(cx, ev) {
+            return out;
+        }
         let p = ev.pos;
         let m = ev.mods;
         match (ev.kind, self.state.clone()) {
             (PointerKind::DoubleClick, _) => {
                 self.state = State::Idle;
+                if let Some(a) = corners::double_click(cx, p) {
+                    return vec![a];
+                }
+                if crate::rulerguide::guide_at(cx, p).is_some() {
+                    return vec![];
+                }
                 if let Some(h) = hit_test(cx.doc, p, cx.hit_options()) {
                     let top = h.top_object(cx.isolation);
-                    if cx.doc.node(top).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Group { .. })) {
+                    if cx.double_click_isolate && cx.doc.node(top).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Group { .. })) {
                         return vec![Action::Exec("object.isolate".into(), json!({ "id": top.0 }))];
                     }
                     if cx.doc.node(top).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Text(_))) {
@@ -120,7 +137,7 @@ impl Tool for SelectionTool {
             }
             (PointerKind::Down, _) => {
                 // 1. Live Corners widgets, then the bounding-box handles of the current selection.
-                if let Some(c) = CornerDrag::hit(cx, p) {
+                if let Some(c) = CornerDrag::hit(cx, ev) {
                     self.state = State::Corner(c);
                     return vec![];
                 }
@@ -129,8 +146,14 @@ impl Tool for SelectionTool {
                 {
                     match box_hit(cx, &bx, p) {
                         Some(BoxHit::Handle(handle)) => {
-                            self.state = State::Scaling { handle, bx };
-                            return vec![Action::Begin("Scale".into())];
+                            let is_area = |id: &NodeId| cx.doc.node(*id).is_some_and(is_area_type);
+                            let areas = cx.selection.objects.iter().any(is_area);
+                            // Only area type: the step resizes type areas; anything else scales.
+                            let label = if areas && cx.selection.objects.iter().all(is_area) { "Resize Type Area" } else { "Scale" };
+                            // Smart Guides align what the handle moves with the other objects.
+                            self.targets = cx.smart_guides.then(|| crate::guides::Targets::collect(cx.doc, &cx.selection.objects, None));
+                            self.state = State::Scaling { handle, bx, areas };
+                            return vec![Action::Begin(label.into())];
                         }
                         Some(BoxHit::Rotate) => {
                             self.state = State::Rotating { center: bx.center(), start: p };
@@ -139,7 +162,19 @@ impl Tool for SelectionTool {
                         None => {}
                     }
                 }
-                // 2. Objects.
+                // 2. Ruler guides (over the art, as they are drawn).
+                if let Some(out) = self.guide.press(cx, ev) {
+                    self.state = State::Idle;
+                    return out;
+                }
+                // 3. Objects: Cmd/Ctrl-click selects the one under the selected one (cycling).
+                if m.cmd
+                    && cx.select_behind
+                    && let Some(behind) = object_behind(cx, p)
+                {
+                    self.state = State::Moving { start: p, began: false, deselect: None };
+                    return vec![Action::Exec("select.set".into(), json!({ "ids": [behind.0] }))];
+                }
                 match hit_test(cx.doc, p, cx.hit_options()) {
                     Some(h) => {
                         let top = h.top_object(cx.isolation);
@@ -196,12 +231,20 @@ impl Tool for SelectionTool {
                 out.push(Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(Affine::translate(d)), "copy": m.alt })));
                 out
             }
-            (PointerKind::Drag, State::Scaling { handle, bx }) => {
+            (PointerKind::Drag, State::Scaling { handle, bx, areas }) => {
                 // Scale in the box's own frame: along the objects' axes when it is rotated.
-                let a = scale_for_drag(bx.rect, handle, bx.to_local(p), m.shift, m.alt);
+                let mut a = scale_for_drag(bx.rect, handle, bx.to_local(p), m.shift, m.alt);
+                self.guides.clear();
+                if let Some(t) = &self.targets {
+                    (a, self.guides) = t.snap_scale(&bx, handle, a, m.shift, m.alt, cx.tol(5.0));
+                }
                 let nr = a.transform_rect_bbox(bx.rect);
                 self.measure = Some((p, cx.size_label(nr.width(), nr.height())));
-                vec![Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(bx.conjugate(a)), "copy": false }))]
+                let mut params = json!({ "matrix": matrix_json(bx.conjugate(a)), "copy": false });
+                if areas {
+                    params["typeAreas"] = json!(true);
+                }
+                vec![Action::Preview("object.transform".into(), params)]
             }
             (PointerKind::Drag, State::Rotating { center, start, .. }) => {
                 let (a, deg) = rotate_for_drag(center, start, p, m.shift);
@@ -235,6 +278,8 @@ impl Tool for SelectionTool {
             (PointerKind::Up, State::Scaling { .. } | State::Rotating { .. }) => {
                 self.state = State::Idle;
                 self.measure = None;
+                self.guides.clear();
+                self.targets = None;
                 vec![Action::Commit]
             }
             (PointerKind::Up, State::Marquee { start, add, .. }) => {
@@ -262,6 +307,7 @@ impl Tool for SelectionTool {
             _ => {}
         }
         o.extend(self.guides.iter().cloned());
+        o.extend(self.guide.overlays(cx));
         if let Some((p, t)) = &self.measure {
             o.push(Overlay::Measure { p: *p, text: t.clone() });
         }
@@ -271,10 +317,13 @@ impl Tool for SelectionTool {
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
         match self.state {
             State::Rotating { .. } => return Cursor::Rotate,
-            State::Scaling { handle, bx } => return handle_cursor(handle, bx.angle),
+            State::Scaling { handle, bx, .. } => return handle_cursor(handle, bx.angle),
             State::Moving { began: true, .. } => return Cursor::Arrow,
             State::Corner(_) => return Cursor::CornerRadius,
             _ => {}
+        }
+        if self.guide.busy() {
+            return self.guide.cursor(cx, p).unwrap_or_default();
         }
         if over_widget(cx, p) {
             return Cursor::CornerRadius;
@@ -288,6 +337,9 @@ impl Tool for SelectionTool {
                 None => {}
             }
         }
+        if let Some(c) = self.guide.cursor(cx, p) {
+            return c;
+        }
         if let Some(h) = hit_test(cx.doc, p, cx.hit_options()) {
             if cx.selection.contains(h.top_object(cx.isolation)) || m.alt {
                 return Cursor::Move;
@@ -296,6 +348,20 @@ impl Tool for SelectionTool {
         }
         Cursor::Arrow
     }
+}
+
+/// Select Behind: of the objects under `p` (topmost first), the one below the lowest selected
+/// one, back to the topmost after the bottom one; the topmost when none is selected.
+fn object_behind(cx: &ToolContext, p: Point) -> Option<NodeId> {
+    let stack = objects_at(cx.doc, p, cx.hit_options(), cx.isolation);
+    let next = stack.iter().rposition(|id| cx.selection.contains(*id)).map_or(0, |i| i + 1);
+    stack.get(next).or(stack.first()).copied()
+}
+
+/// Is `n` area type (text in a frame) whose frame the tools reshape? Type in perspective isn't:
+/// it transforms whole.
+pub(crate) fn is_area_type(n: &vectorcraft_doc::Node) -> bool {
+    n.perspective.is_none() && matches!(&n.kind, vectorcraft_doc::NodeKind::Text(t) if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }))
 }
 
 /// The resize cursor for handle `h` of a box turned by `angle` (counter-clockwise degrees): the
@@ -331,6 +397,27 @@ mod tests {
         let a = t.pointer(&cx, &ev(PointerKind::Down, 150.0, 150.0));
         assert_eq!(a, vec![Action::Exec("select.set".into(), json!({"ids": [id.0]}))]);
         assert!(t.pointer(&cx, &ev(PointerKind::Up, 150.0, 150.0)).is_empty());
+    }
+
+    /// #414: a press on a ruler guide picks it over the art, and drags it.
+    #[test]
+    fn a_press_on_a_ruler_guide_picks_it_over_the_art() {
+        let (mut d, _) = doc_with_rect();
+        d.guides.push(vectorcraft_doc::Guide { vertical: false, pos: 150.0 });
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        assert_eq!(t.cursor(&cx, Point::new(160.0, 151.0), Mods::default()), Cursor::ResizeV);
+        let a = t.pointer(&cx, &ev(PointerKind::Down, 160.0, 151.0));
+        assert_eq!(a, vec![Action::Exec("guide.select".into(), json!({"indexes": [0]}))]);
+        assert!(t.busy());
+        let a = t.pointer(&cx, &ev(PointerKind::Drag, 160.0, 171.0));
+        assert_eq!(a[1], Action::Preview("guide.move".into(), json!({"dx": 0.0, "dy": 20.0, "copy": false})));
+        assert_eq!(t.pointer(&cx, &ev(PointerKind::Up, 160.0, 171.0)), vec![Action::Commit]);
+        assert!(!t.busy());
+        // A double-click there doesn't go through to the art.
+        assert!(t.pointer(&cx, &ev(PointerKind::DoubleClick, 160.0, 150.0)).is_empty());
     }
 
     #[test]
@@ -418,6 +505,106 @@ mod tests {
         let a = t.pointer(&cx, &ev(PointerKind::Drag, 300.0, 300.0));
         assert!(matches!(&a[0], Action::Preview(_, v) if v["matrix"][0] == 2.0));
         assert_eq!(t.pointer(&cx, &ev(PointerKind::Up, 300.0, 300.0)), vec![Action::Commit]);
+    }
+
+    #[test]
+    fn handle_drag_snaps_to_the_other_objects_with_smart_guides() {
+        use vectorcraft_doc::{Appearance, Node};
+        let (mut d, _) = doc_with_rect();
+        let l = d.layers[0].id;
+        let id = d.alloc_id();
+        let r = Rect::new(250.0, 100.0, 300.0, 150.0);
+        d.insert(Some(l), 1, Node::path(id, vectorcraft_geom::shapes::rectangle(r), Appearance::default_art())).unwrap();
+        let mut s = Selection::default();
+        s.add(id);
+        let p = paint();
+        let mut c = cx(&d, &s, &p);
+        let height = |a: &[Action]| {
+            let Action::Preview(_, v) = &a[0] else { panic!("{a:?}") };
+            v["matrix"][3].as_f64().unwrap() * 50.0
+        };
+        // The bottom handle, dragged near the neighbour's bottom edge (y = 200), lands on it.
+        let mut t = SelectionTool::default();
+        t.pointer(&c, &ev(PointerKind::Down, 275.0, 150.0));
+        let a = t.pointer(&c, &ev(PointerKind::Drag, 275.0, 197.0));
+        assert!((height(&a) - 100.0).abs() < 1e-9, "{a:?}");
+        assert!(t.overlays(&c).iter().any(|o| matches!(o, Overlay::Line { .. })));
+        t.pointer(&c, &ev(PointerKind::Up, 275.0, 197.0));
+        assert!(!t.overlays(&c).iter().any(|o| matches!(o, Overlay::Line { .. })));
+        // Smart Guides off: the edge follows the pointer.
+        c.smart_guides = false;
+        t.pointer(&c, &ev(PointerKind::Down, 275.0, 150.0));
+        let a = t.pointer(&c, &ev(PointerKind::Drag, 275.0, 197.0));
+        assert!((height(&a) - 97.0).abs() < 1e-9, "{a:?}");
+    }
+
+    #[test]
+    fn handle_drag_of_a_turned_box_snaps_on_the_page() {
+        use vectorcraft_doc::{Appearance, Node};
+        let matrix = |a: &[Action]| {
+            let Action::Preview(_, v) = &a[0] else { panic!("{a:?}") };
+            let m: Vec<f64> = v["matrix"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            Affine::new([m[0], m[1], m[2], m[3], m[4], m[5]])
+        };
+        // A 50 pt square beside the 100..200 rect, turned about its centre (275, 125).
+        for (turn, low) in [(90.0_f64, 150.0), (45.0, 125.0 + 25.0 * std::f64::consts::SQRT_2)] {
+            let (mut d, _) = doc_with_rect();
+            let l = d.layers[0].id;
+            let id = d.alloc_id();
+            let r = Rect::new(250.0, 100.0, 300.0, 150.0);
+            d.insert(Some(l), 1, Node::path(id, vectorcraft_geom::shapes::rectangle(r), Appearance::default_art())).unwrap();
+            let c = Point::new(275.0, 125.0);
+            d.node_mut(id)
+                .unwrap()
+                .transform(Affine::translate(c.to_vec2()) * Affine::rotate(turn.to_radians()) * Affine::translate(-c.to_vec2()), false);
+            let mut s = Selection::default();
+            s.add(id);
+            let p = paint();
+            let cx = cx(&d, &s, &p);
+            let bx = selection_box(&cx).unwrap();
+            assert_ne!(bx.angle, 0.0);
+            // The handle at the lowest point of the shape: a side at 90°, a corner at 45°.
+            let grab = Point::new(275.0, low);
+            assert!(Handle::ALL.iter().any(|h| (bx.to_doc() * h.pos(bx.rect)).distance(grab) < 1e-6), "{bx:?}");
+            let mut t = SelectionTool::default();
+            assert_eq!(t.pointer(&cx, &ev(PointerKind::Down, grab.x, grab.y)), vec![Action::Begin("Scale".into())]);
+            // Dragged near the neighbour's bottom edge (y = 200), it lands on it.
+            let a = t.pointer(&cx, &ev(PointerKind::Drag, 275.0, 197.0));
+            let landed = matrix(&a) * grab;
+            assert!((landed.y - 200.0).abs() < 1e-6 && (landed.x - 275.0).abs() < 1e-6, "{turn}: {landed:?}");
+            assert!(t.overlays(&cx).iter().any(|o| matches!(o, Overlay::Line { .. })));
+            t.pointer(&cx, &ev(PointerKind::Up, 275.0, 197.0));
+        }
+    }
+
+    #[test]
+    fn handle_drag_on_area_type_resizes_its_frame() {
+        let (d, text) = doc_with_area_type();
+        let p = paint();
+        let mut s = Selection::default();
+        s.add(text);
+        let cx1 = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        // Bottom-right handle of the 120 × 40 frame at (300, 300).
+        assert_eq!(t.pointer(&cx1, &ev(PointerKind::Down, 420.0, 340.0)), vec![Action::Begin("Resize Type Area".into())]);
+        let a = t.pointer(&cx1, &ev(PointerKind::Drag, 460.0, 400.0));
+        assert!(matches!(&a[0], Action::Preview(c, v) if c == "object.transform" && v["typeAreas"] == true), "{a:?}");
+        assert_eq!(t.pointer(&cx1, &ev(PointerKind::Up, 460.0, 400.0)), vec![Action::Commit]);
+        // With another object the step is a scale, still resizing the type area.
+        let rect = d.layers[0].children().unwrap()[0].id;
+        s.add(rect);
+        let cx2 = cx(&d, &s, &p);
+        assert_eq!(t.pointer(&cx2, &ev(PointerKind::Down, 420.0, 340.0)), vec![Action::Begin("Scale".into())]);
+        let a = t.pointer(&cx2, &ev(PointerKind::Drag, 460.0, 400.0));
+        assert!(matches!(&a[0], Action::Preview(_, v) if v["typeAreas"] == true), "{a:?}");
+        t.pointer(&cx2, &ev(PointerKind::Up, 460.0, 400.0));
+        // Without area type the drag scales as before.
+        let mut s = Selection::default();
+        s.add(rect);
+        let cx3 = cx(&d, &s, &p);
+        t.pointer(&cx3, &ev(PointerKind::Down, 200.0, 200.0));
+        let a = t.pointer(&cx3, &ev(PointerKind::Drag, 300.0, 300.0));
+        assert!(matches!(&a[0], Action::Preview(_, v) if v.get("typeAreas").is_none()), "{a:?}");
     }
 
     #[test]

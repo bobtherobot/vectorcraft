@@ -19,11 +19,14 @@ pub mod canvas;
 pub mod chrome;
 pub mod community;
 pub mod control;
+pub mod credits;
 pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod drag_layers;
 pub mod find_font;
+pub mod font_menu;
+pub mod graphics;
 pub mod i18n;
 pub mod icon_data;
 pub mod icons;
@@ -65,6 +68,8 @@ mod tests_distortkeys;
 #[cfg(test)]
 mod tests_docsetup;
 #[cfg(test)]
+mod tests_font_menu;
+#[cfg(test)]
 mod tests_fonts;
 #[cfg(test)]
 mod tests_home;
@@ -97,9 +102,13 @@ mod tests_recolor;
 #[cfg(test)]
 mod tests_recovery;
 #[cfg(test)]
+mod tests_removeanchors;
+#[cfg(test)]
 mod tests_save;
 #[cfg(test)]
 mod tests_saveext;
+#[cfg(test)]
+mod tests_selectall;
 #[cfg(test)]
 mod tests_slices;
 #[cfg(test)]
@@ -278,6 +287,9 @@ pub struct VectorcraftApp {
     pub synthetic: Vec<egui::Event>,
     styled: bool,
     fonts_ready: bool,
+    /// The egui context the UI's textures were uploaded to (0: none yet; see
+    /// [`Self::adopt_context`]).
+    context: u64,
     /// Installed fonts added to the UI's for characters its own fonts lack (CJK names…).
     ui_fonts: ui_fonts::UiFonts,
     frame: u64,
@@ -296,6 +308,9 @@ pub struct VectorcraftApp {
     /// Windows and Linux: the window has no OS decorations, so the app bar is the title bar (drag,
     /// double-click to maximize, caption buttons) and invisible edge zones resize the window.
     pub custom_titlebar: bool,
+    /// The graphics adapter the window renders with ("name (backend)"), as the host reports it:
+    /// shown in Help › About and `ui.inspect` for GPU bug reports. `None` when unknown.
+    pub graphics_adapter: Option<String>,
     /// File → Place: picked files, the place cursor's thumbnails, the Control bar's image details.
     pub place: place::PlaceState,
     /// The Paste commands can paste from the system clipboard alone: it holds something to paste
@@ -365,12 +380,14 @@ impl VectorcraftApp {
             synthetic: vec![],
             styled: false,
             fonts_ready: false,
+            context: 0,
             ui_fonts: Default::default(),
             frame: 0,
             last_time: 0.0,
             canvas_rect: None,
             hover_doc: None,
             custom_titlebar: false,
+            graphics_adapter: None,
             place: Default::default(),
             system_paste: false,
             system_paste_at: f64::NEG_INFINITY,
@@ -410,6 +427,7 @@ impl VectorcraftApp {
             zoom: self.view().map(|v| v.zoom).unwrap_or(1.0),
             outline: self.ui.view.outline,
             smart_guides: self.ui.view.smart_guides,
+            guides: self.ui.view.guides,
             snap_to_grid: self.ui.view.snap_to_grid,
             snap_to_pixel: self.ui.view.snap_to_pixel,
             show_bbox: self.ui.view.bounding_box,
@@ -480,7 +498,7 @@ impl VectorcraftApp {
                     let r = &mut self.ui.recent_fonts;
                     r.retain(|f| f != font);
                     r.insert(0, font.to_string());
-                    r.truncate(10);
+                    r.truncate(MAX_RECENT_FONTS);
                 }
             }
         }
@@ -508,14 +526,28 @@ impl VectorcraftApp {
 
     /// Select a tool (also used by the toolbar and shortcuts).
     pub fn select_tool(&mut self, id: &str) {
+        self.change_tool(id, true);
+    }
+
+    /// Go back to tool `id` after a temporary one, without choosing it afresh
+    /// ([`vectorcraft_engine::Session::switch_tool`]).
+    pub fn restore_tool(&mut self, id: &str) {
+        self.change_tool(id, false);
+    }
+
+    fn change_tool(&mut self, id: &str, choose: bool) {
         let v = self.view_info();
-        if let Err(e) = self.session.select_tool(id, v) {
+        let r = if choose { self.session.select_tool(id, v) } else { self.session.switch_tool(id, v) };
+        if let Err(e) = r {
             self.ui.status = e.to_string();
         }
         if let Some(g) = vectorcraft_tools::catalog::group_of(id)
             && let Some(slot) = self.ui.group_tool.get_mut(g)
         {
             *slot = id.to_string();
+        }
+        if canvas::is_selection_tool(id) {
+            self.ui.last_selection_tool = id.to_string();
         }
         toolbar::remember(self, id);
         self.ui.flyout = None;
@@ -632,7 +664,17 @@ pub fn now_ms() -> f64 {
     }
 }
 
+/// The most fonts Type › Recent Fonts lists (Preferences › Type › Number of Recent Fonts).
+pub const MAX_RECENT_FONTS: usize = 15;
+
 impl VectorcraftApp {
+    /// Type › Recent Fonts: the fonts used last, newest first, as many as Preferences › Type ›
+    /// Number of Recent Fonts says.
+    pub fn recent_fonts(&self) -> &[String] {
+        let n = usize::try_from(self.session.prefs.recent_fonts_count).unwrap_or(MAX_RECENT_FONTS).clamp(1, MAX_RECENT_FONTS);
+        self.ui.recent_fonts.get(..n).unwrap_or(&self.ui.recent_fonts)
+    }
+
     /// The selection's bounding box, rotated with rotated objects ([`Session::transform_box`]). The
     /// canvas and the transform fields read it every frame: it is measured once per revision.
     pub fn selection_box(&mut self) -> Option<vectorcraft_doc::OrientedBox> {
@@ -670,6 +712,7 @@ impl VectorcraftApp {
 
     fn logic_frame(&mut self, ctx: &egui::Context) {
         i18n::set_current(self.ui_language());
+        self.adopt_context(ctx);
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx, self.ui.brightness);
@@ -761,9 +804,9 @@ impl VectorcraftApp {
         place::drop_files(self, files, target);
     }
 
-    /// Inject synthetic events (one press/release step per frame). Handlers read the modifiers
-    /// egui holds (`i.modifiers`), so a synthetic key or button holds its own for the frames it
-    /// spans (a drag's moves included); the keyboard's come back after.
+    /// Inject synthetic events (one press/release step or wheel turn per frame). Handlers read the
+    /// modifiers egui holds (`i.modifiers`), so a synthetic key, button or wheel turn holds its own
+    /// for the frames it spans (a drag's moves included); the keyboard's come back after.
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         for e in &raw.events {
             match e {
@@ -781,7 +824,7 @@ impl VectorcraftApp {
         // Pointer events go one per frame so egui sees presses, drags and releases as real input;
         // keyboard sequences go up to the key release.
         let n = match first {
-            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } => 1,
+            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
         if let egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. } = first {
@@ -792,7 +835,9 @@ impl VectorcraftApp {
         let held = now
             .iter()
             .find_map(|e| match e {
-                egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } => Some(*modifiers),
+                egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } | egui::Event::MouseWheel { modifiers, .. } => {
+                    Some(*modifiers)
+                }
                 _ => None,
             })
             .or_else(|| match later.iter().find(|e| matches!(e, egui::Event::PointerButton { .. })) {
@@ -824,6 +869,7 @@ impl VectorcraftApp {
             return;
         }
         let t0 = now_ms();
+        font_menu::end_stale_preview(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         if self.ui.screen_mode < 2 {
             chrome::app_bar(self, ui);

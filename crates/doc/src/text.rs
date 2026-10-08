@@ -2,12 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Color, Paint};
-use vectorcraft_geom::{Affine, PathData, Point, Rect};
+use vectorcraft_geom::{Affine, PathData, Point, Rect, Vec2};
 
 use crate::appearance::{Appearance, AppearanceItem, Dash, FillLayer, LineCap, LineJoin, StrokeLayer};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Justify {
+    /// Align to the start of each paragraph's direction ([`ParaStyle::direction`]): left for
+    /// left-to-right paragraphs, right for right-to-left ones. New type's alignment.
+    Auto,
     #[default]
     Left,
     Center,
@@ -83,6 +86,23 @@ pub struct CharStyle {
     /// size (Document Setup → Type → Small Caps); None = off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub small_caps: Option<f64>,
+    /// Character Alignment (Character panel menu): where characters smaller than the largest on
+    /// their line line up with it.
+    #[serde(default, rename = "charAlign", skip_serializing_if = "crate::skip::is_default")]
+    pub char_align: CharAlign,
+}
+
+/// Where a character smaller than the largest on its line lines up with it: on the Roman
+/// baseline, or at the top (right, in vertical type), centre or bottom (left) of the ideographic
+/// em boxes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CharAlign {
+    #[default]
+    RomanBaseline,
+    EmBoxTop,
+    EmBoxCenter,
+    EmBoxBottom,
 }
 
 /// Superscript or subscript proportions in percent of the font size (Document Setup → Type).
@@ -175,6 +195,7 @@ impl Default for CharStyle {
             stroke_miter_limit: 10.0,
             stroke_dash: None,
             position: CharPosition::Normal,
+            char_align: CharAlign::RomanBaseline,
             small_caps: None,
         }
     }
@@ -265,28 +286,183 @@ fn default_align_on() -> char {
 pub const DEFAULT_TAB_INTERVAL: f64 = 36.0;
 
 /// Paragraph attributes (the Paragraph panel).
+///
+/// Saved through [`ParaStyleFile`], which keeps files with text openable by builds from before
+/// [`Justify::Auto`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ParaStyleFile", into = "ParaStyleFile")]
 pub struct ParaStyle {
-    #[serde(default)]
     pub justify: Justify,
-    #[serde(default)]
     pub left_indent: f64,
-    #[serde(default)]
     pub right_indent: f64,
-    #[serde(default)]
     pub first_line_indent: f64,
-    #[serde(default)]
     pub space_before: f64,
-    #[serde(default)]
     pub space_after: f64,
-    #[serde(default)]
     pub hyphenate: bool,
     /// Tab stops (Tabs panel), sorted by position.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<TabStop>,
     /// Paragraph style (Paragraph Styles panel) these attributes come from; None = Normal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style_name: Option<String>,
+    /// Japanese composition: the spacing of punctuation (Paragraph panel › Mojikumi). Type made
+    /// with the Type tools and `text.create` takes [`Mojikumi::LineEndHalf`]; documents from before
+    /// it and imported text (already set) keep [`Mojikumi::None`].
+    pub mojikumi: Mojikumi,
+    /// Paragraph direction (Paragraph panel): the base direction of each paragraph for
+    /// bidirectional text (UAX #9). None: from each paragraph's first strong character (Hebrew or
+    /// Arabic: right to left).
+    pub direction: Option<ParaDirection>,
+    /// How leading is measured (Paragraph panel menu): from baseline to baseline, or from the top
+    /// of one line's ideographic em box to the next.
+    pub leading_model: LeadingModel,
+}
+
+/// [`ParaStyle`] as saved. [`Justify::Auto`] is written as the alignment it has in the paragraph
+/// direction (`Right` for right to left, else `Left`) with `justify_auto` set: builds without Auto
+/// read the alignment and ignore the flag, and builds with it read Auto back.
+#[derive(Serialize, Deserialize)]
+struct ParaStyleFile {
+    #[serde(default)]
+    justify: Justify,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    justify_auto: bool,
+    #[serde(default)]
+    left_indent: f64,
+    #[serde(default)]
+    right_indent: f64,
+    #[serde(default)]
+    first_line_indent: f64,
+    #[serde(default)]
+    space_before: f64,
+    #[serde(default)]
+    space_after: f64,
+    #[serde(default)]
+    hyphenate: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tabs: Vec<TabStop>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    style_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Mojikumi::is_none")]
+    mojikumi: Mojikumi,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direction: Option<ParaDirection>,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    leading_model: LeadingModel,
+}
+
+impl From<ParaStyle> for ParaStyleFile {
+    fn from(p: ParaStyle) -> Self {
+        let justify_auto = p.justify == Justify::Auto;
+        let justify = match p.justify {
+            Justify::Auto if p.direction == Some(ParaDirection::RightToLeft) => Justify::Right,
+            Justify::Auto => Justify::Left,
+            j => j,
+        };
+        let ParaStyle {
+            left_indent,
+            right_indent,
+            first_line_indent,
+            space_before,
+            space_after,
+            hyphenate,
+            tabs,
+            style_name,
+            mojikumi,
+            direction,
+            leading_model,
+            ..
+        } = p;
+        Self {
+            justify,
+            justify_auto,
+            left_indent,
+            right_indent,
+            first_line_indent,
+            space_before,
+            space_after,
+            hyphenate,
+            tabs,
+            style_name,
+            mojikumi,
+            direction,
+            leading_model,
+        }
+    }
+}
+
+impl From<ParaStyleFile> for ParaStyle {
+    fn from(f: ParaStyleFile) -> Self {
+        let justify = if f.justify_auto { Justify::Auto } else { f.justify };
+        let ParaStyleFile {
+            left_indent,
+            right_indent,
+            first_line_indent,
+            space_before,
+            space_after,
+            hyphenate,
+            tabs,
+            style_name,
+            mojikumi,
+            direction,
+            leading_model,
+            ..
+        } = f;
+        Self {
+            justify,
+            left_indent,
+            right_indent,
+            first_line_indent,
+            space_before,
+            space_after,
+            hyphenate,
+            tabs,
+            style_name,
+            mojikumi,
+            direction,
+            leading_model,
+        }
+    }
+}
+
+/// A paragraph's base direction ([`ParaStyle::direction`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ParaDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+/// How a paragraph's leading is measured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LeadingModel {
+    /// From one line's baseline to the next's: a line's leading is the space above it, and area
+    /// type's first baseline follows Area Type Options › First Baseline.
+    #[default]
+    RomanBaseline,
+    /// From the top of one line's ideographic em box (the right side, in vertical type) to the
+    /// next's: a line's leading is the space below it, and area type's first line touches the top
+    /// of the frame. Japanese layout's usual model.
+    EmBoxTop,
+}
+
+/// How Japanese punctuation is spaced (JLREQ 3.1). Full-width punctuation is half a glyph and half
+/// a space: an opening bracket's space before it, a closing bracket's, a comma's or a full stop's
+/// after it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Mojikumi {
+    /// Every character takes its full advance.
+    #[default]
+    None,
+    /// Consecutive punctuation shares one half-em space (JLREQ 3.1.4), and a closing bracket,
+    /// comma or full stop ending a line is set half width.
+    LineEndHalf,
+}
+
+impl Mojikumi {
+    pub fn is_none(&self) -> bool {
+        *self == Mojikumi::None
+    }
 }
 
 /// Area Type Options "First Baseline" offset.
@@ -476,6 +652,49 @@ impl TextObject {
     pub fn transform(&mut self, a: Affine) {
         self.xf = a * self.xf;
     }
+    /// Area type's frame (the type area) in document space; None for other type.
+    pub fn area_frame(&self) -> Option<PathData> {
+        match &self.kind {
+            TextKind::Area { frame } => Some(frame.transformed(self.xf)),
+            _ => None,
+        }
+    }
+    /// Reshape area type's frame by `a`, a document-space transform, keeping the type at its size
+    /// (a bounding-box resize: the text reflows, it isn't scaled). False, changing nothing, for
+    /// other type, a degenerate `xf` or a frame that would not be finite.
+    pub fn transform_area(&mut self, a: Affine) -> bool {
+        let xf = self.xf;
+        self.reshape_area(|frame, to_text| {
+            frame.transform(to_text * a * xf);
+            true
+        })
+    }
+    /// Move anchors `refs` (subpath, anchor) of area type's frame by `d` in document space, with
+    /// their handles (a Direct Selection drag of a frame corner or edge). False, changing
+    /// nothing, when an anchor doesn't exist, or as [`Self::transform_area`].
+    pub fn move_area_anchors(&mut self, refs: &[(usize, usize)], d: Vec2) -> bool {
+        self.reshape_area(|frame, to_text| {
+            // A distance: only the linear part of the document → text map applies.
+            let local = to_text * d.to_point() - to_text * Point::ZERO;
+            refs.iter().all(|&(si, ai)| frame.anchor_mut(si, ai).map(|a| a.translate(local)).is_some())
+        })
+    }
+    /// Edit a copy of the area frame with `f` (given the document → text space map) and keep it
+    /// when `f` succeeds and the result is finite.
+    fn reshape_area(&mut self, f: impl FnOnce(&mut PathData, Affine) -> bool) -> bool {
+        let det = self.xf.determinant();
+        if !det.is_finite() || det.abs() < 1e-12 {
+            return false;
+        }
+        let to_text = self.xf.inverse();
+        let TextKind::Area { frame } = &mut self.kind else { return false };
+        let mut next = frame.clone();
+        if !f(&mut next, to_text) || !next.anchors().all(|(_, _, a)| a.p.is_finite() && a.h_in.is_finite() && a.h_out.is_finite()) {
+            return false;
+        }
+        *frame = next;
+        true
+    }
     /// Scale the character strokes' weights and dashes by `s` (they are drawn in text space, so
     /// `1 / scale` keeps their weight through a transform that scales the type).
     pub fn scale_char_strokes(&mut self, s: f64) {
@@ -504,5 +723,91 @@ mod tests {
         let b = t.bounds().unwrap();
         assert!(b.x0 >= 10.0 - 1e-9 && b.y1 > 20.0);
         assert_eq!(CharStyle::default().effective_leading(), 14.399999999999999);
+    }
+
+    /// 120 × 40 area type at (40, 40), its text drawn at twice its size.
+    fn area_type() -> TextObject {
+        let mut t = TextObject::point(Point::ZERO, "Some text", CharStyle::default());
+        t.kind = TextKind::Area { frame: vectorcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, 60.0, 20.0)) };
+        t.xf = Affine::translate((40.0, 40.0)) * Affine::scale(2.0);
+        t
+    }
+
+    #[test]
+    fn area_resizes_its_frame_and_keeps_its_type() {
+        let mut t = area_type();
+        assert_eq!(t.bounds(), Some(Rect::new(40.0, 40.0, 160.0, 80.0)));
+        // Bottom-right handle to (200, 140), about the top-left corner.
+        let o = Affine::translate((40.0, 40.0));
+        assert!(t.transform_area(o * Affine::scale_non_uniform(160.0 / 120.0, 100.0 / 40.0) * o.inverse()));
+        assert_eq!(t.xf, Affine::translate((40.0, 40.0)) * Affine::scale(2.0), "the type keeps its size");
+        let b = t.bounds().unwrap();
+        assert!((b.x1 - 200.0).abs() < 1e-9 && (b.y1 - 140.0).abs() < 1e-9 && b.x0 == 40.0, "{b:?}");
+        assert_eq!(t.area_frame().unwrap().bounds(), Some(b));
+        // Point type has no area; a degenerate transform or a non-finite frame changes nothing.
+        let mut p = TextObject::point(Point::ZERO, "x", CharStyle::default());
+        assert!(!p.transform_area(Affine::scale(2.0)) && p.area_frame().is_none());
+        let before = t.clone();
+        assert!(!t.transform_area(Affine::scale(f64::INFINITY)));
+        t.xf = Affine::scale(0.0);
+        assert!(!t.transform_area(Affine::scale(2.0)));
+        t.xf = before.xf;
+        assert_eq!(t, before);
+    }
+
+    #[test]
+    fn area_anchors_move_in_document_space() {
+        let mut t = area_type();
+        // The bottom-right corner (anchor 2) 20 pt right: 10 pt in text space at 2×.
+        assert!(t.move_area_anchors(&[(0, 2)], Vec2::new(20.0, 0.0)));
+        let TextKind::Area { frame } = &t.kind else { panic!() };
+        assert_eq!(frame.subpaths[0].anchors[2].p, Point::new(70.0, 20.0));
+        assert_eq!(frame.subpaths[0].anchors[1].p, Point::new(60.0, 0.0), "the others stay");
+        // A missing anchor changes nothing.
+        let before = t.clone();
+        assert!(!t.move_area_anchors(&[(0, 1), (0, 9)], Vec2::new(5.0, 5.0)));
+        assert!(!t.move_area_anchors(&[(3, 0)], Vec2::new(5.0, 5.0)));
+        assert_eq!(t, before);
+    }
+
+    /// Builds from before [`Justify::Auto`] read new type's alignment as Left or Right (and ignore
+    /// `justify_auto`); this build reads Auto back.
+    #[test]
+    fn auto_alignment_saves_readable_by_older_builds() {
+        #[derive(Deserialize, Debug, PartialEq)]
+        enum OldJustify {
+            Left,
+            Center,
+            Right,
+            JustifyLeft,
+            JustifyCenter,
+            JustifyRight,
+            JustifyAll,
+        }
+        #[derive(Deserialize)]
+        struct OldPara {
+            justify: OldJustify,
+        }
+        #[derive(Deserialize)]
+        struct OldText {
+            para: OldPara,
+        }
+        for (direction, physical) in
+            [(Some(ParaDirection::RightToLeft), OldJustify::Right), (Some(ParaDirection::LeftToRight), OldJustify::Left), (None, OldJustify::Left)]
+        {
+            let mut t = TextObject::point(Point::ZERO, "שלום", CharStyle::default());
+            t.para = ParaStyle { justify: Justify::Auto, direction, ..Default::default() };
+            let json = serde_json::to_string(&t).unwrap();
+            let old: OldText = serde_json::from_str(&json).unwrap();
+            assert_eq!(old.para.justify, physical, "{json}");
+            assert_eq!(serde_json::from_str::<TextObject>(&json).unwrap(), t);
+        }
+        // Other alignments save as before, without the flag.
+        let p = ParaStyle { justify: Justify::Right, ..Default::default() };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("justify_auto"), "{json}");
+        assert_eq!(serde_json::from_str::<ParaStyle>(&json).unwrap(), p);
+        // Files from before the flag keep their alignment.
+        assert_eq!(serde_json::from_str::<ParaStyle>(r#"{"justify":"Center"}"#).unwrap().justify, Justify::Center);
     }
 }

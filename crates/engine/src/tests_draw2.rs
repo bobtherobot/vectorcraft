@@ -375,6 +375,7 @@ fn draw2_commands_reject_bad_params() {
         ("path.freehand", json!({"points": [[1, 2]]})),
         ("path.curvature", json!({"points": []})),
         ("path.removeAnchor", json!({"id": id.0, "anchor": 99})),
+        ("path.removeAnchors", json!({})),
         ("path.convertAnchor", json!({"id": 9999, "anchor": 0, "to": "corner"})),
         ("path.reshapeSegment", json!({"id": id.0, "segment": 42})),
         ("path.split", json!({"id": id.0})),
@@ -388,4 +389,148 @@ fn draw2_commands_reject_bad_params() {
         assert!(s.execute(cmd, &p).is_err(), "{cmd} {p}");
         assert_eq!(s.doc().unwrap().history.undo.len(), before, "{cmd} left an undo step");
     }
+}
+
+/// A curve from (100, 100) to (300, 100) whose first anchor has an out handle at (150, 100).
+fn curve(s: &mut Session) -> NodeId {
+    let anchors = json!([{"x": 100, "y": 100, "out": [150, 100]}, {"x": 300, "y": 100, "in": [250, 100]}]);
+    NodeId(s.execute("path.create", &json!({"anchors": anchors})).unwrap()["id"].as_u64().unwrap())
+}
+
+/// Drag the out handle of path `id`'s first anchor with `tool` to `to`, holding `mods`. Direct
+/// Selection clicks the anchor first, so its handles show.
+fn drag_handle(s: &mut Session, tool: &str, id: NodeId, to: (f64, f64), mods: Mods, v: ViewInfo) {
+    let from = path(s, id).subpaths[0].anchors[0].h_out;
+    s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
+    s.select_tool(tool, v).unwrap();
+    if tool == "directSelection" {
+        s.execute("select.none", &json!({})).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Down, 100.0, 100.0), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 100.0, 100.0), v).unwrap();
+    }
+    s.pointer(&PointerEvent::new(PointerKind::Down, from.x, from.y).with_mods(mods), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, to.0, to.1).with_mods(mods), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, to.0, to.1).with_mods(mods), v).unwrap();
+    assert!(!s.in_interaction());
+}
+
+/// The out handle of path `id`'s first anchor.
+fn out_handle(s: &Session, id: NodeId) -> Point {
+    path(s, id).subpaths[0].anchors[0].h_out
+}
+
+#[test]
+fn shift_keeps_a_dragged_handle_at_45_degree_steps() {
+    // #322.
+    let shift = Mods { shift: true, ..Mods::default() };
+    for tool in ["directSelection", "anchorPoint"] {
+        let mut s = session();
+        let id = curve(&mut s);
+        drag_handle(&mut s, tool, id, (190.0, 130.0), shift, view());
+        let h = out_handle(&s, id);
+        assert!(near(h, Point::new(100.0 + 90.0f64.hypot(30.0), 100.0)), "{tool}: {h:?}");
+        drag_handle(&mut s, tool, id, (160.0, 155.0), shift, view());
+        let h = out_handle(&s, id);
+        assert!((h.x - h.y).abs() < 1e-6 && h.x > 100.0, "{tool}: 45°: {h:?}");
+        // Without Shift the handle goes where it is dragged.
+        drag_handle(&mut s, tool, id, (190.0, 130.0), Mods::default(), view());
+        assert_eq!(out_handle(&s, id), Point::new(190.0, 130.0), "{tool}");
+    }
+}
+
+#[test]
+fn a_dragged_handle_snaps_to_smart_guides() {
+    // #322: in line with the other anchor, with smart guides on.
+    for tool in ["directSelection", "anchorPoint"] {
+        let mut s = session();
+        let id = curve(&mut s);
+        drag_handle(&mut s, tool, id, (298.0, 160.0), Mods::default(), ViewInfo::default());
+        assert_eq!(out_handle(&s, id), Point::new(300.0, 160.0), "{tool}");
+        drag_handle(&mut s, tool, id, (298.0, 170.0), Mods::default(), view());
+        assert_eq!(out_handle(&s, id), Point::new(298.0, 170.0), "{tool}: smart guides off");
+    }
+}
+
+#[test]
+fn shift_drag_keeps_a_smooth_anchor_smooth_and_alt_breaks_it() {
+    // #322: the opposite handle of a smooth anchor turns with the constrained one; Alt still
+    // moves the dragged handle alone.
+    let shift = Mods { shift: true, ..Mods::default() };
+    let shift_alt = Mods { shift: true, alt: true, ..Mods::default() };
+    for (mods, opposite_follows) in [(shift, true), (shift_alt, false)] {
+        let mut s = session();
+        let anchors = json!([{"x": 100, "y": 200}, {"x": 200, "y": 100, "in": [150, 100], "out": [250, 100]}, {"x": 300, "y": 200}]);
+        let id = NodeId(s.execute("path.create", &json!({"anchors": anchors})).unwrap()["id"].as_u64().unwrap());
+        s.select_tool("directSelection", view()).unwrap();
+        for (kind, x, y, m) in [
+            (PointerKind::Down, 200.0, 100.0, Mods::default()),
+            (PointerKind::Up, 200.0, 100.0, Mods::default()),
+            (PointerKind::Down, 250.0, 100.0, mods),
+            (PointerKind::Drag, 275.0, 165.0, mods),
+            (PointerKind::Up, 275.0, 165.0, mods),
+        ] {
+            s.pointer(&PointerEvent::new(kind, x, y).with_mods(m), view()).unwrap();
+        }
+        let a = path(&s, id).subpaths[0].anchors[1];
+        let (o, i) = (a.h_out - a.p, a.h_in - a.p);
+        assert!((o.x - o.y).abs() < 1e-6 && o.x > 0.0, "{mods:?}: 45°: {o:?}");
+        if opposite_follows {
+            assert!(near(a.h_in, a.p - o.normalize() * 50.0), "{mods:?}: {i:?}");
+        } else {
+            assert_eq!(a.h_in, Point::new(150.0, 100.0), "{mods:?}");
+        }
+    }
+}
+
+#[test]
+fn removing_an_anchor_refits_a_split_curve_and_undo_restores_it() {
+    let mut s = session();
+    let made = s
+        .execute(
+            "path.create",
+            &json!({"anchors": [
+                {"x": 0, "y": 0, "out": [30, 80]},
+                {"x": 100, "y": 0, "in": [70, 80]}
+            ]}),
+        )
+        .unwrap();
+    let id = NodeId(made["id"].as_u64().unwrap());
+    let before = path(&s, id);
+    let inserted = s.execute("path.insertAnchor", &json!({"id": id.0, "segment": 0, "t": 0.4})).unwrap();
+    let ai = inserted["anchor"].as_u64().unwrap();
+    s.execute("path.removeAnchor", &json!({"id": id.0, "anchor": ai})).unwrap();
+    let after = path(&s, id);
+    assert_eq!(after.subpaths[0].anchors.len(), 2);
+    let (got, orig) = (&after.subpaths[0].anchors, &before.subpaths[0].anchors);
+    assert!(got[0].h_out.distance(orig[0].h_out) < 0.5, "{:?}", got[0].h_out);
+    assert!(got[1].h_in.distance(orig[1].h_in) < 0.5, "{:?}", got[1].h_in);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(path(&s, id).subpaths[0].anchors.len(), 3);
+}
+
+#[test]
+fn remove_anchor_points_keeps_the_paths_closed() {
+    // Object › Path › Remove Anchor Points, unlike the Delete key: a rectangle loses a corner and
+    // stays closed, a straight-sided triangle; a curve keeps its shape round a removed point.
+    let mut s = session();
+    let r = rect(&mut s, 0.0, 0.0, 100.0, 80.0);
+    let made = s.execute("path.create", &json!({"anchors": [{"x": 300, "y": 0, "out": [330, 80]}, {"x": 400, "y": 0, "in": [370, 80]}]})).unwrap();
+    let c = NodeId(made["id"].as_u64().unwrap());
+    let before = path(&s, c).subpaths[0].segment(0);
+    s.execute("path.insertAnchor", &json!({"id": c.0, "segment": 0, "t": 0.5})).unwrap();
+    s.execute("select.anchors", &json!({"id": r.0, "anchors": [[0, 0]]})).unwrap();
+    s.execute("select.anchors", &json!({"id": c.0, "anchors": [[0, 1]], "mode": "add"})).unwrap();
+    assert_eq!(s.execute("path.removeAnchors", &json!({})).unwrap()["removedObjects"], 0);
+    let sp = &path(&s, r).subpaths[0];
+    assert!(sp.closed && sp.anchors.len() == 3, "{sp:?}");
+    assert!(!sp.anchors.iter().any(|a| a.has_in() || a.has_out()), "straight sides stay straight: {sp:?}");
+    let after = path(&s, c).subpaths[0].segment(0);
+    assert_eq!(path(&s, c).subpaths[0].anchors.len(), 2);
+    assert!(after.p1.distance(before.p1) < 0.5 && after.p2.distance(before.p2) < 0.5, "{after:?}");
+    assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Remove Anchor Points");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(path(&s, r).subpaths[0].anchors.len(), 4);
+    assert_eq!(path(&s, c).subpaths[0].anchors.len(), 3);
+    let spec = find_command("path.removeAnchors").unwrap();
+    assert_eq!(spec.menu, &["Object", "Path"][..]);
 }

@@ -77,6 +77,7 @@ struct Applied {
     brightness: Brightness,
     white_canvas: bool,
     threads: i32,
+    tool_tips: bool,
 }
 
 /// Per frame: push UI-side preferences into egui / the renderer when they change.
@@ -87,11 +88,16 @@ pub fn apply_runtime(app: &mut VectorcraftApp, ctx: &egui::Context) {
     {
         app.ui.brightness = b;
     }
-    let want = Applied { brightness: app.ui.brightness, white_canvas: p.canvas_color == "white", threads: p.render_threads };
+    let want =
+        Applied { brightness: app.ui.brightness, white_canvas: p.canvas_color == "white", threads: p.render_threads, tool_tips: p.show_tool_tips };
     let id = egui::Id::new("dc-applied-prefs");
     let prev: Option<Applied> = ctx.data(|d| d.get_temp::<Option<Applied>>(id)).flatten();
     if prev != Some(want) {
         theme::apply(ctx, want.brightness);
+        // General › Show Tool Tips: off, no button or field shows its tool tip (they never come
+        // due), whichever widget asks for one.
+        let delay = if want.tool_tips { egui::style::Interaction::default().tooltip_delay } else { f32::INFINITY };
+        ctx.global_style_mut(|s| s.interaction.tooltip_delay = delay);
         if want.white_canvas {
             let mut t = Tokens::get(ctx);
             t.pasteboard = egui::Color32::WHITE;
@@ -279,6 +285,10 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                         d.fields.insert(sp.key.into(), json!(opts[i].0));
                     }
                 });
+                if sp.key == "gpuPreference" {
+                    // The window's graphics device is chosen once, when the app starts.
+                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(11.0));
+                }
             }
             PrefKind::Color => {
                 labeled(ui, sp.label, |ui| {
@@ -362,6 +372,52 @@ mod tests {
         assert_eq!(a.ui.engine_prefs["keyboardIncrement"], json!(4.0));
     }
 
+    /// General › Show Tool Tips: off, a button held under the pointer shows no tool tip; back on,
+    /// it does again (#394).
+    #[test]
+    fn show_tool_tips_off_hides_tool_tips() {
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut a = app();
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        // Come from elsewhere and hover the button for two seconds: did its tool tip show?
+        let mut hover = |a: &mut VectorcraftApp| {
+            let mut shown = vec![];
+            for i in 0..20 {
+                time += 0.1;
+                let events = match i {
+                    0 => vec![egui::Event::PointerGone],
+                    1 => vec![egui::Event::PointerMoved(egui::pos2(20.0, 12.0))],
+                    _ => vec![],
+                };
+                let raw = egui::RawInput {
+                    events,
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(raw, |ui| {
+                    apply_runtime(a, ui.ctx());
+                    ui.button("Button").on_hover_text("The tool tip");
+                });
+                out.textures_delta.clear();
+                out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
+            }
+            shown.iter().any(|t| t == "The tool tip")
+        };
+        assert!(hover(&mut a), "on by default");
+        a.run("prefs.set", json!({"key": "showToolTips", "value": false})).unwrap();
+        assert!(!hover(&mut a), "off: no tool tip");
+        a.run("prefs.set", json!({"key": "showToolTips", "value": true})).unwrap();
+        assert!(hover(&mut a), "on again");
+    }
+
     #[test]
     fn dialog_ok_with_invalid_value_keeps_dialog_and_prefs() {
         let mut a = app();
@@ -391,6 +447,38 @@ mod tests {
         a.ui.engine_prefs = Value::Null;
         restore(&mut a);
         assert_eq!(a.session.prefs.ui_brightness, "light");
+    }
+
+    /// Performance › Graphics Processor (#306): shown with its restart note, applied by OK and
+    /// saved with the UI state under the key the desktop app reads before the window opens.
+    #[test]
+    fn graphics_processor_preference_shows_and_persists() {
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut a = app();
+        open(&mut a, Some("Performance"));
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        // The window sizes itself on the first frame and draws on the second.
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut a, ui.ctx()));
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut a, ui.ctx()));
+        out.textures_delta.clear();
+        let mut shown = vec![];
+        out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
+        assert!(shown.iter().any(|t| t.starts_with("Graphics Processor")), "{shown:?}");
+        assert!(shown.iter().any(|t| t == "Power Saving (integrated)"), "{shown:?}");
+        assert!(shown.iter().any(|t| t == "Applies the next time VectorCraft starts."), "{shown:?}");
+        a.ui.dialog.as_mut().unwrap().fields.insert("gpuPreference".into(), json!("highPerformance"));
+        confirm(&mut a).unwrap();
+        assert_eq!(a.session.prefs.gpu_preference, "highPerformance");
+        let saved: Value = serde_json::from_slice(&serde_json::to_vec(&a.ui).unwrap()).unwrap();
+        assert_eq!(saved["engine_prefs"]["gpuPreference"], json!("highPerformance"));
     }
 
     #[test]

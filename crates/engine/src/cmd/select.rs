@@ -9,7 +9,15 @@ use super::*;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("select.all", "All", ["Select"], Some("Cmd+A"), "{}", has_doc, all),
+        cmd!(
+            "select.all",
+            "All",
+            ["Select"],
+            Some("Cmd+A"),
+            "{} → {count}; while the Type tool edits text, all of that text instead → {editing, start, end} (byte offsets)",
+            has_doc,
+            all
+        ),
         cmd!("select.allOnArtboard", "All on Active Artboard", ["Select"], Some("Cmd+Alt+A"), "{artboard?: index}", has_doc, all_on_artboard),
         cmd!("select.none", "Deselect", ["Select"], Some("Cmd+Shift+A"), "{}", has_doc, none),
         cmd!("select.reselect", "Reselect", ["Select"], Some("Cmd+6"), "{}", has_doc, reselect),
@@ -97,21 +105,28 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Selectable objects: children of visible, unlocked layers (or of the isolation container).
+/// The objects Select All takes: those of the isolated container, else of every layer (looking
+/// through sublayers, which are not objects).
 fn selectable(d: &Document, iso: Option<NodeId>) -> Vec<NodeId> {
     match iso.and_then(|i| d.node(i)) {
-        Some(c) => c.children().map(|v| v.iter().filter(|n| n.visible && !n.locked).map(|n| n.id).collect()).unwrap_or_default(),
-        None => d
-            .layers
-            .iter()
-            .filter(|l| l.visible && !l.locked)
-            .flat_map(|l| l.children().into_iter().flatten())
-            .filter(|n| n.visible && !n.locked)
-            .map(|n| n.id)
-            .collect(),
+        Some(c) => c.layer_art(true),
+        None => d.selectable_art(),
     }
 }
 
 fn all(s: &mut Session, _: &Value) -> Result<Value> {
+    // While the Type tool edits text, Select All takes all of that text and leaves the art
+    // selection as it is (Illustrator: text cursor in a text object).
+    if s.tool_wants_text() {
+        s.set_tool_option("selectAll", &json!(true));
+        let editing = s.tool_options()["editing"].clone();
+        let id = editing.as_u64().map(NodeId);
+        let end = id.and_then(|id| match &s.doc().ok()?.doc.node(id)?.kind {
+            NodeKind::Text(t) => Some(t.plain_text().len()),
+            _ => None,
+        });
+        return Ok(json!({ "editing": editing, "start": 0, "end": end.unwrap_or(0) }));
+    }
     let st = s.doc()?;
     let ids = selectable(&st.doc, st.isolation);
     s.select(|_, sel| sel.set(ids.iter().copied()))?;
@@ -188,7 +203,8 @@ fn key(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn parse_refs(v: Option<&Value>) -> Vec<(usize, usize)> {
+/// `[[subpath, anchor]…]` anchor references (malformed entries are left out).
+pub(crate) fn parse_refs(v: Option<&Value>) -> Vec<(usize, usize)> {
     v.and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|x| Some((x.get(0)?.as_u64()? as usize, x.get(1)?.as_u64()? as usize))).collect())
         .unwrap_or_default()
@@ -249,7 +265,11 @@ fn same(s: &mut Session, cmd: &str, eq: fn(&Node, &Node) -> bool) -> Result<Valu
 /// inside accepted ones); Select > Reselect repeats `cmd` with `p`.
 fn select_where(s: &mut Session, cmd: &str, p: &Value, f: impl Fn(&Document, &Node) -> bool) -> Result<Value> {
     fn visit(d: &Document, n: &Node, f: &impl Fn(&Document, &Node) -> bool, ids: &mut Vec<NodeId>) {
-        if n.visible && !n.locked && !n.is_layer() && f(d, n) {
+        // Hidden or locked objects and sublayers (and what they hold) are out of reach.
+        if !n.visible || n.locked || n.is_template() {
+            return;
+        }
+        if !n.is_layer() && f(d, n) {
             return ids.push(n.id);
         }
         for c in n.children().into_iter().flatten() {
@@ -306,14 +326,9 @@ fn same_attribute(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn same_layers(s: &mut Session, _: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let layers: BTreeSet<NodeId> = st.selection.objects.iter().filter_map(|id| st.doc.layer_of(*id)).collect();
-    let ids: Vec<NodeId> = layers
-        .iter()
-        .filter_map(|l| st.doc.node(*l))
-        .flat_map(|l| l.children().into_iter().flatten())
-        .filter(|n| n.visible && !n.locked)
-        .map(|n| n.id)
-        .collect();
+    // The layers or sublayers the selected objects are on (art in their sublayers too).
+    let layers: BTreeSet<NodeId> = st.selection.objects.iter().filter_map(|id| st.doc.layer_containing(*id)).collect();
+    let ids: Vec<NodeId> = layers.iter().filter_map(|l| st.doc.node(*l)).flat_map(|l| l.layer_art(true)).collect();
     s.select(|_, sel| sel.set(ids.iter().copied()))?;
     ok()
 }

@@ -9,6 +9,7 @@ pub mod appearance;
 pub mod assets;
 pub mod blend;
 pub mod clipnest;
+pub mod cmyk;
 pub mod graph;
 pub mod hit;
 pub mod inks;
@@ -77,8 +78,8 @@ pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
 pub use text::{
-    AreaOptions, CharPosition, CharStyle, FirstBaseline, Justify, ParaStyle, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject,
-    TextRun, TextStyleDef, TextWrap, WrapShape,
+    AreaOptions, CharAlign, CharPosition, CharStyle, FirstBaseline, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathEffect,
+    ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap, WrapShape,
 };
 pub use vectorcraft_color as color;
 pub use vectorcraft_geom as geom;
@@ -165,6 +166,18 @@ impl Unit {
             Unit::Yards => "Yards",
             Unit::Feet => "Feet",
         }
+    }
+    /// The rulers' label step at `zoom` (screen pixels per point), in this unit: the first of
+    /// 1, 2, 5 × 10ⁿ that puts labels at least 50 pixels apart. Ticks mark every tenth of it.
+    pub fn ruler_step(self, zoom: f64) -> f64 {
+        const STEPS: [f64; 19] =
+            [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+        STEPS.iter().copied().find(|s| s * self.points() * zoom >= 50.0).unwrap_or(10000.0)
+    }
+    /// `v` (points) on the nearest ruler tick at `zoom` ([`Self::ruler_step`]).
+    pub fn snap_to_ruler_tick(self, v: f64, zoom: f64) -> f64 {
+        let tick = self.ruler_step(zoom) / 10.0 * self.points();
+        (v / tick).round() * tick
     }
     pub fn from_pt(self, v: f64) -> f64 {
         v / self.points()
@@ -339,6 +352,32 @@ pub struct SavedView {
     pub rotation: f64,
 }
 
+/// A saved selection (Select → Save Selection…): the objects that were selected, listed by name at
+/// the bottom of the Select menu.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedSelection {
+    pub name: String,
+    pub objects: Vec<NodeId>,
+}
+
+impl SavedSelection {
+    /// Most saved selections a document keeps (the Select menu lists every one).
+    pub const MAX: usize = 25;
+    /// Longest name, in characters.
+    pub const MAX_NAME: usize = 255;
+
+    /// `name` trimmed and cut to [`Self::MAX_NAME`] characters (`None` when blank).
+    pub fn clean_name(name: &str) -> Option<String> {
+        let name: String = name.trim().chars().take(Self::MAX_NAME).collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// The first "Selection N" none of `saved` is named.
+    pub fn default_name(saved: &[SavedSelection]) -> String {
+        (1..=saved.len() + 1).map(|i| format!("Selection {i}")).find(|n| !saved.iter().any(|x| &x.name == n)).unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
     /// true = vertical guide at `pos` (x), false = horizontal at `pos` (y).
@@ -490,6 +529,9 @@ pub struct Document {
     /// View → New View… (up to 25, like Illustrator).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<SavedView>,
+    /// Select → Save Selection… (at most [`SavedSelection::MAX`]); saved with the document.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved_selections: Vec<SavedSelection>,
     #[serde(default)]
     pub grid: GridPrefs,
     #[serde(default = "ppi72")]
@@ -616,6 +658,7 @@ impl Document {
             symbols: vec![],
             guides: vec![],
             views: vec![],
+            saved_selections: vec![],
             grid: GridPrefs::default(),
             raster_effects_ppi: 72.0,
             images: BTreeMap::new(),
@@ -810,15 +853,17 @@ impl Document {
         self.layers.push(Arc::new(Node::layer(id, &name, LayerColor::Preset((n % LAYER_COLORS.len()) as u8))));
         id
     }
+    /// The default name of a new layer or sublayer, "Layer N". Layers and sublayers share the
+    /// numbering: it starts after the number of layers there are and skips any layer's name.
     pub fn next_layer_name(&self) -> String {
-        let mut i = self.layers.len() + 1;
-        loop {
-            let name = format!("Layer {i}");
-            if !self.layers.iter().any(|l| l.name.as_deref() == Some(&name)) {
-                return name;
+        let (mut count, mut taken) = (0, std::collections::HashSet::new());
+        self.walk(|n| {
+            if n.is_layer() {
+                count += 1;
+                taken.extend(n.name.as_deref());
             }
-            i += 1;
-        }
+        });
+        (count + 1..).map(|i| format!("Layer {i}")).find(|name| !taken.contains(name.as_str())).unwrap_or_default()
     }
 
     /// Visit every node depth first in paint order (bottom to top).
@@ -837,9 +882,19 @@ impl Document {
     pub fn is_visible(&self, id: NodeId) -> bool {
         self.ancestry(id).is_some_and(|a| a.iter().all(|i| self.node(*i).is_some_and(|n| n.visible)))
     }
-    /// Colour of the layer containing `id` (selection highlight colour).
+    /// The innermost layer or sublayer containing `id` (`id` itself when it is a layer).
+    pub fn layer_containing(&self, id: NodeId) -> Option<NodeId> {
+        let a = self.ancestry(id)?;
+        a.iter().rev().copied().find(|i| self.node(*i).is_some_and(Node::is_layer))
+    }
+    /// Every art object the Selection tool can reach (Select All): the visible, unlocked objects
+    /// of the visible, unlocked, non-template layers, looking through sublayers (bottom first).
+    pub fn selectable_art(&self) -> Vec<NodeId> {
+        self.layers.iter().filter(|l| l.visible && !l.locked && !l.is_template()).flat_map(|l| l.layer_art(true)).collect()
+    }
+    /// Colour of the innermost layer or sublayer containing `id` (selection highlight colour).
     pub fn layer_color(&self, id: NodeId) -> [u8; 3] {
-        let l = self.layer_of(id).and_then(|l| self.node(l));
+        let l = self.layer_containing(id).and_then(|l| self.node(l));
         match l.map(|n| &n.kind) {
             Some(NodeKind::Layer { color, .. }) => color.rgb(),
             _ => LAYER_COLORS[0].1,
@@ -858,6 +913,30 @@ impl Document {
     /// Artboard index containing point `p` (topmost = last).
     pub fn artboard_at(&self, p: Point) -> Option<usize> {
         self.artboards.iter().rposition(|a| a.rect.contains(p))
+    }
+    /// The art that moves with an artboard at `rect`: unlocked top-level objects (children of
+    /// unlocked layers and sublayers) lying entirely inside it.
+    pub fn art_on_artboard(&self, rect: Rect) -> Vec<NodeId> {
+        fn collect(n: &Node, rect: Rect, out: &mut Vec<NodeId>) {
+            for c in n.children().into_iter().flatten() {
+                if c.locked {
+                    continue;
+                }
+                if c.is_layer() {
+                    collect(c, rect, out);
+                } else if let Some(b) = c.geometric_bounds()
+                    && rect.contains(Point::new(b.x0, b.y0))
+                    && rect.contains(Point::new(b.x1, b.y1))
+                {
+                    out.push(c.id);
+                }
+            }
+        }
+        let mut art = vec![];
+        for l in self.layers.iter().filter(|l| !l.locked) {
+            collect(l, rect, &mut art);
+        }
+        art
     }
     pub fn next_artboard_id(&self) -> u32 {
         self.artboards.iter().map(|a| a.id).max().unwrap_or(0) + 1
@@ -881,6 +960,33 @@ impl Document {
 }
 
 impl Document {
+    /// Saved selections as a file gives them, made safe to list and recall: at most
+    /// [`SavedSelection::MAX`], each with a clean, unique name and naming objects this document
+    /// has, each once. (An id it doesn't have would select whatever object takes that id later.)
+    pub fn tidy_saved_selections(&mut self) {
+        if self.saved_selections.is_empty() {
+            return;
+        }
+        let mut ids = std::collections::HashSet::new();
+        self.walk(|n| {
+            ids.insert(n.id);
+        });
+        let mut kept: Vec<SavedSelection> = vec![];
+        for s in std::mem::take(&mut self.saved_selections) {
+            if kept.len() >= SavedSelection::MAX {
+                break;
+            }
+            let Some(name) = SavedSelection::clean_name(&s.name) else { continue };
+            if kept.iter().any(|k| k.name == name) {
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            let objects = s.objects.into_iter().filter(|id| ids.contains(id) && seen.insert(*id)).collect();
+            kept.push(SavedSelection { name, objects });
+        }
+        self.saved_selections = kept;
+    }
+
     /// Leave opacity-mask editing: drop the temporary editing layer, a working copy of art the
     /// mask already holds (the engine syncs it after every edit).
     pub fn drop_edit_modes(&mut self) {
@@ -977,6 +1083,17 @@ mod tests {
         assert_eq!(d.layers.len(), 1);
         assert_eq!(d.layers[0].display_name(), "Layer 1");
         assert_eq!(d.artboards[0].rect, Rect::new(0.0, 0.0, 612.0, 792.0));
+    }
+
+    #[test]
+    fn art_on_artboard_takes_unlocked_objects_wholly_inside() {
+        let (mut d, a, b) = doc_with_rects();
+        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0)), vec![a]);
+        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0)), vec![a], "b only half inside");
+        d.node_mut(a).unwrap().locked = true;
+        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 40.0, 15.0)), vec![b]);
+        Arc::make_mut(&mut d.layers[0]).locked = true;
+        assert!(d.art_on_artboard(Rect::new(-1.0, -1.0, 40.0, 15.0)).is_empty());
     }
 
     #[test]

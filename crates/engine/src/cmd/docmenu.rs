@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{CharStyle, Guide, Node, NodeId, NodeKind, TextKind};
+use vectorcraft_doc::{CharStyle, Guide, Node, NodeId, NodeKind, SavedSelection, TextKind};
 
 use super::edit::selected_roots;
 use super::*;
@@ -93,15 +93,30 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Selection…",
             ["Select"],
             None,
-            "{name?} remember the current selection for this session (default name \"Selection N\") → {name}",
+            "{name?} save the current selection under a name, in the document (default \"Selection N\"; an existing name is replaced; at most 25, names up to 255 characters) → {name}",
             has_selection,
             save_selection
         ),
-        cmd!("select.recall", "Recall Selection", ["Select"], None, "{name} → {count}", has_doc, recall_selection),
-        cmd!("select.editSaved", "Edit Selection…", ["Select"], None, "{name, newName?: rename, delete?: bool}", has_doc, edit_saved),
+        cmd!(
+            "select.recall",
+            "Recall Selection",
+            ["Select"],
+            None,
+            "{name} select the objects of a saved selection (those since deleted are left out) → {count}",
+            has_saved_selection,
+            recall_selection
+        ),
+        cmd!(
+            "select.editSaved",
+            "Edit Selection…",
+            ["Select"],
+            None,
+            "{name, newName?: rename, delete?: bool} | {edits: [{name, newName?, delete?}…]} rename or delete saved selections, all in one undo step; names are those before the edit and must stay unique",
+            has_saved_selection,
+            edit_saved
+        ),
         cmd!(query "select.savedList", "Saved Selections", [], None, "{} → [name…] for the active document", has_doc, |s, _| {
-            let t = s.doc()?.title();
-            Ok(json!(s.menu.saved_selections.iter().filter(|x| x.0 == t).map(|x| x.1.clone()).collect::<Vec<_>>()))
+            Ok(json!(s.doc()?.doc.saved_selections.iter().map(|x| x.name.clone()).collect::<Vec<_>>()))
         }),
         cmd!(
             "view.guides.make",
@@ -140,8 +155,34 @@ pub fn specs() -> Vec<CommandSpec> {
             clear_guides
         ),
         cmd!("guide.add", "Add Guide", [], None, "{vertical: bool, pos: pt (x for vertical, y for horizontal)} → {index}", has_doc, guide_add),
-        cmd!("guide.remove", "Remove Guide", [], None, "{index}", guides_unlocked, guide_remove),
-        cmd!("guide.move", "Move Guide", [], None, "{index, pos: pt}", guides_unlocked, guide_move),
+        cmd!(query "guide.list", "Guides", [], None, "{} → [{index, vertical, pos, selected}…] the ruler guides", has_doc, guide_list),
+        cmd!(
+            "guide.select",
+            "Select Guides",
+            [],
+            None,
+            "{indexes: [index…], toggle?: bool} select ruler guides on their own (deselecting the art); toggle adds or removes them instead → {selected: [index…]}",
+            guides_unlocked,
+            guide_select
+        ),
+        cmd!(
+            "guide.remove",
+            "Remove Guide",
+            [],
+            None,
+            "{index?} delete ruler guide `index`, else the selected ones (as Delete / edit.clear does) → {count}",
+            guides_unlocked,
+            guide_remove
+        ),
+        cmd!(
+            "guide.move",
+            "Move Guide",
+            [],
+            None,
+            "{index, pos: pt} put ruler guide `index` at `pos` | {dx?, dy?: pt, copy?: bool} move the selected guides (vertical ones by dx, horizontal ones by dy); copy leaves them and selects the moved copies",
+            guides_unlocked,
+            guide_move
+        ),
         cmd!("file.closeAll", "Close All", ["File"], Some("Cmd+Alt+W"), "{} → {closed}", has_doc, close_all),
         cmd!(
             "file.documentColorMode",
@@ -259,43 +300,79 @@ fn direction_handles(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn save_selection(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "select.save";
     let st = s.doc()?;
-    let title = st.title();
     let ids = st.selection.objects.clone();
-    let name = match str_param(p, "name").filter(|n| !n.trim().is_empty()) {
-        Some(n) => n.trim().to_string(),
-        None => {
-            let mut i = 1;
-            while s.menu.saved_selections.iter().any(|x| x.0 == title && x.1 == format!("Selection {i}")) {
-                i += 1;
-            }
-            format!("Selection {i}")
+    let saved = &st.doc.saved_selections;
+    let name = str_param(p, "name").and_then(SavedSelection::clean_name).unwrap_or_else(|| SavedSelection::default_name(saved));
+    let existing = saved.iter().position(|x| x.name == name);
+    if existing.is_none() && saved.len() >= SavedSelection::MAX {
+        return Err(bad(C, format!("a document keeps at most {} saved selections", SavedSelection::MAX)));
+    }
+    s.edit("Save Selection", |d, _| {
+        let entry = SavedSelection { name: name.clone(), objects: ids };
+        match existing.and_then(|i| d.saved_selections.get_mut(i)) {
+            Some(x) => *x = entry,
+            None => d.saved_selections.push(entry),
         }
-    };
-    s.menu.saved_selections.retain(|x| !(x.0 == title && x.1 == name));
-    s.menu.saved_selections.push((title, name.clone(), ids));
+        Ok(())
+    })?;
     Ok(json!({ "name": name }))
 }
 
-fn saved_index(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
-    let name = str_param(p, "name").ok_or_else(|| bad(cmd, "missing name"))?;
-    let t = s.doc()?.title();
-    s.menu.saved_selections.iter().position(|x| x.0 == t && x.1 == name).ok_or_else(|| bad(cmd, format!("no saved selection `{name}`")))
-}
-
 fn recall_selection(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = saved_index(s, p, "select.recall")?;
-    let ids = s.menu.saved_selections[i].2.clone();
+    const C: &str = "select.recall";
+    let name = str_param(p, "name").ok_or_else(|| bad(C, "missing name"))?;
+    let ids = s.doc()?.doc.saved_selections.iter().find(|x| x.name == name).map(|x| x.objects.clone());
+    let ids = ids.ok_or_else(|| bad(C, format!("no saved selection `{name}`")))?;
     s.select(|d, sel| sel.set(ids.into_iter().filter(|id| d.node(*id).is_some())))?;
     Ok(json!({ "count": s.doc()?.selection.len() }))
 }
 
+/// Recall and Edit Selection… need a document with at least one saved selection.
+fn has_saved_selection(s: &Session) -> std::result::Result<(), String> {
+    let st = s.active().ok_or("no document open")?;
+    if st.doc.saved_selections.is_empty() { Err("no saved selections".into()) } else { Ok(()) }
+}
+
 fn edit_saved(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = saved_index(s, p, "select.editSaved")?;
-    if bool_or(p, "delete", false) {
-        s.menu.saved_selections.remove(i);
-    } else if let Some(n) = str_param(p, "newName").filter(|n| !n.trim().is_empty()) {
-        s.menu.saved_selections[i].1 = n.trim().to_string();
+    const C: &str = "select.editSaved";
+    let edits = match p.get("edits").and_then(Value::as_array) {
+        Some(list) => list.as_slice(),
+        None => std::slice::from_ref(p),
+    };
+    let before = s.doc()?.doc.saved_selections.clone();
+    // Edits name the selections as they are now, so they don't depend on each other's order.
+    let mut after: Vec<Option<SavedSelection>> = before.iter().cloned().map(Some).collect();
+    // Files may hold any number of saved selections: keep this linear.
+    let mut index = std::collections::HashMap::with_capacity(before.len());
+    for (i, x) in before.iter().enumerate() {
+        index.entry(x.name.as_str()).or_insert(i);
+    }
+    for e in edits {
+        let name = str_param(e, "name").ok_or_else(|| bad(C, "missing name"))?;
+        let i = *index.get(name).ok_or_else(|| bad(C, format!("no saved selection `{name}`")))?;
+        let Some(slot) = after.get_mut(i) else { continue };
+        if bool_or(e, "delete", false) {
+            *slot = None;
+        } else if let Some(n) = str_param(e, "newName").and_then(SavedSelection::clean_name)
+            && let Some(x) = slot
+        {
+            x.name = n;
+        }
+    }
+    let after: Vec<SavedSelection> = after.into_iter().flatten().collect();
+    let mut names = std::collections::HashSet::with_capacity(after.len());
+    for x in &after {
+        if !names.insert(x.name.as_str()) {
+            return Err(bad(C, format!("two saved selections would be named `{}`", x.name)));
+        }
+    }
+    if after != before {
+        s.edit("Edit Selection", |d, _| {
+            d.saved_selections = after;
+            Ok(())
+        })?;
     }
     ok()
 }
@@ -377,6 +454,10 @@ fn release_guides(s: &mut Session, _: &Value) -> Result<Value> {
 fn lock_guides(s: &mut Session, p: &Value) -> Result<Value> {
     let v = p.get("locked").and_then(Value::as_bool).unwrap_or(!s.menu.guides_locked);
     s.menu.guides_locked = v;
+    // Locked guides can't stay selected.
+    if v && !s.doc()?.selection.guides.is_empty() {
+        s.select(|_, sel| sel.guides.clear())?;
+    }
     Ok(json!({ "locked": v }))
 }
 
@@ -407,28 +488,95 @@ fn guide_add(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "index": i }))
 }
 
-fn guide_index(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
-    let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "missing index"))? as usize;
+fn guide_list(s: &mut Session, _: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let row = |(i, g): (usize, &Guide)| json!({ "index": i, "vertical": g.vertical, "pos": g.pos, "selected": st.selection.guides.contains(&i) });
+    Ok(Value::Array(st.doc.guides.iter().enumerate().map(row).collect()))
+}
+
+/// Ruler guide `index` of the active document (`index` validated).
+fn guide_index(s: &Session, v: Option<&Value>, cmd: &str) -> Result<usize> {
+    let i = v.and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(cmd, "an index must be a whole number"))?;
     if i >= s.doc()?.doc.guides.len() {
-        return Err(bad(cmd, "no such guide"));
+        return Err(bad(cmd, format!("no guide {i}")));
     }
     Ok(i)
 }
 
-fn guide_remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = guide_index(s, p, "guide.remove")?;
-    s.edit("Delete Guide", |d, _| {
-        d.guides.remove(i);
-        Ok(())
-    })?;
-    ok()
+fn guide_select(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = p.get("indexes").and_then(Value::as_array).ok_or_else(|| bad("guide.select", "missing indexes"))?;
+    let picked = list.iter().map(|v| guide_index(s, Some(v), "guide.select")).collect::<Result<Vec<_>>>()?;
+    if bool_or(p, "toggle", false) {
+        let mut now = s.doc()?.selection.guides.clone();
+        for i in picked {
+            if let Some(k) = now.iter().position(|g| *g == i) {
+                now.remove(k);
+            } else {
+                now.push(i);
+            }
+        }
+        s.select(|_, sel| sel.set_guides(now))?;
+    } else {
+        s.select(|_, sel| sel.set_guides(picked))?;
+    }
+    Ok(json!({ "selected": s.doc()?.selection.guides }))
 }
 
-fn guide_move(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = guide_index(s, p, "guide.move")?;
-    let pos = f64_req(p, "pos", "guide.move")?;
-    s.edit("Move Guide", |d, _| {
-        d.guides[i].pos = pos;
+/// Delete ruler guide `index`, else the selected guides, in one undo step → {count}.
+pub(crate) fn guide_remove(s: &mut Session, p: &Value) -> Result<Value> {
+    let gone: Vec<usize> = match p.get("index") {
+        Some(v) => vec![guide_index(s, Some(v), "guide.remove")?],
+        None => s.doc()?.selection.guides.clone(),
+    };
+    if gone.is_empty() {
+        return Err(bad("guide.remove", "no guide selected"));
+    }
+    let label = if gone.len() == 1 { "Delete Guide" } else { "Delete Guides" };
+    s.edit(label, |d, sel| {
+        let kept = |i: &usize| !gone.contains(i);
+        // The guides left selected keep their place among the rest.
+        let left: Vec<usize> = sel.guides.iter().filter(|i| kept(i)).map(|i| i - gone.iter().filter(|g| *g < i).count()).collect();
+        d.guides = std::mem::take(&mut d.guides).into_iter().enumerate().filter(|(i, _)| kept(i)).map(|(_, g)| g).collect();
+        sel.set_guides(left);
+        Ok(())
+    })?;
+    Ok(json!({ "count": gone.len() }))
+}
+
+/// Put ruler guide `index` at `pos`, else move (or copy) the selected guides, in one undo step.
+pub(crate) fn guide_move(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(v) = p.get("index") {
+        let i = guide_index(s, Some(v), "guide.move")?;
+        let pos = f64_req(p, "pos", "guide.move")?;
+        s.edit("Move Guide", |d, _| {
+            if let Some(g) = d.guides.get_mut(i) {
+                g.pos = pos;
+            }
+            Ok(())
+        })?;
+        return ok();
+    }
+    let moving = s.doc()?.selection.guides.clone();
+    if moving.is_empty() {
+        return Err(bad("guide.move", "no guide selected (or give an index)"));
+    }
+    let (dx, dy, copy) = (f64_or(p, "dx", 0.0), f64_or(p, "dy", 0.0), bool_or(p, "copy", false));
+    s.edit(if copy { "Copy Guide" } else { "Move Guide" }, |d, sel| {
+        let mut copies = vec![];
+        for &i in &moving {
+            let Some(g) = d.guides.get_mut(i) else { continue };
+            let moved = Guide { vertical: g.vertical, pos: g.pos + if g.vertical { dx } else { dy } };
+            if copy {
+                copies.push(moved);
+            } else {
+                *g = moved;
+            }
+        }
+        if copy {
+            let first = d.guides.len();
+            d.guides.extend(copies);
+            sel.set_guides(first..d.guides.len());
+        }
         Ok(())
     })?;
     ok()

@@ -12,7 +12,7 @@ use vectorcraft_geom::Affine;
 use super::graphics::{Space, process};
 use super::interp::{Interp, matrix_of};
 use super::lex::{find, hex_decode};
-use super::obj::{DictRef, Key, Obj, Op, PsError, Res, ps_err};
+use super::obj::{DictRef, Key, Obj, Op, PsError, Res, Shared, ps_err};
 use crate::ps;
 
 /// Most bytes one filter or image reads.
@@ -185,7 +185,8 @@ fn decode(f: &Filter, raw: &[u8]) -> Res<(Vec<u8>, usize, Option<u8>)> {
         "SubFileDecode" => {
             let (count, eod) = &f.sub;
             if eod.is_empty() {
-                let n = (*count).min(raw.len());
+                // A count of 0 without an end string sets no end: the data passes through whole.
+                let n = if *count == 0 { raw.len() } else { (*count).min(raw.len()) };
                 (raw.get(..n).unwrap_or_default().to_vec(), n)
             } else {
                 let (mut at, mut seen) = (0, 0);
@@ -218,25 +219,20 @@ impl Interp<'_> {
     pub fn data_op(&mut self, op: Op) -> Res {
         use Op::*;
         match op {
-            CurrentFile => self.push(Obj::File(Rc::new(RefCell::new(Stream::Current))))?,
+            CurrentFile => self.push(Obj::File { stream: Rc::new(RefCell::new(Stream::Current)), exec: false })?,
             Filter => self.filter()?,
             ReadHexString | ReadString => {
                 let s = self.pop_str()?;
-                let Obj::File(f) = self.pop()? else { return ps_err("typecheck", "") };
-                let n = s.borrow().len();
+                let Obj::File { stream: f, .. } = self.pop()? else { return ps_err("typecheck", "") };
+                let n = s.len();
                 let got = if op == ReadString { self.read(&f, n)? } else { self.read_hex(&f, n)? };
-                let full = got.len() == n;
-                self.alloc(got.len())?;
-                if let Some(d) = s.borrow_mut().get_mut(..got.len()) {
-                    d.copy_from_slice(&got);
-                }
-                self.push(Obj::string(got))?;
-                self.push(Obj::Bool(full))?;
+                self.fill(s, &got)?;
+                self.push(Obj::Bool(got.len() == n))?;
             }
             ReadLine => {
                 let s = self.pop_str()?;
-                let Obj::File(f) = self.pop()? else { return ps_err("typecheck", "") };
-                let n = s.borrow().len();
+                let Obj::File { stream: f, .. } = self.pop()? else { return ps_err("typecheck", "") };
+                let n = s.len();
                 let mut line = vec![];
                 let mut ended = false;
                 while line.len() < n {
@@ -252,11 +248,17 @@ impl Interp<'_> {
                         Some(b) => line.push(*b),
                     }
                 }
-                self.alloc(line.len())?;
-                self.push(Obj::string(line))?;
+                self.fill(s, &line)?;
                 self.push(Obj::Bool(ended))?;
             }
-            FlushFile | CloseFile => {
+            FlushFile => {
+                // An input file is read to its end: a filter over the program's data skips it
+                // (metadata read with `flushfile`). The program's own file goes on being run.
+                if let Obj::File { stream, .. } = self.pop()? {
+                    self.materialize(&stream)?;
+                }
+            }
+            CloseFile => {
                 self.pop()?;
             }
             File => {
@@ -307,12 +309,20 @@ impl Interp<'_> {
         Ok(out)
     }
 
+    /// Read bytes `got` into string `s` and push the part of `s` they fill.
+    fn fill(&mut self, s: Shared<u8>, got: &[u8]) -> Res {
+        if !s.write(0, got) {
+            return ps_err("rangecheck", "");
+        }
+        self.push_interval(Obj::Str(s), 0, got.len())
+    }
+
     /// `filter`: a file that decodes its source. Over the program's own data it decodes when
     /// first read (the data follows the operator that reads it); over other data, at once.
     fn filter(&mut self) -> Res {
         let name = self.pop()?.text().ok_or(PsError::Ps("typecheck", "filter".into()))?;
         let sub = if &*name == "SubFileDecode" {
-            let eod = self.pop_str()?.borrow().clone();
+            let eod = self.pop_str()?.to_vec();
             let count = self.pop_count()?;
             (count, eod)
         } else {
@@ -327,7 +337,7 @@ impl Interp<'_> {
         }
         let spec = Filter { name, sub };
         let stream = match self.pop()? {
-            Obj::File(f) => {
+            Obj::File { stream: f, .. } => {
                 if let Stream::Buf { data, pos, .. } = &*f.borrow() {
                     self.alloc(data.len().saturating_sub(*pos))?;
                 }
@@ -338,6 +348,11 @@ impl Interp<'_> {
                 };
                 match chain {
                     Some(mut c) => {
+                        // The new filter reads a pending one's data: it has none left of its own
+                        // (`flushfile` on it skips nothing more).
+                        if !c.is_empty() {
+                            *f.borrow_mut() = Stream::Buf { data: vec![], pos: 0, rgb: None };
+                        }
                         c.push(spec);
                         Stream::Pending(c)
                     }
@@ -362,7 +377,16 @@ impl Interp<'_> {
             }
             _ => return ps_err("typecheck", "filter"),
         };
-        self.push(Obj::File(Rc::new(RefCell::new(stream))))
+        self.push(Obj::File { stream: Rc::new(RefCell::new(stream)), exec: false })
+    }
+
+    /// The data an executable file runs as a program: what is left of it. `None` for the
+    /// program's own file, which is being run already.
+    pub(super) fn program_of(&mut self, f: &Rc<RefCell<Stream>>) -> Res<Option<Vec<u8>>> {
+        if matches!(&*f.borrow(), Stream::Current) {
+            return Ok(None);
+        }
+        self.read(f, MAX_DATA).map(Some)
     }
 
     /// Decode the filters a file waits to run over the program's data, from where it is now.
@@ -686,9 +710,9 @@ struct Pixels {
 
 fn source(o: &Obj) -> Res<Source> {
     Ok(match o {
-        Obj::File(f) => Source::File(f.clone()),
-        Obj::Str(s) => Source::Str(s.borrow().clone()),
-        p @ Obj::Array { .. } => Source::Proc(Obj::Array { items: p.items().cloned().unwrap_or_default(), exec: true }),
+        Obj::File { stream: f, .. } => Source::File(f.clone()),
+        Obj::Str(s) => Source::Str(s.to_vec()),
+        Obj::Array { items, .. } => Source::Proc(Obj::Array { items: items.clone(), exec: true }),
         _ => return ps_err("typecheck", "DataSource"),
     })
 }

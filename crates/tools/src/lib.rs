@@ -23,6 +23,7 @@ pub mod params;
 pub mod pen;
 pub mod place;
 pub mod printtiling;
+pub mod rulerguide;
 pub mod select;
 pub mod settings;
 pub mod shape;
@@ -201,6 +202,13 @@ impl ScreenFrame {
     pub fn at(&self, x: f64, y: f64) -> Point {
         self.origin + self.right * x + self.down * y
     }
+    /// Where the document point `p` is, in screen pixels from the window's top-left corner (the
+    /// inverse of [`Self::at`]); none for a degenerate frame.
+    pub fn to_screen(&self, p: Point) -> Option<(f64, f64)> {
+        let (r, d, v) = (self.right, self.down, p - self.origin);
+        let det = r.x * d.y - d.x * r.y;
+        (det.is_finite() && det.abs() > 1e-12).then(|| ((v.x * d.y - d.x * v.y) / det, (r.x * v.y - v.x * r.y) / det))
+    }
 }
 
 /// Read-only context a tool sees.
@@ -213,6 +221,8 @@ pub struct ToolContext<'a> {
     pub paint: &'a PaintDefaults,
     pub outline: bool,
     pub smart_guides: bool,
+    /// View → Show Guides with Lock Guides off: the selection tools pick and drag ruler guides.
+    pub guides: bool,
     pub snap_to_grid: bool,
     /// Bounding box shown (View → Show/Hide Bounding Box).
     pub show_bbox: bool,
@@ -250,6 +260,25 @@ pub struct ToolContext<'a> {
     pub slices_hidden: bool,
     /// View → Lock Slices: the Slice Selection tool leaves locked slices alone.
     pub slices_locked: bool,
+    /// General → Disable Auto Add/Delete is off: the Pen adds an anchor on a selected path's
+    /// segment and deletes one of its anchors.
+    pub auto_add_delete: bool,
+    /// Selection & Anchor Display → Tolerance: how near (screen pixels) a click must be to a path
+    /// or an anchor to pick it.
+    pub selection_tolerance: f64,
+    /// Selection & Anchor Display → Object Selection by Path Only: a click inside a filled path
+    /// doesn't pick it, only one on its path does.
+    pub path_only: bool,
+    /// General → Double Click To Isolate: a double-click on a group with the Selection tool
+    /// isolates it.
+    pub double_click_isolate: bool,
+    /// Selection & Anchor Display → Command Click to Select Objects Behind: Cmd/Ctrl-click with the
+    /// Selection tool selects the object under the selected one, the next click the one under
+    /// that.
+    pub select_behind: bool,
+    /// Selection & Anchor Display → Highlight anchors on mouse over: Direct Selection marks the
+    /// anchor under the pointer.
+    pub highlight_anchors: bool,
     /// The document window (none headless): screen-fixed widgets sit in it.
     pub screen: Option<ScreenFrame>,
     /// Where the Plane Switching Widget sits (Perspective Grid Options); None while it's hidden.
@@ -273,8 +302,16 @@ impl ToolContext<'_> {
     pub fn offset_label(&self, dx: f64, dy: f64) -> String {
         format!("dX: {}\ndY: {}", self.len(dx), self.len(dy))
     }
+    /// What Snap to Grid snaps to: the grid's subdivisions (or its lines without any).
+    pub fn grid_step(&self) -> f64 {
+        self.doc.grid.spacing / self.doc.grid.subdivisions.max(1) as f64
+    }
+    /// The selection tolerance in document units ([`Self::selection_tolerance`]).
+    pub fn pick_tol(&self) -> f64 {
+        self.tol(self.selection_tolerance)
+    }
     pub fn hit_options(&self) -> vectorcraft_doc::hit::HitOptions {
-        vectorcraft_doc::hit::HitOptions { tol: self.tol(3.0), outline: self.outline, path_only: false }
+        vectorcraft_doc::hit::HitOptions { tol: self.pick_tol(), outline: self.outline, path_only: self.path_only }
     }
 }
 
@@ -326,6 +363,8 @@ pub enum Cursor {
     AnchorPoint,
     /// The Curvature tool: the pen nib with a curve badge.
     Curvature,
+    /// Over the last anchor of the path being drawn: a click retracts its outgoing handle.
+    PenConvert,
     Text,
     Hand,
     HandGrab,
@@ -353,6 +392,27 @@ pub enum Cursor {
     BlendObject,
     /// The Blend tool over an anchor point (the blend starts there): a crosshair with a target.
     BlendAnchor,
+}
+
+impl Cursor {
+    /// General › Use Precise Cursors: the drawing tools' pointers (the Pen's in every state, the
+    /// Eyedropper's, the Slice and Blend tools') become a plain crosshair at the hotspot.
+    pub fn precise(self) -> Self {
+        match self {
+            Cursor::Pen
+            | Cursor::PenAdd
+            | Cursor::PenDelete
+            | Cursor::PenClose
+            | Cursor::PenContinue
+            | Cursor::PenConvert
+            | Cursor::Eyedropper
+            | Cursor::Slice
+            | Cursor::Blend
+            | Cursor::BlendObject
+            | Cursor::BlendAnchor => Cursor::Crosshair,
+            c => c,
+        }
+    }
 }
 
 /// A tool state machine.
@@ -481,6 +541,17 @@ pub(crate) mod testutil {
         (d, id)
     }
 
+    /// [`doc_with_rect`] plus 120 × 40 area type at (300, 300).
+    pub fn doc_with_area_type() -> (Document, NodeId) {
+        let (mut d, _) = doc_with_rect();
+        let l = d.layers[0].id;
+        let id = d.alloc_id();
+        let mut t = vectorcraft_doc::TextObject::point(Point::new(300.0, 300.0), "Some words", Default::default());
+        t.kind = vectorcraft_doc::TextKind::Area { frame: shapes::rectangle(Rect::new(0.0, 0.0, 120.0, 40.0)) };
+        d.insert(Some(l), 1, Node::new(id, vectorcraft_doc::NodeKind::Text(Box::new(t)))).unwrap();
+        (d, id)
+    }
+
     pub fn paint() -> PaintDefaults {
         PaintDefaults::default()
     }
@@ -494,6 +565,7 @@ pub(crate) mod testutil {
             paint: p,
             outline: false,
             smart_guides: true,
+            guides: true,
             snap_to_grid: false,
             show_bbox: true,
             snap_to_pixel: false,
@@ -511,6 +583,12 @@ pub(crate) mod testutil {
             paste_plain_text: false,
             slices_hidden: false,
             slices_locked: false,
+            auto_add_delete: true,
+            selection_tolerance: 3.0,
+            path_only: false,
+            double_click_isolate: true,
+            select_behind: true,
+            highlight_anchors: true,
             screen: None,
             plane_widget: Some(Default::default()),
         }

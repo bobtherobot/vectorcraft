@@ -100,6 +100,10 @@ fn pen(p: &mut Glyph, o: Pos2, badge: &str) {
             p.add(Shape::line(arc.clone(), Stroke::new(3.0, HALO)));
             p.add(Shape::line(arc, Stroke::new(1.2, INK)));
         }
+        "^" => {
+            line(p, b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
+            line(p, b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
+        }
         "*" => {
             line(p, b + vec2(0.0, 0.0), b + vec2(6.0, 6.0));
             line(p, b + vec2(6.0, 0.0), b + vec2(0.0, 6.0));
@@ -265,6 +269,7 @@ fn shapes(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenContinue => pen(painter, p, "/"),
         Cursor::AnchorPoint => anchor_point(painter, p),
         Cursor::Curvature => pen(painter, p, "~"),
+        Cursor::PenConvert => pen(painter, p, "^"),
         Cursor::Text => ibeam(painter, p),
         Cursor::AddStop => stop_badge(painter, p, true),
         Cursor::RemoveStop => stop_badge(painter, p, false),

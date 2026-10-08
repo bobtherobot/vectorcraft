@@ -11,6 +11,10 @@ fn tags_map_to_languages() {
     assert_eq!(lang_from_tag("fr_FR"), None);
     assert_eq!(lang_from_tag("ja_JP.UTF-8"), Lang::from_code("ja"));
     assert_eq!(lang_from_tag("ja"), Lang::from_code("ja"));
+    // Spanish: every region (and Latin America as a whole) resolves to the one catalog.
+    for tag in ["es", "es_ES.UTF-8", "es-MX", "es_AR", "es-419", "es-US"] {
+        assert_eq!(lang_from_tag(tag), Lang::from_code("es"), "{tag}");
+    }
     // Traditional Chinese: by region, by script, and with a region after the script.
     assert_eq!(lang_from_tag("zh_TW.UTF-8"), Some(ZH()));
     assert_eq!(lang_from_tag("zh-TW"), Some(ZH()));
@@ -23,7 +27,7 @@ fn tags_map_to_languages() {
     // Simplified Chinese locales never pick up the Traditional catalog (they resolve to a
     // `zh-hans` catalog once one is registered, and to English until then).
     for tag in ["zh-CN", "zh_CN.UTF-8", "zh_SG", "zh-Hans", "zh-Hans-CN", "zh"] {
-        assert_ne!(lang_from_tag(tag), Some(ZH()), "{tag}");
+        assert_eq!(lang_from_tag(tag), Lang::from_code("zh-hans"), "{tag}");
     }
     assert_eq!(lang_from_tag(""), None);
     assert_eq!(lang_from_tag("_"), None);
@@ -51,6 +55,7 @@ fn os_language_lists_are_parsed() {
 
 #[test]
 fn preferences_resolve_with_fallback() {
+    assert_eq!(Lang::from_pref("zh-Hans"), Lang::from_code("zh-hans").unwrap());
     assert_eq!(Lang::from_pref("zh-hant"), ZH());
     assert_eq!(Lang::from_pref("ZH-Hant"), ZH());
     assert_eq!(Lang::from_pref("en"), Lang::EN);
@@ -246,6 +251,67 @@ fn zh_hant_has_no_simplified_characters() {
     assert!(bad.is_empty(), "simplified characters in zh-hant.tsv:\n{}", bad.join("\n"));
 }
 
+/// The Simplified Chinese catalog is written in Simplified characters and in the vocabulary of the
+/// mainland: Taiwan's terms (and a converted Traditional row) would read as foreign to its users.
+#[test]
+fn zh_hans_is_simplified_and_mainland() {
+    const TRADITIONAL_ONLY: &str = "們這為來時間個說對會發現過還沒動開關圖層選設項編輯顯視幫刪預覽導節線連擇報錯誤處據庫經體應該樣點擊確認標記錄輸進轉換調約維護啟閉鎖義類網絡頁顏繪畫寬長邊緣縮鏡複貼漸濾筆鋼區飽參數變號單雙屬組齊徑錨輪陰陽實際讓從產東車門問閃並堅測試運術壓縮疊飾夠亞質紙張檔認識";
+    const TAIWAN_TERMS: &[&str] = &[
+        "档案",
+        "资料夹",
+        "快速键",
+        "按一下",
+        "按两下",
+        "描述档",
+        "品质",
+        "贴上",
+        "功能表",
+        "物件",
+        "工作区域",
+        "遮色片",
+        "影像",
+        "列印",
+        "印表机",
+        "字型",
+        "视窗",
+        "滑鼠",
+        "游标",
+        "程式",
+        "软体",
+        "偏好设定",
+        "色票",
+        "渐层",
+        "笔刷",
+        "尺标",
+        "字元",
+        "汇出",
+        "汇入",
+        "连结",
+        "解析度",
+        "点阵图",
+        "介面",
+        "自订",
+        "对话方块",
+        "预设值",
+        "储存",
+        "套用",
+        "「",
+        "」",
+    ];
+    let lang = Lang::from_code("zh-hans").expect("zh-hans registered");
+    let (entries, _) = parse_entries(lang.0.source);
+    let mut bad = Vec::new();
+    for (ctx, src, tr) in entries {
+        if let Some(c) = tr.chars().find(|c| TRADITIONAL_ONLY.contains(*c)) {
+            bad.push(format!("{ctx} {src:?} → {tr:?} has {c:?}"));
+        }
+        if let Some(w) = TAIWAN_TERMS.iter().find(|w| tr.contains(**w)) {
+            bad.push(format!("{ctx} {src:?} → {tr:?} has the Taiwan term {w:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "in zh-hans.tsv:\n{}", bad.join("\n"));
+}
+
 /// Every menu string (top-level titles, submenu names, item labels, section headers, UI and
 /// engine command labels and menu paths) has an entry in each language that claims complete menus.
 #[test]
@@ -254,7 +320,9 @@ fn complete_languages_translate_every_menu_string() {
     assert!(strings.len() > 500, "menu scan found only {} strings", strings.len());
     for l in LANGUAGES.iter().filter(|l| l.complete_menus) {
         let cat = l.catalog();
-        let missing: Vec<_> = strings.iter().filter(|s| cat.plain(s).is_none()).collect();
+        // Languages that keep the product, workspace and perspective preset names in English.
+        let kept = |s: &str| KEEPS_MENU_NAMES.contains(&l.code) && MENU_KEEP_AS_IS.contains(&s);
+        let missing: Vec<_> = strings.iter().filter(|s| !kept(s) && cat.plain(s).is_none()).collect();
         assert!(missing.is_empty(), "{}: {} untranslated menu strings: {missing:#?}", l.code, missing.len());
     }
 }
@@ -322,10 +390,13 @@ fn cs() -> Lang {
     Lang::from_code("cs").expect("cs registered")
 }
 
-/// Menu labels Czech shows as they are: the product name, a format name, the built-in workspace
+/// Languages whose catalogs leave [`MENU_KEEP_AS_IS`] in English.
+const KEEPS_MENU_NAMES: [&str; 4] = ["cs", "es", "ja", "pt-br"];
+
+/// Menu labels the menu-complete catalogs (Czech, Spanish, Japanese, Brazilian Portuguese) show as they are: the product name, a format name, the built-in workspace
 /// names and the perspective grid presets (names, shown untranslated wherever else they appear).
 /// Each language's own name in the Language menu is left alone too.
-const CZECH_KEEP_AS_IS: &[&str] = &[
+const MENU_KEEP_AS_IS: &[&str] = &[
     "VectorCraft",
     "OpenType",
     "Essentials",
@@ -412,9 +483,10 @@ fn toggled_labels() -> Vec<String> {
     labels
 }
 
-/// Czech covers every menu label, the Show/Hide pairs included (panels and dialogs not yet).
+/// Czech, Spanish, Japanese and Brazilian Portuguese cover every menu label, the Show/Hide pairs
+/// and the canvas context menu included (panels and dialogs not yet).
 #[test]
-fn czech_translates_every_menu_label() {
+fn menu_catalogs_translate_every_menu_label() {
     let labels = menu_labels();
     // What the menus show (recent files and fonts, user presets and libraries show their names).
     let shown = crate::menus::menu_strings();
@@ -422,20 +494,63 @@ fn czech_translates_every_menu_label() {
     // Font names and sizes, and installed plug-ins' own names, are not interface text.
     let interface = |(label, id, p): &(&str, &str, serde_json::Value)| {
         let plugin = *id == "plugin.dialog" || p.get("effect").and_then(serde_json::Value::as_str).is_some_and(|e| e.starts_with("plugin."));
-        *id != "text.setStyle" && !plugin && shown.contains(*label) && !CZECH_KEEP_AS_IS.contains(label) && !language_name(label)
+        *id != "text.setStyle" && !plugin && shown.contains(*label) && !MENU_KEEP_AS_IS.contains(label) && !language_name(label)
     };
-    let mut missing: Vec<String> = labels.iter().filter(|l| interface(l)).map(|(l, ..)| l.to_string()).collect();
-    missing.extend(toggled_labels());
-    missing.extend(crate::menus::CONTEXT_LABELS.iter().map(|l| l.to_string()));
-    missing.retain(|l| !has(cs(), l));
-    missing.sort();
-    missing.dedup();
-    assert!(missing.is_empty(), "untranslated Czech menu labels: {missing:?}");
-    for keep in CZECH_KEEP_AS_IS {
-        assert!(labels.iter().any(|(l, ..)| l == keep), "`{keep}` isn't a menu label");
-        assert!(!has(cs(), keep), "`{keep}` is both kept and translated");
+    let mut all: Vec<String> = labels.iter().filter(|l| interface(l)).map(|(l, ..)| l.to_string()).collect();
+    all.extend(toggled_labels());
+    all.extend(crate::menus::CONTEXT_LABELS.iter().map(|l| l.to_string()));
+    all.sort();
+    all.dedup();
+    for code in KEEPS_MENU_NAMES {
+        let lang = Lang::from_code(code).expect("registered");
+        let missing: Vec<&String> = all.iter().filter(|l| !has(lang, l)).collect();
+        assert!(missing.is_empty(), "{code}: untranslated menu labels: {missing:?}");
+        for keep in MENU_KEEP_AS_IS {
+            assert!(labels.iter().any(|(l, ..)| l == keep), "`{keep}` isn't a menu label");
+            assert!(!has(lang, keep), "{code}: `{keep}` is both kept and translated");
+        }
     }
     assert_eq!(tr(cs(), "File"), "Soubor");
+    assert_eq!(tr(Lang::from_code("ja").expect("ja"), "File"), "ファイル");
+    assert_eq!(tr(Lang::from_code("pt-br").expect("pt-br"), "File"), "Arquivo");
+    assert_eq!(tr(es(), "File"), "Archivo");
+}
+
+fn es() -> Lang {
+    Lang::from_code("es").expect("es registered")
+}
+
+/// Spanish uses the vector-illustration vocabulary its users know, has two plural forms like
+/// English, and reads the same in the menus and in the panels.
+#[test]
+fn spanish_reads_as_spanish() {
+    for (en, want) in [
+        ("Artboard Tool", "Herramienta Mesa de trabajo"),
+        ("Swatches", "Muestras"),
+        ("Pathfinder", "Buscatrazos"),
+        ("Stroke", "Trazo"),
+        ("Fill", "Relleno"),
+        ("Direct Selection Tool", "Herramienta Selección directa"),
+        ("Save As…", "Guardar como…"),
+        ("Undo", "Deshacer"),
+    ] {
+        assert_eq!(tr(es(), en), want);
+    }
+    assert_eq!(trn(es(), 1, "{n} Layer", "{n} Layers"), "1 capa");
+    assert_eq!(trn(es(), 0, "{n} Layer", "{n} Layers"), "0 capas");
+    assert_eq!(trn(es(), 3, "{n} Layer", "{n} Layers"), "3 capas");
+}
+
+/// Catalogs written with spaces between words keep a fragment's leading and trailing spaces: the
+/// hint bar and a few labels are joined from pieces (" to finish", "Press ").
+#[test]
+fn spaced_catalogs_keep_the_spaces_around_fragments() {
+    let edge = |s: &str| (s.len() - s.trim_start_matches(' ').len(), s.len() - s.trim_end_matches(' ').len());
+    for l in LANGUAGES.iter().filter(|l| !l.source.is_empty() && !l.source.chars().any(is_cjk)) {
+        let (entries, _) = parse_entries(l.source);
+        let bad: Vec<_> = entries.iter().filter(|(ctx, src, tr)| ctx.is_empty() && edge(src) != edge(tr)).map(|(_, src, _)| src).collect();
+        assert!(bad.is_empty(), "{}: spaces differ around {bad:?}", l.code);
+    }
 }
 
 #[test]
@@ -444,11 +559,11 @@ fn czech_plurals_have_three_forms() {
     assert_eq!(forms, [2, 0, 1, 1, 2, 2, 2]);
 }
 
-/// Czech letters (and the punctuation Czech text uses) come from each family's own first font, not
+/// Czech and Spanish letters (and the punctuation their text uses) come from each family's own first font, not
 /// from a fallback further down the stack. (`has_glyph` can't tell: it counts characters of the
 /// face that draws missing glyphs, the first one, as missing.)
 #[test]
-fn czech_glyphs_are_available_without_system_fonts() {
+fn czech_and_spanish_glyphs_are_available_without_system_fonts() {
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx);
     let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
@@ -459,7 +574,7 @@ fn czech_glyphs_are_available_without_system_fonts() {
             let first = first.unwrap();
             let mut font = fonts.fonts.font(&family);
             let chars = font.characters();
-            for ch in "áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ„“‚‘…–".chars() {
+            for ch in "áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ„“‚‘…–ñÑüÜ¿¡”".chars() {
                 assert!(chars.get(&ch).is_some_and(|fonts| fonts.contains(&first)), "{first} ({family:?}) has no {ch}");
             }
         }
@@ -470,7 +585,7 @@ fn czech_glyphs_are_available_without_system_fonts() {
 /// the `interfaceLanguage` preference, and isn't written back.
 #[test]
 fn a_language_saved_by_an_older_version_carries_over() {
-    for (saved, want) in [("ja", "ja"), ("cs", "cs"), ("en", "auto"), ("xx", "auto")] {
+    for (saved, want) in [("ja", "ja"), ("cs", "cs"), ("pt-br", "pt-br"), ("en", "auto"), ("xx", "auto")] {
         let ui: crate::state::UiState = serde_json::from_value(serde_json::json!({"language": saved})).unwrap();
         let mut app = crate::VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
         app.ui = ui;

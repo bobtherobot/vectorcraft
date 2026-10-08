@@ -75,7 +75,22 @@ pub(crate) fn all_shortcuts() -> Vec<(KeyboardShortcut, &'static str, serde_json
 /// is ignored). `native`: the system menu already handles the chord as written, so only that
 /// alias is left to match here.
 pub(crate) fn consume(i: &mut egui::InputState, sc: &KeyboardShortcut, native: bool) -> bool {
-    (!native && i.consume_shortcut(sc)) || (sc.logical_key == Key::Equals && i.consume_key(sc.modifiers, Key::Plus))
+    (!native && i.consume_shortcut(sc))
+        || (sc.logical_key == Key::Equals && i.consume_key(sc.modifiers, Key::Plus))
+        || (sc.modifiers.shift && shifted(sc.logical_key).is_some_and(|k| i.consume_key(sc.modifiers, k)))
+}
+
+/// The key a shifted punctuation key arrives as: egui reports the character typed, so Cmd+Shift+[
+/// comes in as Cmd+Shift+`{` (US-style layouts).
+fn shifted(k: Key) -> Option<Key> {
+    Some(match k {
+        Key::OpenBracket => Key::OpenCurlyBracket,
+        Key::CloseBracket => Key::CloseCurlyBracket,
+        Key::Slash => Key::Questionmark,
+        Key::Semicolon => Key::Colon,
+        Key::Backslash => Key::Pipe,
+        _ => return None,
+    })
 }
 
 /// Keys that paste with Cmd, or alone. (Shift+Insert is left out: Ctrl+Insert copies.)
@@ -196,7 +211,9 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
             // A key the tool claims (Esc with a loaded place cursor) is only the tool's.
             let claimed = app.session.tool_claims_key(tk, view);
             let r = app.session.tool_key(tk, Mods::default(), view);
-            if claimed {
+            // Enter also takes what the tool asks of the UI: Rotate, Scale, Reflect and Shear open
+            // their dialog with it.
+            if claimed || (k == Key::Enter && !busy) {
                 crate::canvas::apply_requests(app, r);
             }
             if k == Key::Escape && !busy && !claimed {
@@ -208,10 +225,29 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     app.ui.flyout = None;
                 }
             }
+            if k == Key::Enter && !busy && !claimed {
+                // Enter with a selection tool opens the Move dialog, as a double-click on its button
+                // does.
+                let tool = app.session.tool_id();
+                if app.ui.dialog.is_none() && crate::canvas::is_selection_tool(tool) {
+                    // Nothing selected: it fails and nothing opens (the menu item is disabled then too).
+                    let _ = crate::toolbar::open_options(app, tool);
+                }
+                // The Enter that opened a dialog isn't also its OK: dialogs take Enter, this frame too.
+                if app.ui.dialog.is_some() {
+                    ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+                }
+            }
         }
     }
     if typing {
         return;
+    }
+    // Tab is ours when no field has the keyboard (it shows and hides the panels, or goes to the
+    // Type tool): left to egui, it would also move the focus on to a field, and every key after it
+    // would count as typing.
+    if ctx.input(|i| i.key_pressed(Key::Tab)) {
+        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
     }
     // Type tool editing: text, IME composition and editing keys go to the tool.
     if app.session.tool_wants_text() {
@@ -225,7 +261,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
             });
             return;
         }
-        // Editing keys with modifiers, clipboard and Cmd+A.
+        // Editing keys with modifiers and the clipboard (Cmd+A is Select All's, below: the text).
         crate::panels::character::route_type_input(app, ctx);
         // Enter was already delivered above as ToolKey::Enter (newline).
         let fire = all_shortcuts().into_iter().filter(|(sc, ..)| sc.modifiers.command).find(|(sc, ..)| ctx.input_mut(|i| consume(i, sc, false)));
@@ -265,7 +301,10 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::menus::invoke(app, id, json!({}));
     }
     if busy {
-        for (k, tk) in [(Key::ArrowUp, ToolKey::Up), (Key::ArrowDown, ToolKey::Down)] {
+        // The arrows while dragging: a polygon's sides, a grid's rows (↑/↓) and columns (←/→)…
+        let arrows =
+            [(Key::ArrowUp, ToolKey::Up), (Key::ArrowDown, ToolKey::Down), (Key::ArrowLeft, ToolKey::Left), (Key::ArrowRight, ToolKey::Right)];
+        for (k, tk) in arrows {
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k)) {
                 let _ = app.session.tool_key(tk, Mods::default(), view);
             }
@@ -347,12 +386,13 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let arrows = [(Key::ArrowLeft, -1.0, 0.0), (Key::ArrowRight, 1.0, 0.0), (Key::ArrowUp, 0.0, -1.0), (Key::ArrowDown, 0.0, 1.0)];
     for (k, dx, dy) in arrows {
         let m = ctx.input(|i| i.modifiers);
-        if ctx.input_mut(|i| i.consume_key(m, k)) && app.session.active().is_some_and(|d| !d.selection.is_empty()) {
+        if ctx.input_mut(|i| i.consume_key(m, k)) && app.session.active().is_some_and(|d| d.selection.has_objects_or_guides()) {
             let _ = app.run("object.nudge", json!({"dx": dx, "dy": dy, "big": m.shift, "copy": m.alt}));
         }
     }
     // Delete / Backspace clear the selection.
-    if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace)) && app.session.active().is_some_and(|d| !d.selection.is_empty()) {
+    if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace)) && app.session.active().is_some_and(|d| d.selection.has_objects_or_guides())
+    {
         let _ = app.run("edit.clear", json!({}));
     }
     // Single-key tool shortcuts (no Cmd/Ctrl/Alt).
@@ -371,12 +411,16 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         let upper = text.to_uppercase();
         let key = if m.shift && text.chars().all(|c| c.is_alphabetic()) { format!("Shift+{upper}") } else { upper.clone() };
+        // A shifted punctuation character can also be written with its Shift (the Curvature tool's
+        // Shift+~ arrives as `~`).
+        let shifted = m.shift.then(|| format!("Shift+{text}"));
+        let lookup = |find: fn(&str) -> Option<&'static str>| find(&key).or_else(|| find(&text)).or_else(|| shifted.as_deref().and_then(find));
         // Single-key command shortcuts (X, Shift+X, D, /, Shift+D, F, Shift+F by default).
-        if let Some(id) = crate::shortcut_editor::command_for_key(&key).or_else(|| crate::shortcut_editor::command_for_key(&text)) {
+        if let Some(id) = lookup(crate::shortcut_editor::command_for_key) {
             let _ = app.run(id, json!({}));
             continue;
         }
-        if let Some(t) = crate::shortcut_editor::tool_for_key(&key).or_else(|| crate::shortcut_editor::tool_for_key(&text)) {
+        if let Some(t) = lookup(crate::shortcut_editor::tool_for_key) {
             app.select_tool(t);
         }
     }
@@ -401,6 +445,48 @@ mod tests {
         });
         out.textures_delta.clear();
         out
+    }
+
+    /// Tab shows and hides the panels, and in the Type tool it types a tab, without moving the
+    /// keyboard focus on to a field: the keys after it (a tool letter, the next letter typed) still
+    /// work.
+    #[test]
+    fn tab_leaves_the_keyboard_to_the_shortcuts_and_the_type_tool() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 850.0));
+        let run = |app: &mut VectorcraftApp, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(egui::RawInput { events, screen_rect: Some(screen), ..Default::default() }, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let press = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        for _ in 0..3 {
+            run(&mut app, vec![]);
+        }
+        assert!(app.ui.dock && app.ui.toolbar);
+        run(&mut app, vec![press(Key::Tab)]);
+        run(&mut app, vec![]);
+        assert!(!app.ui.dock && !app.ui.toolbar, "Tab hid the panels");
+        run(&mut app, vec![press(Key::Tab)]);
+        run(&mut app, vec![]);
+        assert!(app.ui.dock && app.ui.toolbar, "a second Tab shows them again");
+        run(&mut app, vec![press(Key::P), egui::Event::Text("p".into())]);
+        assert_eq!(app.session.tool_id(), "pen", "and a tool letter after it works");
+        // The Type tool: a, Tab, b is one text.
+        app.select_tool("type");
+        let view = app.view_info();
+        for kind in [vectorcraft_tools::PointerKind::Down, vectorcraft_tools::PointerKind::Up] {
+            app.session.pointer(&vectorcraft_tools::PointerEvent::new(kind, 50.0, 50.0), view).unwrap();
+        }
+        run(&mut app, vec![egui::Event::Text("a".into())]);
+        run(&mut app, vec![press(Key::Tab)]);
+        run(&mut app, vec![egui::Event::Text("b".into())]);
+        let doc = app.session.execute("document.inspect", &json!({})).unwrap();
+        assert_eq!(doc["layers"][0]["children"][0]["name"], "a\tb");
     }
 
     #[test]
@@ -428,6 +514,82 @@ mod tests {
         assert_eq!(app.session.doc().unwrap().doc.layers[0].children().unwrap().len(), 8);
     }
 
+    /// While a grid is dragged out, ↑/↓ change its rows and ←/→ its columns.
+    #[test]
+    fn arrows_while_dragging_a_grid_change_its_rows_and_columns() {
+        use vectorcraft_tools::{PointerEvent, PointerKind};
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        app.select_tool("rectangularGrid");
+        let view = app.view_info();
+        // Drag a grid out, pressing `keys` on the way: its (horizontal, vertical) dividers.
+        let grid = |app: &mut VectorcraftApp, keys: &[Key]| {
+            app.session.pointer(&PointerEvent::new(PointerKind::Down, 100.0, 80.0), view).unwrap();
+            app.session.pointer(&PointerEvent::new(PointerKind::Drag, 300.0, 220.0), view).unwrap();
+            for &key in keys {
+                let press = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+                frame(app, vec![press]);
+            }
+            app.session.pointer(&PointerEvent::new(PointerKind::Up, 300.0, 220.0), view).unwrap();
+            let d = &app.session.doc().unwrap().doc;
+            let g = d.layers[0].children().unwrap().last().unwrap().clone();
+            let vectorcraft_doc::NodeKind::Group { children, .. } = &g.kind else { panic!("not a grid: {:?}", g.kind) };
+            let bounds: Vec<_> = children.iter().filter_map(|c| c.geometric_bounds()).collect();
+            (bounds.iter().filter(|b| b.height() < 0.5).count(), bounds.iter().filter(|b| b.width() < 0.5).count())
+        };
+        let (rows, columns) = grid(&mut app, &[]);
+        assert_eq!(grid(&mut app, &[Key::ArrowRight, Key::ArrowRight, Key::ArrowUp]), (rows + 1, columns + 2));
+        assert_eq!(grid(&mut app, &[Key::ArrowLeft, Key::ArrowDown]), (rows, columns + 1));
+    }
+
+    /// Enter opens the tool's dialog: the Move dialog for the selection tools, the tool's own for
+    /// Rotate, Scale, Reflect and Shear. The Enter that opens it isn't also its OK.
+    #[test]
+    fn enter_opens_the_tools_dialog_and_leaves_it_open() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        let ctx = egui::Context::default();
+        let enter = || egui::Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        // A whole app frame: the shortcuts first, then the UI, where a dialog takes its Enter.
+        let frame = |app: &mut VectorcraftApp, events: Vec<egui::Event>| {
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)));
+            let mut out = ctx.run_ui(egui::RawInput { events, screen_rect, ..Default::default() }, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let kind = |app: &VectorcraftApp| app.ui.dialog.as_ref().map(|d| d.kind.clone());
+        let steps = |app: &VectorcraftApp| app.session.active().unwrap().history.undo.len();
+        app.select_tool("selection");
+        frame(&mut app, vec![enter()]);
+        assert_eq!(kind(&app), None, "nothing is selected");
+        app.session.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 50, "height": 30})).unwrap();
+        for (tool, dialog) in [
+            ("selection", "move"),
+            ("directSelection", "move"),
+            ("groupSelection", "move"),
+            ("rotate", "rotate"),
+            ("scale", "scale"),
+            ("reflect", "reflect"),
+            ("shear", "shear"),
+        ] {
+            app.select_tool(tool);
+            let before = steps(&app);
+            frame(&mut app, vec![enter()]);
+            assert_eq!(kind(&app).as_deref(), Some(dialog), "{tool}: Enter opens it");
+            frame(&mut app, vec![]);
+            assert_eq!(kind(&app).as_deref(), Some(dialog), "{tool}: and it stays open");
+            assert_eq!(steps(&app), before, "{tool}: the Enter that opened it didn't confirm it");
+            // The next Enter is its OK.
+            frame(&mut app, vec![enter()]);
+            assert_eq!((kind(&app), steps(&app)), (None, before + 1), "{tool}: Enter confirms");
+        }
+        app.select_tool("rectangle");
+        frame(&mut app, vec![enter()]);
+        assert_eq!(kind(&app), None, "another tool has its own Enter");
+    }
+
     #[test]
     fn comma_and_period_reapply_the_last_colour_and_gradient() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
@@ -440,6 +602,36 @@ mod tests {
         assert!(matches!(fill(&app), vectorcraft_color::Paint::Gradient(_)), "`.` applies the last gradient");
         frame(&mut app, vec![egui::Event::Text(",".into())]);
         assert_eq!(fill(&app).color().unwrap().to_hex(), "#336699", "`,` applies the last colour");
+    }
+
+    #[test]
+    fn shifted_punctuation_shortcuts_work_as_typed() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
+        let a = app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 50, "height": 50})).unwrap()["id"].clone();
+        let b = app.session.execute("shape.ellipse", &json!({"x": 20, "y": 20, "width": 50, "height": 50})).unwrap()["id"].clone();
+        app.session.execute("select.set", &json!({"ids": [a]})).unwrap();
+        let order =
+            |app: &VectorcraftApp| -> Vec<u64> { app.session.doc().unwrap().doc.layers[0].children().unwrap().iter().map(|n| n.id.0).collect() };
+        let (a, b) = (a.as_u64().unwrap(), b.as_u64().unwrap());
+        assert_eq!(order(&app), [a, b]);
+        let press = |key, modifiers| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
+        let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        // Recorded in the Keyboard Shortcuts editor, they read as the keys (and so conflict).
+        assert_eq!(crate::shortcut_editor::chord_from_event(Key::CloseCurlyBracket, cmd_shift).as_deref(), Some("Cmd+Shift+]"));
+        assert_eq!(crate::shortcut_editor::chord_from_event(Key::Questionmark, cmd_shift).as_deref(), Some("Cmd+Shift+/"));
+        // Cmd+Shift+] arrives as Cmd+Shift+`}`, Cmd+Shift+[ as Cmd+Shift+`{`.
+        frame(&mut app, vec![press(Key::CloseCurlyBracket, cmd_shift)]);
+        assert_eq!(order(&app), [b, a], "Bring to Front");
+        frame(&mut app, vec![press(Key::OpenCurlyBracket, cmd_shift)]);
+        assert_eq!(order(&app), [a, b], "Send to Back");
+        // Cmd+Shift+/ arrives as Cmd+Shift+`?`: Search Commands.
+        frame(&mut app, vec![press(Key::Questionmark, cmd_shift)]);
+        assert!(app.ui.palette_open, "Search Commands");
+        app.ui.palette_open = false;
+        // The Curvature tool's Shift+~ arrives as the text `~` with Shift.
+        frame(&mut app, vec![egui::Event::ModifiersChanged(Modifiers::SHIFT), egui::Event::Text("~".into())]);
+        assert_eq!(app.session.tool_id(), "curvature");
     }
 
     #[test]

@@ -66,12 +66,14 @@ pub(super) fn text(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32) -> 
 pub(super) fn text_edit(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let mut s = d.str(key);
+    let id = ui.id().with(("dlg-text", key));
+    crate::widgets::take_dialog_focus(ui, id, &s);
     let r = egui::Frame::NONE
         .fill(t.input)
         .stroke(egui::Stroke::new(1.0, t.input_border))
         .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::symmetric(6, 3))
-        .show(ui, |ui| ui.add(egui::TextEdit::singleline(&mut s).frame(egui::Frame::NONE).desired_width(width)));
+        .show(ui, |ui| ui.add(egui::TextEdit::singleline(&mut s).id(id).frame(egui::Frame::NONE).desired_width(width)));
     if r.inner.changed() {
         d.fields.insert(key.into(), Value::String(s));
     }
@@ -325,6 +327,19 @@ pub(super) fn slider_w(
     if let Some(n) = new.filter(|n| *n != v) {
         d.fields.insert(key.into(), json!(n));
     }
+}
+
+/// The words at the two ends of a slider's rail (Less … More), under a slider whose label column
+/// is `label_w` wide.
+pub(super) fn slider_ends(ui: &mut egui::Ui, label_w: f32, (left, right): (&str, &str)) {
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.add_space(label_w + ui.spacing().item_spacing.x);
+        let (r, _) = ui.allocate_exact_size(egui::vec2(SLIDER_WIDTH, 14.0), egui::Sense::hover());
+        let font = egui::FontId::proportional(11.0);
+        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
+        ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
+    });
 }
 
 /// The field where [`preview`] keeps the parameters it last previewed.

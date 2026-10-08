@@ -387,6 +387,33 @@ fn text_roundtrip_and_escaping() {
 }
 
 #[test]
+fn scaled_text_roundtrips_at_the_size_it_draws() {
+    // Type scaled with its object (its transform scales it) comes back at the size it draws at,
+    // drawn the same, and stays so on the next round trip; a stretch stays the transform.
+    let at = Affine::translate((20.0, 50.0));
+    let stretch = at * Affine::rotate(0.5) * Affine::scale_non_uniform(2.0, 1.0);
+    for (xf, size) in [(at * Affine::scale(2.0), 18.0), (at * Affine::rotate(0.5) * Affine::scale(3.0), 27.0), (stretch, 9.0)] {
+        let mut t = TextObject::point(Point::ZERO, "Scaled\ntype", CharStyle { size: 9.0, leading: Some(11.0), ..CharStyle::default() });
+        t.xf = xf;
+        let drawn = |t: &TextObject| t.xf.transform_rect_bbox(vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t).bounds);
+        let before = drawn(&t);
+        let id = Document::new(200.0, 200.0).alloc_id();
+        let d = doc_with(vec![Node::new(id, NodeKind::Text(Box::new(t)))]);
+        let once = roundtrip(&d);
+        let NodeKind::Text(t) = &art(&once)[0].kind else { panic!() };
+        // Within the precision of the exported matrix (3 decimals); the second line carries the
+        // leading.
+        let near = |a: f64, b: f64| (a - b).abs() < b * 1e-3;
+        let st = &t.runs.last().unwrap().style;
+        assert!(near(st.size, size) && near(st.leading.unwrap(), 11.0 * size / 9.0), "{xf:?}: {st:?}");
+        assert!(close_rect(drawn(t), before, 0.05), "{xf:?}: {:?} {before:?}", drawn(t));
+        let twice = roundtrip(&once);
+        let NodeKind::Text(t2) = &art(&twice)[0].kind else { panic!() };
+        assert!(near(t2.first_style().size, size) && close_rect(drawn(t2), before, 0.05), "{xf:?}: {:?} {:?}", t2.runs, drawn(t2));
+    }
+}
+
+#[test]
 fn text_on_path_roundtrip() {
     let mut d = Document::new(200.0, 200.0);
     let mut curve = vectorcraft_geom::BezPath::new();
@@ -867,4 +894,17 @@ fn outline_text_writes_glyph_paths() {
     let back = import(&s).unwrap();
     let b = art(&back).iter().filter_map(|n| n.geometric_bounds()).reduce(|a, b| a.union(b)).unwrap();
     assert!(b.width() > 80.0 && b.x0 >= 9.0, "{b:?}");
+}
+
+#[test]
+fn bidirectional_svg_export_preserves_shaped_appearance_as_outlines() {
+    let t = TextObject::point(Point::new(10.0, 40.0), "שלום Rust 123 مرحبا", CharStyle::default());
+    let expected =
+        vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t).glyphs.iter().filter(|g| !g.outline.elements().is_empty()).count();
+    assert!(expected > 0);
+    let d = doc_with(vec![Node::new(NodeId(100), NodeKind::Text(Box::new(t)))]);
+    let svg = export(&d, &ExportOptions::default());
+    assert!(!svg.contains("<text"), "visual clusters must not be emitted as reversed live text");
+    assert!(svg.contains("<path"));
+    assert!(import(&svg).is_ok());
 }
