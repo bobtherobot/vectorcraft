@@ -10,7 +10,7 @@
 #   - otherwise the AppImage from the latest GitHub Release, downloaded and sha256-checked into
 #     ~/.local/share/vectorcraft/.
 #
-# Usage: launchers/linux/install.sh [--local | --download] [--build | --no-build]
+# Usage: dev-launcher/linux/install.sh [--local | --download] [--build | --no-build]
 #                                   [--no-desktop-icon] [--repo OWNER/NAME]
 #   --local            use this checkout's build (fails if there is none and Rust isn't installed)
 #   --download         use the latest release's AppImage, even with a local build or Rust
@@ -183,3 +183,6 @@ fi
 update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 gtk-update-icon-cache -f -t "$ICONS_DIR/hicolor" >/dev/null 2>&1 || true
 echo "==> Done. Start VectorCraft from the desktop icon or the applications menu."
+if [ "$APP" = "$LOCAL_BIN" ]; then
+  echo "    After editing the code, run \`cargo devapp\` and reopen the app to see your changes."
+fi

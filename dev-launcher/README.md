@@ -1,19 +1,37 @@
-# Launchers
+# Dev launcher
 
-Get a VectorCraft icon on your desktop and in your applications menu, with or without building
-the app yourself.
+A VectorCraft icon on your desktop and in your applications menu that opens **your own build**,
+with whatever changes you're working on.
 
-The app itself isn't committed here (it's 50–75 MB per platform and would bloat every clone).
-Ready-made builds are attached to each [GitHub Release](../../../releases); the scripts below
-fetch the right one for you, or use your own build when you have one.
+```
+edit code  ──►  cargo devapp  ──►  target/release/vectorcraft  ◄──  desktop icon
+```
+
+- `install.sh` is a **one-time setup**: it adds the icon and menu entry, pointed at this
+  checkout's optimized build, `target/release/vectorcraft`.
+- `cargo devapp` **applies your changes**: it rebuilds that binary (an alias for
+  `cargo build --release -p vectorcraft`; cargo rebuilds only what changed). Close the app if it
+  is running, then double-click the icon.
+
+`--release` here only means an optimized build. It has nothing to do with publishing a release:
+the real installers (`.deb`, `.dmg`, `.msi`, …) are made by [`packaging/`](../packaging) in CI.
+
+Things to know:
+
+- the icon runs whatever is checked out and built, including uncommitted edits and the
+  current branch;
+- builds into another `CARGO_TARGET_DIR` (e.g. a parallel agent's) don't change it;
+- `cargo clean` leaves the icon with nothing to open until the next `cargo devapp`.
+
+Without Rust, the same script can instead install the latest release's AppImage (below).
 
 ## Linux (Mint, Ubuntu, Debian, Fedora, …)
 
 ```sh
-launchers/linux/install.sh
+dev-launcher/linux/install.sh
 ```
 
-Or double-click `launchers/linux/install.sh` in your file manager and choose **Run in Terminal**
+Or double-click `dev-launcher/linux/install.sh` in your file manager and choose **Run in Terminal**
 (Mint's Nemo asks how to open the script), so you can follow a build or download.
 
 It adds **VectorCraft** to your desktop and applications menu, with its icon. It launches:
@@ -36,7 +54,7 @@ Options (`--help` lists them):
 | `--no-desktop-icon` | only add the applications-menu entry |
 | `--repo OWNER/NAME` | download from another GitHub repository |
 
-Run it again to update. `launchers/linux/uninstall.sh` removes the launchers, icons and any
+Run it again to rebuild and refresh the launchers (`cargo devapp` is enough to rebuild). `dev-launcher/linux/uninstall.sh` removes the launchers, icons and any
 downloaded AppImage, and leaves your documents and preferences alone.
 
 No script needed? Download `vectorcraft-<version>-linux-x86_64.AppImage` from the releases page,
