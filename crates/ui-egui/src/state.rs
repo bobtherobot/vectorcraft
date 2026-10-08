@@ -94,6 +94,12 @@ impl DockTab {
     }
 }
 
+/// Every panel `window.panel` shows, as (id, English label): the dock tabs, then the icon panels.
+pub fn all_panels() -> impl Iterator<Item = (&'static str, &'static str)> {
+    let tabs = DockTab::ALL.into_iter().map(|t| (t.info().0, t.info().1));
+    tabs.chain(ICON_PANELS.iter().map(|&(id, label, _)| (id, label)))
+}
+
 /// Panels that live as collapsed icons in the dock (Essentials Classic).
 pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     ("color", "Color", "palette"),
@@ -272,7 +278,10 @@ pub struct UiState {
     pub status: String,
     pub palette_open: bool,
     pub palette_query: String,
-    /// Screen mode: 0 normal, 1 full screen with menu, 2 full screen, 3 presentation.
+    /// Screen mode: 0 normal, 1 full screen with menu, 2 full screen, 3 presentation. Not saved:
+    /// the app always starts in Normal Screen Mode, with its menus and panels (#472: a saved
+    /// Presentation Mode came back on restart with no way out).
+    #[serde(skip)]
     pub screen_mode: u8,
     /// Draw Normal / Behind / Inside.
     pub draw_mode: u8,
@@ -392,6 +401,15 @@ impl UiState {
         if self.group_tool.len() != vectorcraft_tools::TOOL_GROUPS.len() {
             self.group_tool = UiState::default().group_tool;
         }
+        // One strip per group, of known tools (a hand-edited preferences file).
+        let mut seen = std::collections::BTreeSet::new();
+        self.floating_flyouts.retain_mut(|f| {
+            f.tools.retain(|id| vectorcraft_tools::tool_info(id).is_some());
+            f.tools.first().is_some_and(|k| seen.insert(k.clone()))
+        });
+        // Overrides that can't fire (modifier-only chords recorded by older versions, #487) give
+        // the default back.
+        self.shortcut_overrides.retain(|_, c| c.is_empty() || crate::shortcut_editor::normalize(c).is_some());
         self
     }
 }

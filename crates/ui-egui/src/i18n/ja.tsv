@@ -10,14 +10,27 @@
 # names, OpenType, the built-in workspace names and the bracketed perspective grid preset names.
 	About VectorCraft	VectorCraft について
 	All Scripts	すべての文字
+	Anchors:	アンカー:
 	Any Kind	すべての種類
+	Ascender	アセンダ
+	Baseline	ベースライン
 	Bottom-to-Bottom Leading	欧文ベースライン基準の行送り
+	Burasagari	ぶら下がり
+	Force	強制
+	Center	中央
 	Character Alignment	文字揃え
+	Connect Selected End Points	選択した端点を連結
+	Convert Selected Anchor Points to Corner	選択したアンカーポイントをコーナーポイントに変換
+	Convert Selected Anchor Points to Smooth	選択したアンカーポイントをスムーズポイントに変換
+	Convert:	変換:
+	Cut Path	パスをカット
 	Decorative	装飾
+	Descender	ディセンダ
 	Em Box Bottom/Left	仮想ボディの下 / 左
 	Em Box Center	仮想ボディの中央
 	Em Box Top/Right	仮想ボディの上 / 右
 	Favorites	お気に入り
+	Flip	反転
 	Japanese	日本語
 	Join Our Discord	Discord に参加
 	Line-end Punctuation Half Width	行末約物半角
@@ -31,7 +44,9 @@
 	Serif / Mincho	明朝・セリフ
 	Settings…	環境設定…
 	Language	表示言語
+	Spacing	間隔
 	Top-to-Top Leading	仮想ボディの上基準の行送り
+	Type on a Path Options	パス上文字オプション
 	UI Brightness	UI の明るさ
 	Dark	暗い
 	Medium Dark	やや暗い
@@ -151,6 +166,7 @@
 	Expand…	分割・拡張…
 	Expand Appearance	アピアランスを分割
 	Crop Image	画像の切り抜き
+	Mask	マスク
 	Rasterize…	ラスタライズ…
 	Create Gradient Mesh…	グラデーションメッシュを作成…
 	Create Object Mosaic…	モザイクオブジェクトを作成…
@@ -215,6 +231,8 @@
 	Merge	結合
 	Gap Options…	間隔オプション…
 	Image Trace	画像トレース
+	Image Tracing	画像トレースオブジェクト
+	Tracing Presets	トレースプリセット
 	Make…	作成…
 	Make and Expand…	作成して拡張…
 	Text Wrap	テキストの回り込み
@@ -290,6 +308,9 @@
 	Release Selection	選択部分をリリース
 	Remove Threading	スレッドを解除
 	Fit Headline	ヘッドラインを合わせる
+	Decrease Font Size	フォントサイズを小さく
+	Increase Font Size	フォントサイズを大きく
+	Step Type	文字を段階的に調整
 	Find Font…	フォントの検索と置換…
 	Change Case	大文字と小文字の変更
 	UPPERCASE	すべて大文字
@@ -493,7 +514,7 @@
 	Tools	ツール
 	Toolbars	ツールバー
 	Advanced	詳細
-	Single / Double Column	1 列／2 列
+	Double Column	2 列
 	Actions	アクション
 	Asset Export	アセットの書き出し
 	Attributes	属性
@@ -1106,6 +1127,8 @@
 	Drawing Mode	描画モード
 	Duplicate	複製
 	Duplicate Artboard	アートボードを複製
+	Copy Artboard	アートボードをコピー
+	Cut Artboard	アートボードをカット
 	Duplicate Artboards	アートボードを複製
 	Duplicate Brush	ブラシを複製
 	Duplicate Character Style	文字スタイルを複製
@@ -2322,6 +2345,8 @@
 	Stop editing the opacity mask	不透明マスクの編集を終了
 	Strikethrough	打ち消し線
 	Stroke Options	線オプション
+	Character:	文字:
+	Character options	文字オプション
 	Stroke options	線オプション
 	Stroke:	線:
 	Style	スタイル
@@ -2405,6 +2430,7 @@
 	Total Width:	合計幅:
 	Touch Type Tool	文字タッチツール
 	Trace	トレース
+	Trace the image with the Default preset	「デフォルト」プリセットで画像をトレース
 	Tracking	トラッキング
 	Transform Both	両方を変形
 	Transform Each	個別に変形
@@ -2550,6 +2576,7 @@
 	Zoom Tool	ズームツール
 	Zoom to Selection	選択範囲にズーム
 	Zoom with Mouse Wheel	マウスホイールでズーム
+	Scrub Numeric Fields by Dragging	ドラッグで数値フィールドを調整
 	[Default] is protected: New… starts an editable copy.	[Default] は変更できません。「新規…」で編集できる複製を作ります。
 	[Unnamed]	[名称未設定]
 	above	(対象：次を超える画像)
@@ -2999,6 +3026,15 @@
 	Version	バージョン
 	% of all commits	全コミットに占める割合
 	Lines +/−	行数 +/−
+	Joins	角の形状
+	Miter	マイター
+	Bevel	ベベル
+	Offset	オフセット
+	Axis	軸
+axis	Horizontal	水平方向
+axis	Vertical	垂直方向
+axis	Both	両方
 	Drag to move	移動するにはドラッグ
 	Drag to float as a toolbar	ドラッグしてツールバーとして浮かせる
 	Put back in the toolbar	ツールバーに戻す
+	Float Tool Group	ツールグループをフローティング

@@ -78,15 +78,15 @@ pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
 pub use text::{
-    AreaOptions, CharAlign, CharPosition, CharStyle, FirstBaseline, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathEffect,
-    ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap, WrapShape,
+    AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, FirstBaseline, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign,
+    PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap, WrapShape,
 };
 pub use vectorcraft_color as color;
 pub use vectorcraft_geom as geom;
 
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Swatch, SwatchGroup};
-use vectorcraft_geom::{Point, Rect};
+use vectorcraft_geom::{Point, Rect, Vec2};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DocError {
@@ -191,7 +191,10 @@ impl Unit {
     }
     /// [`Unit::format`] without the suffix (`12.5`), for narrow fields.
     pub fn number(self, pt: f64) -> String {
-        let s = format!("{:.3}", self.from_pt(pt));
+        // Three decimals for the small units (`595.276 pt`), four for the large ones (`8.2677 in`,
+        // `35.2778 mm`, the `0.0078 in` stroke preset); trailing zeros are trimmed (`1 pt` is `1`).
+        let decimals = if matches!(self, Unit::Points | Unit::Pixels | Unit::Picas) { 3 } else { 4 };
+        let s = format!("{:.*}", decimals, self.from_pt(pt));
         let s = s.trim_end_matches('0').trim_end_matches('.');
         if s == "-0" { "0".into() } else { s.into() }
     }
@@ -383,6 +386,22 @@ pub struct Guide {
     /// true = vertical guide at `pos` (x), false = horizontal at `pos` (y).
     pub vertical: bool,
     pub pos: f64,
+    /// An artboard guide: the [`Artboard::id`] it belongs to. It runs across that artboard only
+    /// and moves, is copied and is deleted with it. None: a canvas guide, across the whole canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artboard: Option<u32>,
+}
+
+impl Guide {
+    /// A canvas guide.
+    pub fn new(vertical: bool, pos: f64) -> Self {
+        Self { vertical, pos, artboard: None }
+    }
+
+    /// Moved by `d` (a vertical guide across, a horizontal one down).
+    pub fn moved(&self, d: Vec2) -> Self {
+        Self { pos: self.pos + if self.vertical { d.x } else { d.y }, ..self.clone() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -914,16 +933,15 @@ impl Document {
     pub fn artboard_at(&self, p: Point) -> Option<usize> {
         self.artboards.iter().rposition(|a| a.rect.contains(p))
     }
-    /// The art that moves with an artboard at `rect`: unlocked top-level objects (children of
-    /// unlocked layers and sublayers) lying entirely inside it.
-    pub fn art_on_artboard(&self, rect: Rect) -> Vec<NodeId> {
-        fn collect(n: &Node, rect: Rect, out: &mut Vec<NodeId>) {
-            for c in n.children().into_iter().flatten() {
-                if c.locked {
-                    continue;
-                }
+    /// The art that moves with an artboard at `rect`: top-level objects (children of layers and
+    /// sublayers) lying entirely inside it. Locked and hidden objects and layers stay put unless
+    /// `locked_and_hidden` (Selection & Anchor Display › Move Locked and Hidden Artwork with
+    /// Artboard).
+    pub fn art_on_artboard(&self, rect: Rect, locked_and_hidden: bool) -> Vec<NodeId> {
+        fn collect(n: &Node, rect: Rect, all: bool, out: &mut Vec<NodeId>) {
+            for c in n.children().into_iter().flatten().filter(|c| c.rides_with_artboard(all)) {
                 if c.is_layer() {
-                    collect(c, rect, out);
+                    collect(c, rect, all, out);
                 } else if let Some(b) = c.geometric_bounds()
                     && rect.contains(Point::new(b.x0, b.y0))
                     && rect.contains(Point::new(b.x1, b.y1))
@@ -933,10 +951,51 @@ impl Document {
             }
         }
         let mut art = vec![];
-        for l in self.layers.iter().filter(|l| !l.locked) {
-            collect(l, rect, &mut art);
+        for l in self.layers.iter().filter(|l| l.rides_with_artboard(locked_and_hidden)) {
+            collect(l, rect, locked_and_hidden, &mut art);
         }
         art
+    }
+    /// Where ruler guide `g` runs along its line (the y range of a vertical guide): across its
+    /// artboard for an artboard guide, None (the whole canvas) for a canvas guide or one whose
+    /// artboard is gone.
+    pub fn guide_span(&self, g: &Guide) -> Option<(f64, f64)> {
+        let r = self.artboards.iter().find(|a| Some(a.id) == g.artboard)?.rect;
+        Some(if g.vertical { (r.y0, r.y1) } else { (r.x0, r.x1) })
+    }
+    /// Does ruler guide `g` run past `p` (up to `tol` beyond its ends)?
+    pub fn guide_passes(&self, g: &Guide, p: Point, tol: f64) -> bool {
+        let along = if g.vertical { p.y } else { p.x };
+        self.guide_span(g).is_none_or(|(a, b)| along >= a - tol && along <= b + tol)
+    }
+    /// Keep the ruler guides `keep` accepts (by index), the selected ones left keeping their
+    /// place among the rest (the selected art stays selected). Returns how many went.
+    pub fn retain_guides(&mut self, sel: &mut Selection, keep: impl Fn(usize, &Guide) -> bool) -> usize {
+        let kept: Vec<bool> = self.guides.iter().enumerate().map(|(i, g)| keep(i, g)).collect();
+        // Where each kept guide ends up.
+        let (mut to, mut n) = (Vec::with_capacity(kept.len()), 0);
+        for k in &kept {
+            to.push(k.then_some(n));
+            n += usize::from(*k);
+        }
+        sel.guides = sel.guides.iter().filter_map(|i| to.get(*i).copied().flatten()).collect();
+        let before = self.guides.len();
+        let mut flags = kept.into_iter();
+        self.guides.retain(|_| flags.next().unwrap_or(true));
+        before - self.guides.len()
+    }
+    /// Move the guides of artboard `id` by `d` (along with their artboard).
+    pub fn move_artboard_guides(&mut self, id: u32, d: Vec2) {
+        for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
+            *g = g.moved(d);
+        }
+    }
+    /// Copy the guides of artboard `from` onto artboard `to`, `d` away (with a copy of their
+    /// artboard).
+    pub fn copy_artboard_guides(&mut self, from: u32, to: u32, d: Vec2) {
+        let copies: Vec<Guide> =
+            self.guides.iter().filter(|g| g.artboard == Some(from)).map(|g| Guide { artboard: Some(to), ..g.moved(d) }).collect();
+        self.guides.extend(copies);
     }
     pub fn next_artboard_id(&self) -> u32 {
         self.artboards.iter().map(|a| a.id).max().unwrap_or(0) + 1
@@ -1088,12 +1147,18 @@ mod tests {
     #[test]
     fn art_on_artboard_takes_unlocked_objects_wholly_inside() {
         let (mut d, a, b) = doc_with_rects();
-        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0)), vec![a]);
-        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0)), vec![a], "b only half inside");
+        let wide = Rect::new(-1.0, -1.0, 40.0, 15.0);
+        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0), false), vec![a]);
+        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0), false), vec![a], "b only half inside");
         d.node_mut(a).unwrap().locked = true;
-        assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 40.0, 15.0)), vec![b]);
+        assert_eq!(d.art_on_artboard(wide, false), vec![b]);
+        // Move Locked and Hidden Artwork with Artboard (#394): hidden art stays too, unless on.
+        d.node_mut(b).unwrap().visible = false;
+        assert!(d.art_on_artboard(wide, false).is_empty());
+        assert_eq!(d.art_on_artboard(wide, true), vec![a, b]);
         Arc::make_mut(&mut d.layers[0]).locked = true;
-        assert!(d.art_on_artboard(Rect::new(-1.0, -1.0, 40.0, 15.0)).is_empty());
+        assert!(d.art_on_artboard(wide, false).is_empty());
+        assert_eq!(d.art_on_artboard(wide, true), vec![a, b], "a locked layer's art too");
     }
 
     #[test]

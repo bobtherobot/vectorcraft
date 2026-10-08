@@ -11,7 +11,7 @@ use vectorcraft_engine::cmd::fileio::SaveMode;
 
 use crate::VectorcraftApp;
 use crate::io;
-use crate::state::{DockTab, ICON_PANELS, next_zoom};
+use crate::state::{DockTab, next_zoom};
 use crate::theme::{self, Brightness, Tokens};
 use crate::widgets;
 
@@ -56,7 +56,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{lang: auto|<code>} the interface language, persisted as the `interfaceLanguage` preference (`auto` follows the system locale; codes: prefs.list › interfaceLanguage, e.g. en, ja, cs, es, zh-hant)",
     ),
-    ("file.open", "Open…", "Cmd+O", "{path?}"),
+    (
+        "file.open",
+        "Open…",
+        "Cmd+O",
+        "{path?} → with a path, document.open's result {index, title, format, warnings, …} (null when a dialog asks first or a library loads)",
+    ),
     (
         "file.save",
         "Save",
@@ -197,8 +202,19 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("view.rotateReset", "Reset Rotate View", "Cmd+Shift+1", "{}"),
     ("window.control", "Control", "", "{}"),
     ("window.toolbar", "Tools", "", "{}"),
-    ("window.toolbarColumns", "Toolbar: Single/Double Column", "", "{}"),
+    (
+        "window.toolbarColumns",
+        "Toolbar: Single/Double Column",
+        "",
+        "{double?: bool} show the toolbar's tools in two columns (true), one (false) or toggle (omitted), as the double arrow at the top of the toolbar does; returns the new state",
+    ),
     ("window.toolbarAdvanced", "Toolbar: Advanced / Basic", "", "{}"),
+    (
+        "window.floatTools",
+        "Float Tool Group",
+        "",
+        "{tool: id, floating?: bool} float the toolbar group holding `tool` (in the current Basic or Advanced layout) as its own strip of tool buttons (true), put it back in the toolbar (false) or toggle (omitted), as dragging or clicking a flyout's tear-off bar and the strip's × do; returns the new state",
+    ),
     ("window.taskBar", "Contextual Task Bar", "", "{}"),
     ("window.dock", "Panels", "Tab", "{} show/hide all panels"),
     ("window.panel", "Show Panel", "", "{panel: id} e.g. layers, swatches, stroke (case-insensitive; display labels like \"Layers\" work too)"),
@@ -751,10 +767,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
 /// matched case-insensitively (`"Layers"`, `"swatches"`, `"Color Guide"`).
 fn normalize_panel(input: &str) -> Option<&'static str> {
     let name = input.trim();
-    let tabs = DockTab::ALL.into_iter().map(|t| (t.info().0, t.info().1));
-    tabs.chain(ICON_PANELS.iter().map(|&(id, label, _)| (id, label)))
-        .find(|(id, label)| name.eq_ignore_ascii_case(id) || name.eq_ignore_ascii_case(label))
-        .map(|(id, _)| id)
+    crate::state::all_panels().find(|(id, label)| name.eq_ignore_ascii_case(id) || name.eq_ignore_ascii_case(label)).map(|(id, _)| id)
 }
 
 /// Handle a UI command. `None` = not a UI command (the engine handles it).
@@ -792,7 +805,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             Ok(Value::Null)
         }
         "file.open" => match s("path") {
-            Some(path) => io::open_path(app, &path).map(|_| Value::Null),
+            Some(path) => io::open_path(app, &path),
             None => io::open_dialog(app).map(|_| Value::Null),
         },
         // Saves write through the app (save panel, download); with no path known the panel and the
@@ -809,7 +822,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "file.revert" if p.get("confirmed").and_then(Value::as_bool) != Some(true) => io::ask_revert(app),
         "file.reveal" => io::reveal(app),
         id if id.starts_with("file.openRecent") => match recent_slot(app, id).cloned() {
-            Some(path) => io::open_path(app, &path).map(|_| Value::Null),
+            Some(path) => io::open_path(app, &path),
             None => Err("no such recent file".into()),
         },
         "type.findFont" => {
@@ -966,7 +979,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "view.screenMode" => {
             app.ui.screen_mode = match p.get("mode").and_then(Value::as_u64) {
                 Some(m) => m.min(3) as u8,
-                None => (app.ui.screen_mode + 1) % 3,
+                // F cycles the three screen modes; from Presentation Mode (not in the cycle) it
+                // goes back to Normal.
+                None if app.ui.screen_mode >= 2 => 0,
+                None => app.ui.screen_mode + 1,
             };
             Ok(json!(app.ui.screen_mode))
         }
@@ -978,8 +994,24 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         }
         "window.control" => flag(&mut app.ui.control_bar),
         "window.toolbar" => flag(&mut app.ui.toolbar),
-        "window.toolbarColumns" => flag(&mut app.ui.toolbar_double),
+        "window.toolbarColumns" => {
+            app.ui.toolbar_double = match p.get("double") {
+                None | Some(Value::Null) => !app.ui.toolbar_double,
+                Some(Value::Bool(b)) => *b,
+                Some(_) => return Some(Err("double must be true or false".into())),
+            };
+            Ok(json!(app.ui.toolbar_double))
+        }
         "window.toolbarAdvanced" => flag(&mut app.ui.toolbar_advanced),
+        "window.floatTools" => {
+            let floating = match p.get("floating") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(b)) => Some(*b),
+                Some(_) => return Some(Err("floating must be true or false".into())),
+            };
+            let Some(tool) = s("tool") else { return Some(Err("tool (a tool id) is required".into())) };
+            crate::toolbar::float_group(app, &tool, floating).map(Value::Bool)
+        }
         "window.taskBar" => flag(&mut app.ui.task_bar),
         "window.dock" => {
             let on = !(app.ui.dock && app.ui.toolbar);
@@ -1302,6 +1334,11 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "window.control" => app.ui.control_bar,
         "window.toolbar" => app.ui.toolbar,
         "window.toolbarAdvanced" => app.ui.toolbar_advanced,
+        "window.toolbarColumns" => app.ui.toolbar_double,
+        "window.floatTools" => {
+            let tool = p.get("tool").and_then(Value::as_str).unwrap_or("");
+            app.ui.floating_flyouts.iter().any(|f| f.tools.iter().any(|id| id == tool))
+        }
         "window.taskBar" => app.ui.task_bar,
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
@@ -2075,15 +2112,11 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("Area Type Options…", "text.areaOptions"),
                 sub(
                     "Type on a Path",
-                    vec![
-                        cp("Rainbow", "type.pathOptions", json!({"effect": "rainbow"})),
-                        cp("Skew", "type.pathOptions", json!({"effect": "skew"})),
-                        cp("3D Ribbon", "type.pathOptions", json!({"effect": "3dRibbon"})),
-                        cp("Stair Step", "type.pathOptions", json!({"effect": "stairStep"})),
-                        cp("Gravity", "type.pathOptions", json!({"effect": "gravity"})),
-                        Sep,
-                        cp("Type on a Path Options…", "type.pathOptions", json!({"start": 0})),
-                    ],
+                    PATH_EFFECTS
+                        .iter()
+                        .map(|&(label, effect)| cp(label, "type.pathOptions", json!({ "effect": effect })))
+                        .chain([Sep, c("Type on a Path Options…", "type.pathOptions")])
+                        .collect(),
                 ),
                 sub(
                     "Threaded Text",
@@ -2290,7 +2323,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("Control", "window.control"),
                 c("Contextual Task Bar", "window.taskBar"),
                 c("Tools", "window.toolbar"),
-                sub("Toolbars", vec![c("Advanced", "window.toolbarAdvanced"), c("Single / Double Column", "window.toolbarColumns")]),
+                sub("Toolbars", vec![c("Advanced", "window.toolbarAdvanced"), c("Double Column", "window.toolbarColumns")]),
                 Sep,
                 panel("Actions", "actions"),
                 panel("Align", "align"),
@@ -2436,7 +2469,7 @@ pub fn context_items(app: &VectorcraftApp) -> Vec<Item> {
             v.extend([c("Join", "path.join"), c("Average…", "path.average")]);
         }
         if !st.selection.anchors.is_empty() {
-            v.push(c("Remove Anchor Points", "path.removeAnchors"));
+            v.extend([c("Remove Anchor Points", "path.removeAnchors"), c("Cut Path at Selected Anchor Points", "path.cutAtAnchors")]);
         }
         if several {
             v.push(c("Make Clipping Mask", "object.clippingMask.make"));
@@ -2658,6 +2691,17 @@ pub fn click_target(label: &str, id: &str, p: &Value) -> (String, Value) {
     (id.to_string(), if p.is_null() { json!({}) } else { p.clone() })
 }
 
+/// The dialog of command `id` that shows the selection's current values (its query): its heading
+/// and the queried values it doesn't show. Type on a Path Options leaves the brackets where they
+/// are.
+fn queried_dialog(id: &str) -> Option<(&'static str, &'static [&'static str])> {
+    Some(match id {
+        "text.areaOptions" => ("Area Type Options", &[]),
+        "type.pathOptions" => ("Type on a Path Options", &["start", "end"]),
+        _ => return None,
+    })
+}
+
 /// The dialog (kind, fields) the menu item of command `id` opens, as the reference app's does.
 fn menu_dialog(id: &str) -> Option<(&'static str, Value)> {
     Some(match id {
@@ -2728,11 +2772,17 @@ pub fn invoke(app: &mut VectorcraftApp, id: &str, p: Value) {
         let _ = app.run("ui.paramDialog", json!({"command": id, "label": "Repeat Options", "params": fields}));
         return;
     }
-    // Area Type Options: a dialog with the selected area type's current values.
-    if id == "text.areaOptions" && p.as_object().is_none_or(|o| o.is_empty()) {
+    // Area Type Options and Type on a Path Options: dialogs with the selected type's current
+    // values (the command's query), less those the dialog leaves alone.
+    if let Some((label, hidden)) = queried_dialog(id)
+        && p.as_object().is_none_or(|o| o.is_empty())
+    {
         match app.session.execute(id, &json!({})) {
-            Ok(fields) => {
-                let _ = app.run("ui.paramDialog", json!({"command": id, "label": "Area Type Options", "params": fields}));
+            Ok(mut fields) => {
+                if let Some(o) = fields.as_object_mut() {
+                    o.retain(|k, _| !hidden.contains(&k.as_str()));
+                }
+                let _ = app.run("ui.paramDialog", json!({"command": id, "label": label, "params": fields}));
             }
             Err(e) => app.status(e.to_string()),
         }
@@ -2936,6 +2986,11 @@ const TYPE_SIZES: [(&str, u32); 14] = [
     ("60 pt", 60),
     ("72 pt", 72),
 ];
+
+/// Type → Type on a Path effects (label, `type.pathOptions` effect), also the choices of its
+/// Options dialog.
+pub(crate) const PATH_EFFECTS: &[(&str, &str)] =
+    &[("Rainbow", "rainbow"), ("Skew", "skew"), ("3D Ribbon", "3dRibbon"), ("Stair Step", "stairStep"), ("Gravity", "gravity")];
 
 const INSERT_SPECIAL: &[(&str, &str)] = &[
     ("Bullet", "bullet"),
@@ -3179,8 +3234,7 @@ pub fn menu_strings() -> std::collections::BTreeSet<String> {
         out.insert(c.label.to_string());
         out.extend(c.menu.iter().map(|m| m.to_string()));
     }
-    out.extend(ICON_PANELS.iter().map(|p| p.1.to_string()));
-    out.extend(["Properties", "Layers", "Libraries"].map(str::to_string));
+    out.extend(crate::state::all_panels().map(|(_, label)| label.to_string()));
     out.extend(vectorcraft_tools::catalog::all_tools().map(|t| t.label.to_string()));
     out.extend(crate::toolbar::BASIC.iter().map(|c| c.0.to_string()));
     out.extend(vectorcraft_color::BlendMode::ALL.iter().map(|m| m.label().to_string()));

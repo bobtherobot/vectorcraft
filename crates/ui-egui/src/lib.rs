@@ -39,6 +39,7 @@ pub mod prefs_dialog;
 pub mod print;
 pub mod recovery;
 pub mod render_worker;
+mod scrub;
 pub mod shortcut_editor;
 pub mod shortcuts;
 pub mod state;
@@ -86,6 +87,8 @@ mod tests_paintchips;
 #[cfg(test)]
 mod tests_pastechords;
 #[cfg(test)]
+mod tests_pathtype;
+#[cfg(test)]
 mod tests_pdfoutput;
 #[cfg(test)]
 mod tests_place;
@@ -107,6 +110,10 @@ mod tests_removeanchors;
 mod tests_save;
 #[cfg(test)]
 mod tests_saveext;
+#[cfg(test)]
+mod tests_screenmode;
+#[cfg(test)]
+mod tests_scrub;
 #[cfg(test)]
 mod tests_selectall;
 #[cfg(test)]
@@ -232,6 +239,8 @@ pub struct CanvasCache {
     pub selection_box: Option<((u64, u64, bool), Option<vectorcraft_doc::OrientedBox>)>,
     /// A drag's art drawn in layers (see [`drag_layers`]).
     pub drag: Option<drag_layers::DragLayers>,
+    /// The tools' cursors as OS cursor bitmaps.
+    pub cursors: cursors::Images,
 }
 
 /// [`CanvasCache::slices`]: the layout of the slices of (document uid, revision).
@@ -254,6 +263,8 @@ pub struct CacheKey {
     pub ppp: f32,
     pub hidden: Vec<u64>,
     pub rot: f64,
+    /// General › Anti-aliased Artwork.
+    pub anti_alias: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -299,10 +310,11 @@ pub struct VectorcraftApp {
     /// Hover position in document coordinates.
     pub hover_doc: Option<vectorcraft_geom::Point>,
     /// System clipboard: SVG to publish next frame, the last SVG we published (so pasting it back
-    /// uses the lossless internal clipboard) and text that arrived with a Paste event.
+    /// uses the lossless internal clipboard) and what came with a paste (a Paste event's text, a
+    /// picture or file the host read: [`Self::paste_from_host`]).
     clipboard_out: Option<String>,
     clipboard_published: Option<String>,
-    pub(crate) clipboard_in: Option<String>,
+    pub(crate) clipboard_in: Option<vectorcraft_engine::cmd::clipboard::Flavour>,
     /// A URL to open through egui next frame (when the host has no `open_url` service).
     pending_url: Option<String>,
     /// Windows and Linux: the window has no OS decorations, so the app bar is the title bar (drag,
@@ -334,6 +346,9 @@ pub struct VectorcraftApp {
     pub(crate) ime_marked: Option<String>,
     /// The IME must drop its marked text (see [`Self::take_ime_discard`]).
     pub(crate) ime_discard: bool,
+    /// A numeric field is being scrubbed: the document's edits meanwhile are one undo step
+    /// ([`scrub::begin_frame`]).
+    scrub_group: bool,
 }
 
 /// Seconds between two looks at the system clipboard for [`VectorcraftApp::system_paste`].
@@ -363,6 +378,7 @@ impl VectorcraftApp {
                 print_tiling: None,
                 selection_box: None,
                 drag: None,
+                cursors: Default::default(),
             },
             perf: Perf::default(),
             integrated_titlebar: false,
@@ -398,6 +414,7 @@ impl VectorcraftApp {
             synthetic_modifiers: false,
             ime_marked: None,
             ime_discard: false,
+            scrub_group: false,
         }
     }
 
@@ -721,7 +738,6 @@ impl VectorcraftApp {
         } else {
             self.fonts_ready = true;
         }
-        theme::show_tooltips(ctx, self.session.prefs.show_tool_tips);
         self.frame += 1;
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
@@ -782,26 +798,37 @@ impl VectorcraftApp {
         self.take_dropped_files(ctx);
     }
 
-    /// Files dropped on the window: placed where they were dropped on the canvas, else opened.
+    /// Files dropped on the window: documents opened, pictures and text placed on the canvas
+    /// ([`Self::drop_target`]).
     #[cfg(not(target_arch = "wasm32"))]
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let (dropped, pos, shift) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.latest_pos(), i.modifiers.shift));
+        let (dropped, shift) = ctx.input(|i| (i.raw.dropped_files.clone(), i.modifiers.shift));
         if dropped.is_empty() {
             return;
         }
-        let target = self.drop_target(pos, shift);
+        let pos = place::drag_pos(ctx);
         let mut files = vec![];
         for f in dropped {
             let path = Some(f.path().to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let name = path.as_deref().map_or_else(|| "dropped".into(), vectorcraft_engine::cmd::fileio::file_name);
+            let target = self.drop_target(&name, pos, shift);
             // A file placed by its path is read by the engine.
             let bytes = if path.is_some() && target != place::DropTarget::Open { Ok(vec![]) } else { f.bytes() };
             match bytes {
-                Ok(b) => files.push((name, path, b)),
+                Ok(b) => files.push((target, (name, path, b))),
                 Err(e) => self.status(format!("Couldn't read {name}: {e}")),
             }
         }
-        place::drop_files(self, files, target);
+        place::drop_files(self, files);
+    }
+
+    /// Fonts installed or removed while the app was in the background are listed when it comes
+    /// back (Refresh Font List by itself): a look at the font folders, a scan only when they changed.
+    fn refresh_installed_fonts(&mut self) {
+        if vectorcraft_text::FontDb::global().installed_fonts_changed() {
+            // A failure shows in the status bar, as the menu item's does.
+            let _ = self.run("text.rescanFonts", json!({}));
+        }
     }
 
     /// Inject synthetic events (one press/release step or wheel turn per frame). Handlers read the
@@ -812,6 +839,7 @@ impl VectorcraftApp {
             match e {
                 egui::Event::ModifiersChanged(m) => self.host_modifiers = *m,
                 egui::Event::WindowFocused(false) => self.host_modifiers = egui::Modifiers::NONE,
+                egui::Event::WindowFocused(true) => self.refresh_installed_fonts(),
                 _ => {}
             }
         }
@@ -869,6 +897,7 @@ impl VectorcraftApp {
             return;
         }
         let t0 = now_ms();
+        scrub::begin_frame(self, &ctx);
         font_menu::end_stale_preview(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         if self.ui.screen_mode < 2 {
@@ -901,6 +930,7 @@ impl VectorcraftApp {
             titlebar::resize_zones(ui);
         }
         self.ui_fonts.frame(&ctx);
+        scrub::end_frame(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;
         let _ = json!(null);
     }

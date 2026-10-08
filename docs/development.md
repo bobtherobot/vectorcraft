@@ -20,7 +20,7 @@ How the web shell (`apps/vectorcraft-web/src/web.rs`) differs from desktop:
 
 - **Open** sets `Services::open_async`, which shows `rfd::AsyncFileDialog`. The bytes arrive in `Services::inbox`, which the app drains every frame.
 - **Save / Save As / Export** go through `Services::download`: a Blob, an object URL and a temporary `<a download>`, all created from Rust. There is no save dialog, so the suggested name becomes the download name.
-- **Drag-and-drop:** `WebShell` takes the frame's `dropped_files` before the app sees them, reads each with `DroppedFile::bytes_async` and pushes the bytes into the inbox (files dropped on a canvas go to `Services::place_inbox` with their `place::DropAt`: the document they were dropped on, by uid, and the point). A file that arrives after another document became active still lands in its own document, which becomes active again; if that document closed meanwhile, the file is not placed and the status bar says so. (The app's synchronous drop path is compiled out on wasm32.)
+- **Drag-and-drop:** `WebShell` takes the frame's `dropped_files` before the app sees them, reads each with `DroppedFile::bytes_async` and pushes the bytes into the inbox (files dropped on a canvas go to `Services::place_inbox` with their `place::DropAt`: the document they were dropped on, by uid, and the point; `VectorcraftApp::drop_target` decides from the position the page's drag events give). Desktop drags carry no position (winit 0.30 reports none, and the pointer position egui last had is stale), so the desktop app decides by kind: documents open, pictures and text are placed in the middle of the view. A file that arrives after another document became active still lands in its own document, which becomes active again; if that document closed meanwhile, the file is not placed and the status bar says so. (The app's synchronous drop path is compiled out on wasm32.)
 - **Data Recovery** keeps its copies in `localStorage` (`vectorcraft-recovery/<area>/<name>`, shared by the site's tabs), so tabs can't lock their areas the way desktop apps lock a folder (`RecoveryStore::lock`). Each tab holds its area with a heartbeat it refreshes every minute and, where the browser has Web Locks (secure pages: `https://` or localhost), with a Web Lock named after the area (`apps/vectorcraft-web/src/locks.rs`, through `js_sys::Reflect` since web-sys has them only as an unstable API). The browser releases the lock only when the tab is gone, not while its timers are paused in the background, which a heartbeat can't tell apart (#367). `navigator.locks.query()` is asynchronous, so the shell keeps a snapshot refreshed every 10 seconds (taken once before the first frame); a snapshot older than a minute counts every area as held. An area is offered as a crash's leftovers only when no tab holds its lock and its heartbeat is older than three intervals. Without Web Locks a paused tab can still be taken for gone; it repairs that when it resumes: its next heartbeat (or recovery save) writes again the copies missing from its area, and a heartbeat newer than the one the other tab wrote taking the area over makes the area running again for that tab.
 - **Losing the graphics (#369):** the browser can drop the page's WebGPU device or WebGL context (a GPU reset, a driver update, too many tabs on the GPU; or a script calling `device.destroy()` / `WEBGL_lose_context.loseContext()`). The app goes on without it, so the shell watches for it: wgpu's device-lost callback for WebGPU, the canvas's `webglcontextlost` event for WebGL2. Both report to a `graphics::GraphicsLoss`, and the next frame of `WebShell::logic` handles it:
   1. `VectorcraftApp::graphics_lost` writes Data Recovery copies of the modified documents at once (to browser storage, also when Data Recovery is turned off).
@@ -41,6 +41,21 @@ The canvas is rasterized on the CPU (`vectorcraft-render`, vello_cpu); the GPU (
 - **Preferences › Performance › Graphics Processor** (`gpuPreference`: `powerSaving` or `highPerformance`) picks the other one. The adapter is chosen when the window opens, so a change applies after a restart.
 - The `WGPU_POWER_PREF` environment variable (`low`, `high` or `none`) overrides the preference.
 - Help › About and the control channel's `ui.inspect` (`graphicsAdapter`) show the adapter in use, and the app logs it at startup.
+
+## Logs
+
+The desktop app writes its `log` records to standard error and to `logs/vectorcraft.log` next to the preferences (Linux `$XDG_CONFIG_HOME/vectorcraft/logs/`, by default `~/.config/vectorcraft/logs/`; macOS `~/Library/Application Support/VectorCraft/logs/`; Windows `%APPDATA%\VectorCraft\logs\`). A start launched from a desktop menu or the Dock has no terminal, so this file is what to attach to a bug report: the graphics adapter in use, a lost graphics device, panics the engine's guard recovered from and clipboard formats that couldn't be made land there. Each launch moves the previous log to `vectorcraft.1.log` (and that one to `vectorcraft.2.log`), so the log of a run that crashed survives the next start. The file stops growing at 16 MiB. `--version` writes no file, and runs with `VECTORCRAFT_NO_PREFS` log to standard error only.
+
+By default VectorCraft's own crates log at `info` and everything else at `warn`. `RUST_LOG` replaces that with env_logger-style directives, for example `RUST_LOG=debug`, `RUST_LOG=warn,vectorcraft_render=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`vectorcraft*=debug`). The logger is `apps/vectorcraft/src/logging.rs`. `vectorcraft-cli mcp` has its own logger, which sends records to the MCP client (`docs/mcp.md`).
+
+## Environment variables (desktop app)
+
+| Variable | Effect |
+|---|---|
+| `VECTORCRAFT_CONTROL_PORT` | Same as `--control <port>` |
+| `VECTORCRAFT_NO_PREFS` | No preferences read or written, no default Data Recovery folder and no log file (agents' test runs) |
+| `WGPU_POWER_PREF` | Graphics adapter: `low`, `high` or `none` (see [Desktop graphics processor](#desktop-graphics-processor)) |
+| `RUST_LOG` | Log levels for standard error and the log file (see [Logs](#logs)) |
 
 ## Linux: Wayland and X11
 
@@ -109,8 +124,8 @@ international Spanish; every `es-*` locale such as `es-ES`, `es-MX`, `es-AR` or 
 - The language is VectorCraft › Language (the `app.language` UI command, `{lang: auto|<code>}`) or Edit ›
   Preferences › User Interface › Language; both set the `interfaceLanguage` preference (`auto` or a language
   code; `auto` follows the system locale: `VECTORCRAFT_LOCALE`, then `LC_ALL`/`LC_MESSAGES`/`LANG`/`LANGUAGE`,
-  the macOS preferred languages, the Windows user locale). The web build has no locale detection yet and
-  starts in English. The Preferences dialog previews the chosen language before OK.
+  the macOS preferred languages, the Windows user locale; on the web, `?lang=<code>` in the address, then
+  the browser's `navigator.languages`). The Preferences dialog previews the chosen language before OK.
 - To add a language: add `<code>.tsv` and one row in `i18n::LANGUAGES` (code, native name, catalog, plural
   rule). The Language menu, the dropdown, locale matching and the catalog tests (well-formed, no duplicates,
   placeholders and ellipses agree, command ids exist, every row of a partial catalog is a string the UI
@@ -119,9 +134,19 @@ international Spanish; every `es-*` locale such as `es-ES`, `es-MX`, `es-AR` or 
   (`VECTORCRAFT_I18N_DUMP=strings.txt cargo test -p vectorcraft-ui-egui dump_source_strings` lists them).
 - Translations are clean-room: written from the meaning of the English text in ordinary vocabulary, never
   from another product's localisation resources. Product and technology names stay in Latin letters.
-- Not translated on purpose: status-bar messages and errors (agents and tests read them), names that are
-  user data (layers, swatches, fonts, documents), the tab title's colour mode. Not done yet: locale-aware
-  number and date formats, right-to-left layout, locale detection on the web. Chinese and Japanese UI text
+- Status-bar messages and errors stay English where they are made (`app.ui.status`, `EngineError`: the
+  control channel, MCP and tests read them) and are translated only where the status bar draws them
+  (`i18n::msg`). `@msg` catalog rows hold a whole message or a template such as
+  `Couldn't open {name}: {e}`; `{_1}`, `{_2}` … stand for the format string's `{}`, and the values in the
+  placeholders are translated in turn (the reason after `: {e}` is often a message too). Spanish covers every
+  message literal the test scan finds (`complete_languages_translate_every_message`, languages listed in
+  `COMPLETE_MESSAGES`): a new `Err("…")`, `Other(…)`, `#[error(…)]` or `status(…)` message needs an `es.tsv`
+  row (`VECTORCRAFT_I18N_DUMP_MESSAGES=messages.txt cargo test -p vectorcraft-ui-egui
+  complete_languages_translate_every_message` lists them all). Other languages show messages in English
+  until they add `@msg` rows.
+- Not translated on purpose: names that are user data (layers, swatches, fonts, documents), the tab
+  title's colour mode, command ids and parameter names inside messages. Not done yet: locale-aware number
+  and date formats, right-to-left layout. Chinese and Japanese UI text
   is drawn with craft-fonts' BIZ UDPGothic when the build embeds it (see Fonts above), else with an installed
   system font; the glyph test checks Latin-script catalogs always and the CJK ones only with craft-fonts.
   A Traditional Chinese UI font is still to be added to craft-fonts for the web build.

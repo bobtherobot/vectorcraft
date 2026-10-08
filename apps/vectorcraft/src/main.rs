@@ -16,6 +16,7 @@ compile_error!("the win7 target requires --no-default-features --features window
 
 mod clipboard;
 mod control_server;
+mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 #[cfg(target_os = "macos")]
@@ -137,6 +138,11 @@ fn prefs_path_for(name: &str, lower: &str) -> Option<std::path::PathBuf> {
             .map(|c| c.join(lower))
     };
     base.map(|b| b.join("ui.json"))
+}
+
+/// Where the log files live: `logs` in the preferences folder (see `logging`).
+fn log_dir() -> Option<std::path::PathBuf> {
+    Some(prefs_path()?.parent()?.join("logs"))
 }
 
 /// Runs without preferences (`VECTORCRAFT_NO_PREFS`, agents' test runs) neither read nor write them.
@@ -319,6 +325,8 @@ fn adapter_summary(info: &eframe::wgpu::AdapterInfo) -> String {
 const CUSTOM_TITLEBAR: bool = !cfg!(target_os = "macos");
 
 fn main() -> eframe::Result {
+    // First, so every start-up warning is recorded (`logging`).
+    let logger = logging::install();
     vectorcraft_ui_egui::i18n::detect_system_lang_in_background();
     let mut control_port: Option<u16> = std::env::var("VECTORCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
@@ -331,6 +339,20 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             _ => files.push(a),
+        }
+    }
+    // The log file lives in the settings directory, next to the preferences; opened after the
+    // arguments, so `--version` leaves no file behind. Records logged until now are written to it
+    // first. Runs without preferences (agents' test runs) log to standard error only, so they
+    // don't rotate away the user's own logs.
+    if let Some(logger) = logger {
+        match log_dir().filter(|_| prefs_enabled()) {
+            Some(dir) => match logger.attach_dir(&dir) {
+                Ok(path) => log::info!("VectorCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
+                // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
+                Err(e) => log::warn!("no log file: {e}"),
+            },
+            None => logger.no_file(),
         }
     }
     let saved = read_prefs();
@@ -351,9 +373,6 @@ fn main() -> eframe::Result {
             .with_title_shown(false)
             .with_icon(app_icon())
             .with_app_id("ai.storyteller.vectorcraft"),
-        // One frame queued, not eframe's default two: art dragged under the OS cursor (which moves
-        // at hardware speed) trails it by a frame less.
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration { surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY, ..Default::default() },
         #[cfg(feature = "windows7")]
         renderer: eframe::Renderer::Glow,
         ..Default::default()
@@ -361,6 +380,9 @@ fn main() -> eframe::Result {
     #[cfg(feature = "wgpu")]
     let options = {
         let mut options = options;
+        // One frame queued, not two: the canvas is rasterized on the CPU and the GPU only
+        // composites it, so the window answers the pointer a frame sooner (#444).
+        options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
         if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup {
             create.power_preference = power;
         }
@@ -394,7 +416,7 @@ fn main() -> eframe::Result {
             #[cfg(feature = "wgpu")]
             if let Some(rs) = &cc.wgpu_render_state {
                 let summary = adapter_summary(&rs.adapter.get_info());
-                log::info!("vectorcraft: rendering with {summary} (power preference {power:?})");
+                log::info!("rendering with {summary} (power preference {power:?})");
                 app.graphics_adapter = Some(summary);
                 let (loss, ctx) = (graphics_loss.clone(), cc.egui_ctx.clone());
                 rs.device.set_device_lost_callback(move |reason, msg| loss.report(&ctx, format!("{reason:?}: {msg}")));

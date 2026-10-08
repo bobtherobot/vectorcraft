@@ -1,14 +1,41 @@
-//! Smart Guides: snapping to anchors, object bounds (edges/centres), artboards, with the magenta
-//! construction lines and labels Illustrator users expect.
+//! Smart Guides: snapping to anchors, path segments (for dragged anchors), object bounds
+//! (edges/centres), artboards, with the magenta construction lines and labels Illustrator users
+//! expect. Preferences › Smart Guides sets their colour, which of them show ([`GuideStyle`]) and
+//! how near a target pulls (`ToolContext::snapping_tolerance`).
 
 use vectorcraft_doc::hit::{HitOptions, hit_test};
-use vectorcraft_doc::{Document, NodeId, NodeKind, OrientedBox};
-use vectorcraft_geom::{Affine, Point, Rect, Vec2};
+use vectorcraft_doc::{Document, NodeId, NodeKind, OrientedBox, Selection};
+use vectorcraft_geom::kurbo::ParamCurveNearest;
+use vectorcraft_geom::{Affine, Line, ParamCurve, PathSeg, Point, Rect, SubPath, Vec2};
 
 use crate::bbox::Handle;
 use crate::{Overlay, ToolContext};
 
 pub const MAGENTA: [u8; 3] = [0xff, 0x3d, 0xfc];
+
+/// How Smart Guides look (Preferences › Smart Guides › Display Options): their colour, and whether
+/// the alignment lines and the anchor/path labels show. Snapping is the same either way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GuideStyle {
+    pub color: [u8; 3],
+    /// Alignment Guides: the lines along the edges and centres the art lines up with.
+    pub lines: bool,
+    /// Anchor/Path Labels: "anchor", "center", "path", "align"…
+    pub labels: bool,
+}
+
+impl Default for GuideStyle {
+    fn default() -> Self {
+        Self { color: MAGENTA, lines: true, labels: true }
+    }
+}
+
+impl GuideStyle {
+    /// The style the preferences in `cx` ask for.
+    pub fn of(cx: &ToolContext) -> Self {
+        Self { color: cx.smart_guide_color, lines: cx.alignment_guides, labels: cx.anchor_path_labels }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
@@ -17,6 +44,7 @@ enum Kind {
     Edge,
     Artboard,
     Bleed,
+    Guide,
 }
 
 impl Kind {
@@ -27,6 +55,7 @@ impl Kind {
             Kind::Edge => "path",
             Kind::Artboard => "artboard",
             Kind::Bleed => "bleed",
+            Kind::Guide => "guide",
         }
     }
 }
@@ -37,20 +66,112 @@ pub struct Targets {
     points: Vec<(Point, Kind)>,
     xs: Vec<(f64, Point, Kind)>,
     ys: Vec<(f64, Point, Kind)>,
+    /// Path segments and their control bounds, which a point lands on ("path"): gathered only for
+    /// dragged anchors ([`Self::for_anchor_drag`]).
+    segments: Vec<(Rect, PathSeg)>,
+    /// Ruler guides, which pull a point into line where they run (Snap to Point).
+    rulers: Vec<Ruler>,
+    /// How the guides these targets produce look.
+    style: GuideStyle,
 }
+
+/// A ruler guide as a snap target.
+struct Ruler {
+    vertical: bool,
+    pos: f64,
+    /// Where it runs along its line: an artboard guide across its artboard (see
+    /// [`vectorcraft_doc::Document::guide_span`]), else (None) the whole canvas.
+    span: Option<(f64, f64)>,
+}
+
+impl Ruler {
+    /// The line it pulls `p` into within `tol` of its ends (its position, where it starts, the
+    /// kind), as [`Targets::xs`] holds them: none where it doesn't run.
+    fn line_at(&self, p: Point, tol: f64) -> Option<(f64, Point, Kind)> {
+        let along = if self.vertical { p.y } else { p.x };
+        let start = match self.span {
+            Some((a, b)) if along < a - tol || along > b + tol => return None,
+            Some((a, _)) => a,
+            None => 0.0,
+        };
+        let from = if self.vertical { Point::new(self.pos, start) } else { Point::new(start, self.pos) };
+        Some((self.pos, from, Kind::Guide))
+    }
+}
+
+/// How many anchors, and how many segments, the targets gather at most.
+const BUDGET: usize = 20_000;
 
 impl Targets {
     pub fn collect(doc: &Document, exclude: &[NodeId], visible: Option<Rect>) -> Self {
-        Self::collect_inner(doc, exclude, None, visible)
+        Self::collect_inner(doc, exclude, None, visible, false)
+    }
+
+    /// The same targets drawing their guides as the Smart Guides preferences in `cx` ask
+    /// ([`GuideStyle::of`]).
+    pub fn styled(mut self, cx: &ToolContext) -> Self {
+        self.style = GuideStyle::of(cx);
+        self
+    }
+
+    /// An alignment line from `a` to `b`, unless Alignment Guides are off.
+    fn line(&self, a: Point, b: Point) -> Option<Overlay> {
+        self.style.lines.then_some(Overlay::Line { a, b, color: self.style.color, dashed: false })
+    }
+
+    /// A label `text` at `p`, unless Anchor/Path Labels are off.
+    fn label(&self, p: Point, text: &str) -> Option<Overlay> {
+        self.style.labels.then(|| Overlay::Label { p, text: text.into(), color: self.style.color })
     }
 
     /// Targets for dragging artboard `index`: everything except that artboard and `exclude` (the
     /// art that moves along with it).
     pub fn for_artboard(doc: &Document, index: usize, exclude: &[NodeId]) -> Self {
-        Self::collect_inner(doc, exclude, Some(index), None)
+        Self::collect_inner(doc, exclude, Some(index), None, false)
     }
 
-    fn collect_inner(doc: &Document, exclude: &[NodeId], skip_artboard: Option<usize>, visible: Option<Rect>) -> Self {
+    /// Targets for dragging the direct-selected anchors of `sel` (and its objects selected as a
+    /// whole): the other art, its path segments too, and the anchors and segments that stay put on
+    /// the paths being reshaped (their bounds move along, so they are no targets).
+    pub fn for_anchor_drag(doc: &Document, sel: &Selection) -> Self {
+        let mut t = Self::collect_inner(doc, &sel.objects, None, None, true);
+        let (mut anchors, mut segments) = (BUDGET, BUDGET);
+        for (id, set) in &sel.anchors {
+            let Some(path) = doc.node(*id).and_then(|n| n.path_data()) else { continue };
+            for (si, sp) in path.subpaths.iter().enumerate() {
+                let moving = |ai: usize| set.contains(&(si, ai));
+                for a in sp.anchors.iter().enumerate().filter(|(ai, _)| !moving(*ai)).map(|(_, a)| a.p).take(anchors) {
+                    t.points.push((a, Kind::Anchor));
+                    t.xs.push((a.x, a, Kind::Anchor));
+                    t.ys.push((a.y, a, Kind::Anchor));
+                    anchors -= 1;
+                }
+                t.push_segments(sp, moving, &mut segments);
+            }
+        }
+        t
+    }
+
+    /// The segments of `sp` that stay put while the anchors `moving` accepts move, as targets, at
+    /// most `budget` of them (counted down).
+    fn push_segments(&mut self, sp: &SubPath, moving: impl Fn(usize) -> bool, budget: &mut usize) {
+        let n = sp.anchors.len();
+        for seg in 0..sp.segment_count() {
+            if *budget == 0 {
+                return;
+            }
+            if moving(seg) || moving((seg + 1) % n) {
+                continue;
+            }
+            let c = sp.segment(seg);
+            let bounds = Rect::from_points(c.p0, c.p1).union_pt(c.p2).union_pt(c.p3);
+            // A straight one as a line, so the point lands on it exactly.
+            self.segments.push((bounds, if sp.segment_is_line(seg) { PathSeg::Line(Line::new(c.p0, c.p3)) } else { PathSeg::Cubic(c) }));
+            *budget -= 1;
+        }
+    }
+
+    fn collect_inner(doc: &Document, exclude: &[NodeId], skip_artboard: Option<usize>, visible: Option<Rect>, segments: bool) -> Self {
         let mut t = Targets::default();
         let excluded = |id: NodeId| exclude.iter().any(|e| doc.ancestry(id).is_some_and(|a| a.contains(e)));
         let add_rect = |t: &mut Targets, r: Rect, kind: Kind| {
@@ -72,7 +193,7 @@ impl Targets {
                 add_rect(&mut t, doc.setup.bleed_rect(ab.rect), Kind::Bleed);
             }
         }
-        let mut budget = 20_000usize;
+        let (mut budget, mut segment_budget) = (BUDGET, BUDGET);
         doc.walk(|n| {
             if budget == 0 || n.is_container() || !n.visible || excluded(n.id) {
                 return;
@@ -89,10 +210,40 @@ impl Targets {
                     t.points.push((a.p, Kind::Anchor));
                     budget = budget.saturating_sub(1);
                 }
+                if segments {
+                    for sp in &path.subpaths {
+                        t.push_segments(sp, |_| false, &mut segment_budget);
+                    }
+                }
             }
             add_rect(&mut t, b, Kind::Edge);
         });
         t
+    }
+
+    /// Only these targets' anchors pull (View → Snap to Point).
+    pub(crate) fn anchors_only(mut self) -> Self {
+        self.points.retain(|(_, k)| *k == Kind::Anchor);
+        self.xs.clear();
+        self.ys.clear();
+        self.segments.clear();
+        self
+    }
+
+    /// View → Snap to Point: only these targets' anchors pull, and the ruler guides (shown and
+    /// unlocked, as the selection tools pick them) pull the pointer into line where they run.
+    fn for_snap_to_point(self, cx: &ToolContext) -> Self {
+        let mut t = self.anchors_only();
+        if cx.guides {
+            t.rulers = cx.doc.guides.iter().map(|g| Ruler { vertical: g.vertical, pos: g.pos, span: cx.doc.guide_span(g) }).collect();
+        }
+        t
+    }
+
+    /// What a dragged selection's grabbed point snaps to with View → Snap to Point and Smart
+    /// Guides off: the anchors of the art but `exclude` and the ruler guides.
+    pub fn snap_to_point(cx: &ToolContext, exclude: &[NodeId]) -> Option<Self> {
+        (cx.snap_to_point && !cx.smart_guides).then(|| Self::collect(cx.doc, exclude, None).for_snap_to_point(cx))
     }
 
     /// Anchors and centres of the visible leaves under `roots` (the roots included) whose bounds
@@ -117,29 +268,49 @@ impl Targets {
         t
     }
 
-    /// Snap a single point. Returns the snapped point and guide overlays.
+    /// Snap a single point: onto the nearest anchor or centre, else onto the nearest segment, else
+    /// into line with targets. Returns the snapped point and guide overlays.
     pub fn snap_point(&self, p: Point, tol: f64) -> (Point, Vec<Overlay>) {
         if let Some((q, k)) = self.points.iter().filter(|(q, _)| q.distance(p) <= tol).min_by(|a, b| a.0.distance(p).total_cmp(&b.0.distance(p))) {
-            return (*q, vec![Overlay::Label { p: *q, text: k.label().into(), color: MAGENTA }]);
+            return (*q, self.label(*q, k.label()).into_iter().collect());
+        }
+        if let Some(q) = self.on_segment(p, tol) {
+            return (q, self.label(q, Kind::Edge.label()).into_iter().collect());
         }
         let mut out = p;
         let mut ov = vec![];
-        if let Some((x, from, _)) =
-            self.xs.iter().filter(|(x, _, _)| (x - p.x).abs() <= tol).min_by(|a, b| (a.0 - p.x).abs().total_cmp(&(b.0 - p.x).abs()))
-        {
-            out.x = *x;
-            ov.push(Overlay::Line { a: *from, b: Point::new(*x, p.y), color: MAGENTA, dashed: false });
+        // The targets' lines along one axis and the ruler guides running past `p`, the nearest
+        // within reach of `v`.
+        let nearest = |lines: &[(f64, Point, Kind)], vertical: bool, v: f64| {
+            let rulers = self.rulers.iter().filter(|r| r.vertical == vertical).filter_map(|r| r.line_at(p, tol));
+            lines.iter().copied().chain(rulers).filter(|(t, ..)| (t - v).abs() <= tol).min_by(|a, b| (a.0 - v).abs().total_cmp(&(b.0 - v).abs()))
+        };
+        let mut aligned = false;
+        if let Some((x, from, _)) = nearest(&self.xs, true, p.x) {
+            out.x = x;
+            aligned = true;
+            ov.extend(self.line(from, Point::new(x, p.y)));
         }
-        if let Some((y, from, _)) =
-            self.ys.iter().filter(|(y, _, _)| (y - p.y).abs() <= tol).min_by(|a, b| (a.0 - p.y).abs().total_cmp(&(b.0 - p.y).abs()))
-        {
-            out.y = *y;
-            ov.push(Overlay::Line { a: *from, b: Point::new(p.x, *y), color: MAGENTA, dashed: false });
+        if let Some((y, from, _)) = nearest(&self.ys, false, p.y) {
+            out.y = y;
+            aligned = true;
+            ov.extend(self.line(from, Point::new(p.x, y)));
         }
-        if !ov.is_empty() {
-            ov.push(Overlay::Label { p: out, text: "align".into(), color: MAGENTA });
+        if aligned {
+            ov.extend(self.label(out, "align"));
         }
         (out, ov)
+    }
+
+    /// The nearest point within `tol` of `p` on a target segment.
+    fn on_segment(&self, p: Point, tol: f64) -> Option<Point> {
+        self.segments
+            .iter()
+            .filter(|(b, _)| b.inflate(tol, tol).contains(p))
+            .map(|(_, c)| (c, c.nearest(p, 1e-6)))
+            .filter(|(_, n)| n.distance_sq <= tol * tol)
+            .min_by(|a, b| a.1.distance_sq.total_cmp(&b.1.distance_sq))
+            .map(|(c, n)| c.eval(n.t))
     }
 
     /// Snap a ruler guide at `v` (the x of a vertical one, the y of a horizontal one) into line
@@ -154,7 +325,7 @@ impl Targets {
             .filter(|(t, ..)| (t - v).abs() <= tol)
             .min_by(|a, b| (a.0 - v).abs().total_cmp(&(b.0 - v).abs()));
         match best {
-            Some((t, from, k)) => (t, vec![Overlay::Label { p: from, text: k.label().into(), color: MAGENTA }]),
+            Some((t, from, k)) => (t, self.label(from, k.label()).into_iter().collect()),
             None => (v, vec![]),
         }
     }
@@ -167,10 +338,10 @@ impl Targets {
             return self.snap_point(p, tol);
         }
         let rects: Vec<Rect> = std::iter::once(Vec2::ZERO).chain(offsets.iter().copied()).map(|o| Rect::from_points(p + o, p + o)).collect();
-        let (adj, mut ov) = self.snap_rects(&rects, tol);
+        let (adj, mut ov, aligned) = self.align_rects(&rects, tol);
         let out = p + adj;
-        if !ov.is_empty() {
-            ov.push(Overlay::Label { p: out, text: "align".into(), color: MAGENTA });
+        if aligned {
+            ov.extend(self.label(out, "align"));
         }
         (out, ov)
     }
@@ -183,6 +354,13 @@ impl Targets {
     /// Snap rectangles that move together (an artboard and its bleed): the edge or centre of any
     /// of them nearest a target, per axis. Returns the shift and the guides.
     pub fn snap_rects(&self, rects: &[Rect], tol: f64) -> (Vec2, Vec<Overlay>) {
+        let (d, ov, _) = self.align_rects(rects, tol);
+        (d, ov)
+    }
+
+    /// [`Self::snap_rects`], also saying whether an axis lined up (even with Alignment Guides
+    /// off, or already in line, when there is no line or shift to tell).
+    fn align_rects(&self, rects: &[Rect], tol: f64) -> (Vec2, Vec<Overlay>, bool) {
         let nearest = |targets: &[(f64, Point, Kind)], along: fn(&Rect) -> [f64; 3]| {
             rects
                 .iter()
@@ -199,15 +377,15 @@ impl Targets {
             d.x = dx;
             let x = x + dx;
             let (y0, y1) = (from.y.min(r.y0), from.y.max(r.y1));
-            ov.push(Overlay::Line { a: Point::new(x, y0), b: Point::new(x, y1), color: MAGENTA, dashed: false });
+            ov.extend(self.line(Point::new(x, y0), Point::new(x, y1)));
         }
         if let Some((dy, from, y, r)) = best_y {
             d.y = dy;
             let y = y + dy;
             let (x0, x1) = (from.x.min(r.x0), from.x.max(r.x1));
-            ov.push(Overlay::Line { a: Point::new(x0, y), b: Point::new(x1, y), color: MAGENTA, dashed: false });
+            ov.extend(self.line(Point::new(x0, y), Point::new(x1, y)));
         }
-        (d, ov)
+        (d, ov, best_x.is_some() || best_y.is_some())
     }
 
     /// Snap a bounding-box resize. `a` is the scale [`crate::bbox::scale_for_drag`] gave for
@@ -295,10 +473,10 @@ impl Targets {
         let nr = (to_doc * out).transform_rect_bbox(r);
         let mut ov = vec![];
         if let Some((x, from)) = hit_x {
-            ov.push(Overlay::Line { a: Point::new(x, from.y.min(nr.y0)), b: Point::new(x, from.y.max(nr.y1)), color: MAGENTA, dashed: false });
+            ov.extend(self.line(Point::new(x, from.y.min(nr.y0)), Point::new(x, from.y.max(nr.y1))));
         }
         if let Some((y, from)) = hit_y {
-            ov.push(Overlay::Line { a: Point::new(from.x.min(nr.x0), y), b: Point::new(from.x.max(nr.x1), y), color: MAGENTA, dashed: false });
+            ov.extend(self.line(Point::new(from.x.min(nr.x0), y), Point::new(from.x.max(nr.x1), y)));
         }
         (out, ov)
     }
@@ -309,18 +487,47 @@ pub fn snap_draw(cx: &ToolContext, p: Point, exclude: &[NodeId]) -> (Point, Vec<
     snap_with(cx, p, || Targets::collect(cx.doc, exclude, None))
 }
 
-/// Snap `p` to pixels or the grid when they are on, else to the smart guide `targets`.
+/// Snap `p` to pixels or the grid when they are on, else to the smart guide `targets`, else (Snap
+/// to Point) to their anchors and the ruler guides within the Snap to Point distance.
 fn snap_with(cx: &ToolContext, p: Point, targets: impl FnOnce() -> Targets) -> (Point, Vec<Overlay>) {
-    if cx.snap_to_pixel {
-        return (Point::new(p.x.round(), p.y.round()), vec![]);
+    PointSnap::new(cx, targets).snap(cx, p)
+}
+
+/// Snapping for a dragged point, its targets gathered once (when the drag begins): what
+/// [`snap_draw`] does for a point at a time.
+pub struct PointSnap {
+    /// The smart guide targets, or with Smart Guides off those of Snap to Point, and how near (in
+    /// screen pixels) they pull; none with pixels or the grid snapping instead, or nothing on.
+    targets: Option<(Targets, f64)>,
+}
+
+impl PointSnap {
+    pub fn new(cx: &ToolContext, targets: impl FnOnce() -> Targets) -> Self {
+        let targets = if cx.snap_to_pixel || cx.snap_to_grid {
+            None
+        } else if cx.smart_guides {
+            Some((targets().styled(cx), cx.snapping_tolerance))
+        } else if cx.snap_to_point {
+            Some((targets().for_snap_to_point(cx), cx.snap_tolerance))
+        } else {
+            None
+        };
+        Self { targets }
     }
-    if cx.snap_to_grid {
-        return (vectorcraft_geom::snap::snap_point_to_grid(p, cx.grid_step()), vec![]);
+
+    /// Where `p` goes, and the guides showing why.
+    pub fn snap(&self, cx: &ToolContext, p: Point) -> (Point, Vec<Overlay>) {
+        if cx.snap_to_pixel {
+            return (Point::new(p.x.round(), p.y.round()), vec![]);
+        }
+        if cx.snap_to_grid {
+            return (vectorcraft_geom::snap::snap_point_to_grid(p, cx.grid_step()), vec![]);
+        }
+        match &self.targets {
+            Some((t, tol)) => t.snap_point(p, cx.tol(*tol)),
+            None => (p, vec![]),
+        }
     }
-    if !cx.smart_guides {
-        return (p, vec![]);
-    }
-    targets().snap_point(p, cx.tol(5.0))
 }
 
 /// Where a dragged direction handle of anchor `ai` of subpath `si` of path `id` goes for the
@@ -350,11 +557,11 @@ pub fn snap_pick(cx: &ToolContext, p: Point) -> (Point, Vec<Overlay>) {
     if !(cx.snap_to_point || cx.smart_guides) {
         return (p, vec![]);
     }
-    let tol = cx.tol(5.0);
+    let tol = if cx.smart_guides { cx.snap_tol() } else { cx.tol(cx.snap_tolerance) };
     let mut roots = cx.selection.objects.clone();
     roots.extend(hit_test(cx.doc, p, HitOptions { tol, ..cx.hit_options() }).map(|h| h.leaf));
     let near = Rect::new(p.x - tol, p.y - tol, p.x + tol, p.y + tol);
-    Targets::points_near(cx.doc, &roots, near).snap_point(p, tol)
+    Targets::points_near(cx.doc, &roots, near).styled(cx).snap_point(p, tol)
 }
 
 #[cfg(test)]
@@ -425,5 +632,64 @@ mod tests {
         let (nr, ov) = snap(Handle::Bottom, Point::new(275.0, 102.0), false, false);
         assert_eq!(nr, Rect::new(250.0, 100.0, 300.0, 102.0));
         assert!(ov.is_empty());
+    }
+
+    /// Preferences › Smart Guides › Display Options (#394): the colour, and Alignment Guides and
+    /// Anchor/Path Labels off, change what shows and never where a point lands.
+    #[test]
+    fn display_options_colour_and_hide_the_guides_but_keep_the_snap() {
+        let (d, _) = doc_with_rect();
+        let s = Selection::default();
+        let p = paint();
+        let green = [0x00, 0xff, 0x00];
+        let c = ToolContext { smart_guide_color: green, ..cx(&d, &s, &p) };
+        let t = Targets::collect(&d, &[], None).styled(&c);
+        let (q, ov) = t.snap_point(Point::new(102.0, 99.0), 4.0);
+        assert_eq!(q, Point::new(100.0, 100.0));
+        assert!(matches!(&ov[0], Overlay::Label { text, color, .. } if text == "anchor" && *color == green), "{ov:?}");
+        let (q, ov) = t.snap_point(Point::new(301.0, 199.0), 4.0);
+        assert_eq!(q.y, 200.0);
+        assert!(ov.iter().all(|o| matches!(o, Overlay::Line { color, .. } | Overlay::Label { color, .. } if *color == green)), "{ov:?}");
+        assert!(
+            ov.iter().any(|o| matches!(o, Overlay::Line { .. })) && ov.iter().any(|o| matches!(o, Overlay::Label { text, .. } if text == "align"))
+        );
+        // Alignment Guides off: the point still lines up and says so, without the line.
+        let c = ToolContext { alignment_guides: false, ..cx(&d, &s, &p) };
+        let t = Targets::collect(&d, &[], None).styled(&c);
+        let (q, ov) = t.snap_point(Point::new(301.0, 199.0), 4.0);
+        assert_eq!(q.y, 200.0);
+        assert!(!ov.iter().any(|o| matches!(o, Overlay::Line { .. })), "{ov:?}");
+        assert!(ov.iter().any(|o| matches!(o, Overlay::Label { text, .. } if text == "align")), "{ov:?}");
+        let (dv, ov) = t.snap_rect(Rect::new(2.0, 50.0, 52.0, 90.0), 4.0);
+        assert_eq!((dv.x, ov.len()), (-2.0, 0));
+        // A handle already in line moves nowhere, yet is still "align".
+        let (q, ov) = t.snap_point_with(Point::new(400.0, 200.0), &[], 4.0);
+        assert_eq!(q, Point::new(400.0, 200.0));
+        assert!(matches!(&ov[..], [Overlay::Label { text, .. }] if text == "align"), "{ov:?}");
+        // Anchor/Path Labels off: on the anchor, without saying so.
+        let c = ToolContext { anchor_path_labels: false, ..cx(&d, &s, &p) };
+        let t = Targets::collect(&d, &[], None).styled(&c);
+        let (q, ov) = t.snap_point(Point::new(102.0, 99.0), 4.0);
+        assert_eq!((q, ov.len()), (Point::new(100.0, 100.0), 0));
+        let (q, ov) = t.snap_point(Point::new(301.0, 199.0), 4.0);
+        assert_eq!(q.y, 200.0);
+        assert!(ov.iter().all(|o| matches!(o, Overlay::Line { .. })) && !ov.is_empty(), "{ov:?}");
+        assert_eq!(t.snap_guide(false, 199.0, 4.0), (200.0, vec![]));
+    }
+
+    /// Dragging an anchor of a path: its other anchors and the segments not touching it stay
+    /// targets, but neither it nor the path's bounds (which move) are.
+    #[test]
+    fn anchor_drag_targets_leave_out_what_moves() {
+        let (d, id) = doc_with_rect();
+        let mut s = Selection::default();
+        s.set([id]);
+        s.anchors.insert(id, [(0, 0)].into_iter().collect());
+        let t = Targets::for_anchor_drag(&d, &s);
+        let anchors: Vec<Point> = t.points.iter().filter(|(_, k)| *k == Kind::Anchor).map(|(p, _)| *p).collect();
+        assert_eq!(anchors, [Point::new(200.0, 100.0), Point::new(200.0, 200.0), Point::new(100.0, 200.0)]);
+        assert_eq!(t.segments.len(), 2);
+        assert!(!t.points.iter().any(|(p, k)| *k == Kind::Center && *p == Point::new(150.0, 150.0)), "the rect's centre moves");
+        assert_eq!(t.snap_point(Point::new(101.0, 99.0), 4.0).0, Point::new(100.0, 100.0), "in line with its neighbours, not on itself");
     }
 }

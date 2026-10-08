@@ -1,53 +1,44 @@
-//! Tool cursors drawn as vector glyphs. Black shapes with a white halo, hotspot at `p`,
-//! Illustrator's visual grammar: solid arrow (Selection), hollow arrow (Direct Selection), pen nib
-//! with state badges, crosshair for drawing tools, curved arrows for rotate.
+//! Tool cursors drawn as vector glyphs (egui only offers system cursors). Black shapes with a white
+//! halo, hotspot at `p`, Illustrator's visual grammar: solid arrow (Selection), hollow arrow (Direct
+//! Selection), pen nib with state badges, crosshair for drawing tools, curved arrows for rotate.
 //!
-//! On the desktop each glyph becomes an OS cursor bitmap ([`os_image`]), which the system moves
-//! at hardware speed; one painted into the frame ([`paint`], the web's only option) trails the
-//! mouse by the frames in flight.
+//! The desktop app shows them as OS cursors ([`Images`]): the system moves those itself, at once,
+//! while a cursor painted into the window follows the pointer a few frames late (#444).
 
-use egui::epaint::{Mesh, TessellationOptions, Tessellator};
-use egui::{Color32, CustomCursorImage, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
-use std::sync::Arc;
+use egui::epaint::{Mesh, TessellationOptions, Tessellator, Vertex};
+use egui::{Color32, CustomCursorImage, Painter, Pos2, Shape, Stroke, Vec2, pos2, vec2};
 use vectorcraft_tools::Cursor;
 
 const INK: Color32 = Color32::BLACK;
 const HALO: Color32 = Color32::WHITE;
 
-/// The largest OS cursor bitmap side, in pixels: X11, Windows and macOS all take this size, and
-/// a glyph at a higher display scale is drawn smaller to fit.
-pub(crate) const MAX_BITMAP: u16 = 128;
-
-/// A glyph's shapes, collected through the few [`Painter`] calls the glyphs use.
+/// The shapes of one cursor glyph.
 #[derive(Default)]
-struct Glyph(Vec<Shape>);
+struct Ink(Vec<Shape>);
 
-impl Glyph {
-    fn add(&mut self, shape: Shape) {
-        self.0.push(shape);
+impl Ink {
+    fn add(&mut self, s: Shape) {
+        self.0.push(s);
     }
-
     fn line_segment(&mut self, pts: [Pos2; 2], stroke: Stroke) {
         self.add(Shape::line_segment(pts, stroke));
     }
-
-    fn circle_filled(&mut self, center: Pos2, radius: f32, fill: Color32) {
-        self.add(Shape::circle_filled(center, radius, fill));
+    fn circle_stroke(&mut self, c: Pos2, r: f32, stroke: Stroke) {
+        self.add(Shape::circle_stroke(c, r, stroke));
     }
-
-    fn circle_stroke(&mut self, center: Pos2, radius: f32, stroke: Stroke) {
-        self.add(Shape::circle_stroke(center, radius, stroke));
+    fn circle_filled(&mut self, c: Pos2, r: f32, fill: Color32) {
+        self.add(Shape::circle_filled(c, r, fill));
     }
 }
 
-fn poly(p: &mut Glyph, pts: Vec<Pos2>, fill: Color32, stroke: Color32) {
+fn poly(p: &mut Ink, pts: Vec<Pos2>, fill: Color32, stroke: Color32) {
     // Halo first (thicker white outline), then the glyph.
     p.add(Shape::closed_line(pts.clone(), Stroke::new(3.0, HALO)));
     p.add(Shape::convex_polygon(pts.clone(), fill, Stroke::NONE));
     p.add(Shape::closed_line(pts, Stroke::new(1.0, stroke)));
 }
 
-fn line(p: &mut Glyph, a: Pos2, b: Pos2) {
+fn line(p: &mut Ink, a: Pos2, b: Pos2) {
     p.line_segment([a, b], Stroke::new(3.0, HALO));
     p.line_segment([a, b], Stroke::new(1.2, INK));
 }
@@ -57,7 +48,7 @@ fn arrow_points(o: Pos2) -> Vec<Pos2> {
     [(0.0, 0.0), (0.0, 15.0), (3.8, 11.4), (6.4, 17.0), (8.6, 16.0), (6.1, 10.6), (11.0, 10.6)].iter().map(|(x, y)| o + vec2(*x, *y)).collect()
 }
 
-fn arrow(p: &mut Glyph, o: Pos2, hollow: bool) {
+fn arrow(p: &mut Ink, o: Pos2, hollow: bool) {
     let pts = arrow_points(o);
     // The arrow is concave: draw as a filled mesh of two convex parts, then outline.
     p.add(Shape::closed_line(pts.clone(), Stroke::new(3.0, HALO)));
@@ -67,7 +58,7 @@ fn arrow(p: &mut Glyph, o: Pos2, hollow: bool) {
     p.add(Shape::closed_line(pts, Stroke::new(1.0, INK)));
 }
 
-fn crosshair(p: &mut Glyph, o: Pos2) {
+fn crosshair(p: &mut Ink, o: Pos2) {
     for (a, b) in
         [(vec2(-9.0, 0.0), vec2(-2.0, 0.0)), (vec2(2.0, 0.0), vec2(9.0, 0.0)), (vec2(0.0, -9.0), vec2(0.0, -2.0)), (vec2(0.0, 2.0), vec2(0.0, 9.0))]
     {
@@ -75,7 +66,7 @@ fn crosshair(p: &mut Glyph, o: Pos2) {
     }
 }
 
-fn pen(p: &mut Glyph, o: Pos2, badge: &str) {
+fn pen(p: &mut Ink, o: Pos2, badge: &str) {
     // Nib pointing to the top-left hotspot.
     let pts = vec![o, o + vec2(4.0, 12.0), o + vec2(8.0, 16.0), o + vec2(16.0, 8.0), o + vec2(12.0, 4.0)];
     poly(p, pts, INK, INK);
@@ -116,7 +107,7 @@ fn pen(p: &mut Glyph, o: Pos2, badge: &str) {
 /// The Anchor Point tool's caret (as its toolbar icon): a small hollow square on the anchor at
 /// the hotspot, legs spreading down from its lower corners. Every halo goes under every stroke, so
 /// the legs join the square.
-fn anchor_point(p: &mut Glyph, o: Pos2) {
+fn anchor_point(p: &mut Ink, o: Pos2) {
     let s = 2.5;
     let square = vec![o + vec2(-s, -s), o + vec2(s, -s), o + vec2(s, s), o + vec2(-s, s)];
     let legs = [[o + vec2(-s, s), o + vec2(-7.5, 13.0)], [o + vec2(s, s), o + vec2(7.5, 13.0)]];
@@ -131,7 +122,7 @@ fn anchor_point(p: &mut Glyph, o: Pos2) {
     p.add(Shape::closed_line(square, Stroke::new(1.0, INK)));
 }
 
-fn double_arrow(p: &mut Glyph, o: Pos2, dir: egui::Vec2) {
+fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
     let d = dir.normalized() * 8.0;
     let n = vec2(-d.y, d.x) * 0.45;
     line(p, o - d, o + d);
@@ -140,7 +131,7 @@ fn double_arrow(p: &mut Glyph, o: Pos2, dir: egui::Vec2) {
     }
 }
 
-fn rotate(p: &mut Glyph, o: Pos2) {
+fn rotate(p: &mut Ink, o: Pos2) {
     let pts: Vec<Pos2> = (0..=10)
         .map(|i| {
             let a = std::f32::consts::PI * (0.15 + 0.7 * i as f32 / 10.0);
@@ -155,7 +146,7 @@ fn rotate(p: &mut Glyph, o: Pos2) {
 }
 
 /// Live Corners: the hollow arrow with a rounded-corner badge.
-fn corner_radius(p: &mut Glyph, o: Pos2) {
+fn corner_radius(p: &mut Ink, o: Pos2) {
     arrow(p, o, true);
     let b = o + vec2(12.0, 13.0);
     let mut pts = vec![b + vec2(0.0, 10.0)];
@@ -168,9 +159,32 @@ fn corner_radius(p: &mut Glyph, o: Pos2) {
     p.add(Shape::line(pts, Stroke::new(1.2, INK)));
 }
 
+/// Over a bracket of type on a path: the arrow with a bracket (a stem standing on a baseline,
+/// with a foot) below right.
+fn path_bracket(p: &mut Ink, o: Pos2) {
+    arrow(p, o, false);
+    let b = o + vec2(13.0, 13.0);
+    let stem = [b + vec2(3.0, 0.0), b + vec2(3.0, 10.0)];
+    let foot = [b + vec2(3.0, 0.0), b + vec2(7.0, 0.0)];
+    let base = [b + vec2(0.0, 8.0), b + vec2(10.0, 8.0)];
+    for (w, c) in [(3.0, HALO), (1.2, INK)] {
+        for l in [stem, foot, base] {
+            p.line_segment(l, Stroke::new(w, c));
+        }
+    }
+}
+
+/// Over the type widget: the arrow with a type badge (a T) below right.
+fn type_widget(p: &mut Ink, o: Pos2) {
+    arrow(p, o, false);
+    let b = o + vec2(12.0, 13.0);
+    line(p, b, b + vec2(8.0, 0.0));
+    line(p, b + vec2(4.0, 0.0), b + vec2(4.0, 9.0));
+}
+
 /// The gradient annotator's stop cursors: the arrow with a plus (add a stop) or minus (delete it)
 /// badge.
-fn stop_badge(p: &mut Glyph, o: Pos2, add: bool) {
+fn stop_badge(p: &mut Ink, o: Pos2, add: bool) {
     arrow(p, o, false);
     let b = o + vec2(13.0, 13.0);
     line(p, b, b + vec2(6.0, 0.0));
@@ -180,14 +194,14 @@ fn stop_badge(p: &mut Glyph, o: Pos2, add: bool) {
 }
 
 /// A slice badge: a small rectangle cut by a line, at `b` (its top left).
-fn slice_badge(p: &mut Glyph, b: Pos2) {
+fn slice_badge(p: &mut Ink, b: Pos2) {
     let pts = vec![b, b + vec2(8.0, 0.0), b + vec2(8.0, 6.0), b + vec2(0.0, 6.0)];
     poly(p, pts, HALO, INK);
     line(p, b + vec2(4.0, 0.0), b + vec2(4.0, 6.0));
 }
 
 /// The Slice tool: a crosshair with a blade below right of the hotspot.
-fn slice(p: &mut Glyph, o: Pos2) {
+fn slice(p: &mut Ink, o: Pos2) {
     crosshair(p, o);
     let b = o + vec2(7.0, 7.0);
     poly(p, vec![b, b + vec2(9.0, 4.0), b + vec2(10.0, 7.0), b + vec2(3.0, 6.0)], HALO, INK);
@@ -197,7 +211,7 @@ fn slice(p: &mut Glyph, o: Pos2) {
 /// The Width tool: the hollow arrow with a stroke that swells in the middle (a width point),
 /// plus a badge: `+` over a stroke (a drag adds a point), a bar across the swell over a width point
 /// (a drag moves or widens it).
-fn width(p: &mut Glyph, o: Pos2, badge: &str) {
+fn width(p: &mut Ink, o: Pos2, badge: &str) {
     arrow(p, o, true);
     let b = o + vec2(11.0, 18.0);
     let top: Vec<Pos2> = (0..=8)
@@ -221,7 +235,7 @@ fn width(p: &mut Glyph, o: Pos2, badge: &str) {
     }
 }
 
-fn ibeam(p: &mut Glyph, o: Pos2) {
+fn ibeam(p: &mut Ink, o: Pos2) {
     line(p, o + vec2(0.0, -8.0), o + vec2(0.0, 8.0));
     line(p, o + vec2(-3.0, -8.0), o + vec2(3.0, -8.0));
     line(p, o + vec2(-3.0, 8.0), o + vec2(3.0, 8.0));
@@ -230,7 +244,7 @@ fn ibeam(p: &mut Glyph, o: Pos2) {
 
 /// The Blend tool: a crosshair with a square below right of the hotspot, hollow away from art,
 /// filled over an object; over an anchor point a ringed dot (the blend starts there).
-fn blend(p: &mut Glyph, o: Pos2, badge: Cursor) {
+fn blend(p: &mut Ink, o: Pos2, badge: Cursor) {
     crosshair(p, o);
     let b = o + vec2(9.0, 9.0);
     if badge == Cursor::BlendAnchor {
@@ -243,155 +257,189 @@ fn blend(p: &mut Glyph, o: Pos2, badge: Cursor) {
     poly(p, vec![b, b + vec2(7.0, 0.0), b + vec2(7.0, 7.0), b + vec2(0.0, 7.0)], fill, INK);
 }
 
-/// Cursor `c`'s shapes with its hotspot at `p`, or `None` for cursors that stay system cursors
+/// The Shape Builder: a crosshair with a plus badge below right of the hotspot (merge mode), or a
+/// minus (erase mode).
+fn shape_builder(p: &mut Ink, o: Pos2, erase: bool) {
+    crosshair(p, o);
+    let c = o + vec2(12.0, 12.0);
+    line(p, c - vec2(3.5, 0.0), c + vec2(3.5, 0.0));
+    if !erase {
+        line(p, c - vec2(0.0, 3.5), c + vec2(0.0, 3.5));
+    }
+}
+
+/// The shapes of cursor `c` with its hotspot at `p`; `None` for cursors that stay system cursors
 /// (hand, zoom, busy states).
-fn shapes(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
-    let mut glyph = Glyph::default();
-    let painter = &mut glyph;
+fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
+    let ink = &mut Ink::default();
     match c {
-        Cursor::Arrow => arrow(painter, p, false),
-        Cursor::ArrowHollow => arrow(painter, p, true),
+        Cursor::Arrow => arrow(ink, p, false),
+        Cursor::ArrowHollow => arrow(ink, p, true),
         Cursor::Move => {
-            arrow(painter, p, false);
-            double_arrow(painter, p + vec2(15.0, 18.0), vec2(1.0, 0.0));
+            arrow(ink, p, false);
+            double_arrow(ink, p + vec2(15.0, 18.0), vec2(1.0, 0.0));
         }
-        Cursor::Crosshair | Cursor::Eyedropper => crosshair(painter, p),
-        Cursor::ResizeH => double_arrow(painter, p, vec2(1.0, 0.0)),
-        Cursor::ResizeV => double_arrow(painter, p, vec2(0.0, 1.0)),
-        Cursor::ResizeNwSe => double_arrow(painter, p, vec2(1.0, 1.0)),
-        Cursor::ResizeNeSw => double_arrow(painter, p, vec2(1.0, -1.0)),
-        Cursor::Rotate => rotate(painter, p),
-        Cursor::CornerRadius => corner_radius(painter, p),
-        Cursor::Pen => pen(painter, p, "*"),
-        Cursor::PenAdd => pen(painter, p, "+"),
-        Cursor::PenDelete => pen(painter, p, "-"),
-        Cursor::PenClose => pen(painter, p, "o"),
-        Cursor::PenContinue => pen(painter, p, "/"),
-        Cursor::AnchorPoint => anchor_point(painter, p),
-        Cursor::Curvature => pen(painter, p, "~"),
-        Cursor::PenConvert => pen(painter, p, "^"),
-        Cursor::Text => ibeam(painter, p),
-        Cursor::AddStop => stop_badge(painter, p, true),
-        Cursor::RemoveStop => stop_badge(painter, p, false),
-        Cursor::Slice => slice(painter, p),
+        Cursor::Crosshair | Cursor::Eyedropper => crosshair(ink, p),
+        Cursor::ResizeH => double_arrow(ink, p, vec2(1.0, 0.0)),
+        Cursor::ResizeV => double_arrow(ink, p, vec2(0.0, 1.0)),
+        Cursor::ResizeNwSe => double_arrow(ink, p, vec2(1.0, 1.0)),
+        Cursor::ResizeNeSw => double_arrow(ink, p, vec2(1.0, -1.0)),
+        Cursor::Rotate => rotate(ink, p),
+        Cursor::CornerRadius => corner_radius(ink, p),
+        Cursor::Pen => pen(ink, p, "*"),
+        Cursor::PenAdd => pen(ink, p, "+"),
+        Cursor::PenDelete => pen(ink, p, "-"),
+        Cursor::PenClose => pen(ink, p, "o"),
+        Cursor::PenContinue => pen(ink, p, "/"),
+        Cursor::AnchorPoint => anchor_point(ink, p),
+        Cursor::Curvature => pen(ink, p, "~"),
+        Cursor::PenConvert => pen(ink, p, "^"),
+        Cursor::Text => ibeam(ink, p),
+        Cursor::AddStop => stop_badge(ink, p, true),
+        Cursor::RemoveStop => stop_badge(ink, p, false),
+        Cursor::Slice => slice(ink, p),
         Cursor::SliceSelect => {
-            arrow(painter, p, false);
-            slice_badge(painter, p + vec2(11.0, 14.0));
+            arrow(ink, p, false);
+            slice_badge(ink, p + vec2(11.0, 14.0));
         }
-        Cursor::Width => width(painter, p, ""),
-        Cursor::WidthAdd => width(painter, p, "+"),
-        Cursor::WidthPoint => width(painter, p, "point"),
-        Cursor::Blend | Cursor::BlendObject | Cursor::BlendAnchor => blend(painter, p, c),
+        Cursor::Width => width(ink, p, ""),
+        Cursor::WidthAdd => width(ink, p, "+"),
+        Cursor::WidthPoint => width(ink, p, "point"),
+        Cursor::Blend | Cursor::BlendObject | Cursor::BlendAnchor => blend(ink, p, c),
+        Cursor::PathBracket => path_bracket(ink, p),
+        Cursor::TypeWidget => type_widget(ink, p),
+        Cursor::ShapeBuilder => shape_builder(ink, p, false),
+        Cursor::ShapeBuilderErase => shape_builder(ink, p, true),
         _ => return None,
     }
-    Some(glyph.0)
+    Some(std::mem::take(&mut ink.0))
 }
 
-/// Paint cursor `c` at `p` on the given (foreground) painter. Returns false for cursors that should
-/// stay system cursors (hand, zoom, busy states).
+/// Paint cursor `c` at `p` on the given (foreground) painter, where the window can't show it as an
+/// OS cursor ([`OS_CURSORS`]). Returns false for cursors that stay system cursors.
 pub fn paint(painter: &Painter, c: Cursor, p: Pos2) -> bool {
-    shapes(c, p).map(|s| painter.extend(s)).is_some()
+    glyph(c, p).map(|shapes| painter.extend(shapes)).is_some()
 }
 
-/// Cursor `c` as an OS cursor bitmap for a display at `pixels_per_point`, or `None` for cursors
-/// that stay system cursors.
-pub fn bitmap(c: Cursor, pixels_per_point: f32) -> Option<CustomCursorImage> {
-    if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
-        return None;
-    }
-    let shapes = shapes(c, Pos2::ZERO)?;
-    // A point of margin keeps the halo's antialiased edge.
-    let bounds = shapes.iter().fold(Rect::NOTHING, |r, s| r.union(s.visual_bounding_rect())).expand(1.0);
-    if !bounds.is_finite() || bounds.is_negative() {
-        return None;
-    }
-    let ppp = pixels_per_point.min(f32::from(MAX_BITMAP - 2) / bounds.size().max_elem());
-    // Whole-pixel offset of the hotspot, so the glyph lands where it does at that scale on screen.
-    let offset = (-bounds.min.to_vec2() * ppp).ceil();
-    let side = |v: f32| (v * ppp + 1.0).ceil().clamp(1.0, f32::from(MAX_BITMAP)) as u16;
-    let size = [side(bounds.width()), side(bounds.height())];
+/// Does the window show the glyphs as OS cursors ([`Images`])? Not on macOS, which sizes a cursor
+/// bitmap in points (a Retina one would show twice as big, or blurred), nor on the web (eframe has no
+/// bitmap cursors there): those paint them into the window ([`paint`]).
+pub const OS_CURSORS: bool = !cfg!(any(target_os = "macos", target_arch = "wasm32"));
 
+/// The cursor bitmaps handed to the OS, by (cursor, pixels per point): each glyph is rasterized
+/// once, and handing the same `Arc` every frame keeps the window's OS cursor instead of making a
+/// new one.
+#[derive(Default)]
+pub struct Images(Vec<(Cursor, f32, CustomCursorImage)>);
+
+impl Images {
+    /// Cursor `c` for a display of `ppp` physical pixels per point; `None` for cursors that stay
+    /// system cursors.
+    pub fn get(&mut self, c: Cursor, ppp: f32) -> Option<CustomCursorImage> {
+        if let Some((.., image)) = self.0.iter().find(|(k, s, _)| *k == c && *s == ppp) {
+            return Some(image.clone());
+        }
+        let image = rasterize(c, ppp)?;
+        // A few dozen glyphs at the scales of the displays the window visited.
+        if self.0.len() >= 128 {
+            self.0.clear();
+        }
+        self.0.push((c, ppp, image.clone()));
+        Some(image)
+    }
+}
+
+/// The largest side of a cursor bitmap, in pixels (the glyphs span under 50 points).
+const MAX_SIDE: f32 = 256.0;
+
+/// Cursor `c` as a straight-alpha RGBA bitmap at `ppp` pixels per point, tessellated (anti-aliased)
+/// as egui would paint it, the hotspot on a pixel corner.
+fn rasterize(c: Cursor, ppp: f32) -> Option<CustomCursorImage> {
+    if !(ppp.is_finite() && ppp > 0.0) {
+        return None;
+    }
+    let shapes = glyph(c, Pos2::ZERO)?;
     let mut tessellator = Tessellator::new(ppp, TessellationOptions::default(), [1, 1], vec![]);
     let mut mesh = Mesh::default();
-    for s in shapes {
-        tessellator.tessellate_shape(s, &mut mesh);
+    for shape in shapes {
+        tessellator.tessellate_shape(shape, &mut mesh);
     }
-    let rgba = rasterize(&mesh, ppp, offset, size);
-    let hotspot = [offset.x as u16, offset.y as u16];
-    Some(CustomCursorImage { rgba: rgba.into(), size, hotspot })
-}
-
-/// Draw a tessellated mesh (premultiplied vertex colours, positions in points) into a straight
-/// RGBA bitmap of `size` pixels, a point at `p` landing on pixel `p * ppp + offset`.
-fn rasterize(mesh: &Mesh, ppp: f32, offset: egui::Vec2, size: [u16; 2]) -> Vec<u8> {
-    let (w, h) = (usize::from(size[0]), usize::from(size[1]));
-    let mut px = vec![[0.0f32; 4]; w * h];
-    let edge = |a: Pos2, b: Pos2, p: Pos2| (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-    let vertex = |i: u32| mesh.vertices.get(i as usize);
-    for &[ia, ib, ic] in mesh.indices.as_chunks::<3>().0 {
-        let (Some(a), Some(b), Some(c)) = (vertex(ia), vertex(ib), vertex(ic)) else { continue };
-        let (pa, pb, pc) = (a.pos * ppp + offset, b.pos * ppp + offset, c.pos * ppp + offset);
-        let area = edge(pa, pb, pc);
-        if !area.is_finite() || area.abs() < 1e-6 {
-            continue;
-        }
-        let x0 = pa.x.min(pb.x).min(pc.x).floor().max(0.0) as usize;
-        let y0 = pa.y.min(pb.y).min(pc.y).floor().max(0.0) as usize;
-        let x1 = (pa.x.max(pb.x).max(pc.x).ceil().max(0.0) as usize).min(w);
-        let y1 = (pa.y.max(pb.y).max(pc.y).ceil().max(0.0) as usize).min(h);
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let p = pos2(x as f32 + 0.5, y as f32 + 0.5);
-                let (wa, wb, wc) = (edge(pb, pc, p) / area, edge(pc, pa, p) / area, edge(pa, pb, p) / area);
-                if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-                    continue;
-                }
-                let src: [f32; 4] =
-                    std::array::from_fn(|k| (wa * f32::from(a.color[k]) + wb * f32::from(b.color[k]) + wc * f32::from(c.color[k])) / 255.0);
-                if let Some(dst) = px.get_mut(y * w + x) {
-                    // Premultiplied "over", as the GPU blends egui's meshes.
-                    *dst = std::array::from_fn(|k| src[k] + dst[k] * (1.0 - src[3]));
-                }
-            }
+    let bounds = mesh.calc_bounds();
+    // The hotspot must lie inside the bitmap.
+    let min = (bounds.min.to_vec2() * ppp).floor().min(Vec2::ZERO);
+    let max = (bounds.max.to_vec2() * ppp).ceil().max(Vec2::splat(1.0));
+    let size = max - min;
+    if !(size.x <= MAX_SIDE && size.y <= MAX_SIDE) {
+        return None;
+    }
+    let (w, h) = (size.x as usize, size.y as usize);
+    let mut px = vec![[0.0; 4]; w * h];
+    let corner = |v: &Vertex| (v.pos.to_vec2() * ppp - min, v.color);
+    for &[i, j, k] in mesh.indices.as_chunks::<3>().0 {
+        if let (Some(a), Some(b), Some(c)) = (mesh.vertices.get(i as usize), mesh.vertices.get(j as usize), mesh.vertices.get(k as usize)) {
+            fill_triangle(&mut px, w, [corner(a), corner(b), corner(c)]);
         }
     }
-    px.iter()
+    let rgba: Vec<u8> = px
+        .iter()
         .flat_map(|&[r, g, b, a]| {
-            let un = |v: f32| if a > 0.0 { (v / a).clamp(0.0, 1.0) * 255.0 } else { 0.0 };
-            [un(r), un(g), un(b), a.clamp(0.0, 1.0) * 255.0].map(|v| v.round() as u8)
+            let k = if a > 0.0 { 1.0 / a } else { 0.0 };
+            [r * k, g * k, b * k, a].map(|x| (x * 255.0).round().clamp(0.0, 255.0) as u8)
         })
-        .collect()
+        .collect();
+    Some(CustomCursorImage { rgba: rgba.into(), size: [w as u16, h as u16], hotspot: [-min.x as u16, -min.y as u16] })
 }
 
-/// [`bitmap`] for this display's scale, made once per cursor and scale: egui-winit keeps the OS
-/// cursor while the bitmap is the same allocation.
-pub fn os_image(ctx: &egui::Context, c: Cursor) -> Option<CustomCursorImage> {
-    type Cache = Vec<(Cursor, u32, Option<CustomCursorImage>)>;
-    let ppp = ctx.pixels_per_point();
-    ctx.data_mut(|d| {
-        let cache = d.get_temp_mut_or_default::<Arc<std::sync::Mutex<Cache>>>(egui::Id::new("os-cursor-bitmaps")).clone();
-        let Ok(mut cache) = cache.lock() else { return bitmap(c, ppp) };
-        if let Some((.., img)) = cache.iter().find(|(k, s, _)| *k == c && *s == ppp.to_bits()) {
-            return img.clone();
+/// Blend triangle `t` (pixel positions and premultiplied colours, interpolated across it) over `px`
+/// (premultiplied RGBA, `w` pixels a row) at the pixel centres it covers, as the GPU blends egui's
+/// meshes. A centre on an edge goes to one of the two triangles sharing it, so seams aren't doubled.
+fn fill_triangle(px: &mut [[f32; 4]], w: usize, t: [(Vec2, Color32); 3]) {
+    let edge = |a: Vec2, b: Vec2, p: Vec2| (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    let [a, mut b, mut c] = t;
+    let mut area = edge(a.0, b.0, c.0);
+    if area < 0.0 {
+        std::mem::swap(&mut b, &mut c);
+        area = -area;
+    }
+    if area.is_nan() || area <= 1e-6 || w == 0 {
+        return;
+    }
+    // Of the two triangles sharing an edge (walking it in opposite directions), one owns it.
+    let owns = |u: Vec2, v: Vec2| v.y > u.y || (v.y == u.y && v.x > u.x);
+    let h = px.len() / w;
+    let lo = a.0.min(b.0).min(c.0).max(Vec2::ZERO);
+    let hi = a.0.max(b.0).max(c.0).min(vec2(w as f32, h as f32));
+    for y in lo.y.floor() as usize..hi.y.ceil() as usize {
+        for x in lo.x.floor() as usize..hi.x.ceil() as usize {
+            let p = vec2(x as f32 + 0.5, y as f32 + 0.5);
+            let weights = [(b.0, c.0), (c.0, a.0), (a.0, b.0)].map(|(u, v)| (edge(u, v, p), owns(u, v)));
+            if !weights.iter().all(|&(e, own)| e > 0.0 || (e == 0.0 && own)) {
+                continue;
+            }
+            let Some(dst) = px.get_mut(y * w + x) else { continue };
+            let [wa, wb, wc] = weights.map(|(e, _)| e / area);
+            let src: [f32; 4] = std::array::from_fn(|i| {
+                let channel = |col: Color32| f32::from(col.to_array()[i]);
+                (wa * channel(a.1) + wb * channel(b.1) + wc * channel(c.1)) / 255.0
+            });
+            let keep = 1.0 - src[3];
+            *dst = std::array::from_fn(|i| src[i] + dst[i] * keep);
         }
-        let img = bitmap(c, ppp);
-        cache.push((c, ppp.to_bits(), img.clone()));
-        img
-    })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use serde_json::json;
+    use vectorcraft_engine::Session;
 
-    #[test]
-    fn arrow_hotspot_is_tip() {
-        let pts = arrow_points(pos2(10.0, 20.0));
-        assert_eq!(pts[0], pos2(10.0, 20.0));
-        assert!(pts.iter().all(|q| q.x >= 10.0 && q.y >= 20.0));
-    }
+    use crate::VectorcraftApp;
 
-    const ALL: [Cursor; 34] = [
+    /// Every cursor with a glyph.
+    const GLYPHS: [Cursor; 34] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -407,15 +455,11 @@ mod tests {
         Cursor::PenDelete,
         Cursor::PenClose,
         Cursor::PenContinue,
+        Cursor::PenConvert,
         Cursor::AnchorPoint,
         Cursor::Curvature,
         Cursor::Text,
-        Cursor::Hand,
-        Cursor::HandGrab,
-        Cursor::ZoomIn,
-        Cursor::ZoomOut,
         Cursor::Eyedropper,
-        Cursor::NotAllowed,
         Cursor::AddStop,
         Cursor::RemoveStop,
         Cursor::Slice,
@@ -426,46 +470,16 @@ mod tests {
         Cursor::Blend,
         Cursor::BlendObject,
         Cursor::BlendAnchor,
+        Cursor::PathBracket,
+        Cursor::TypeWidget,
+        Cursor::ShapeBuilder,
+        Cursor::ShapeBuilderErase,
     ];
 
-    fn alpha(img: &egui::CustomCursorImage, x: u16, y: u16) -> u8 {
-        img.rgba[(usize::from(y) * usize::from(img.size[0]) + usize::from(x)) * 4 + 3]
-    }
-
-    /// Every glyph becomes an OS cursor bitmap at any scale: the right length, its hotspot inside
-    /// it, not too big for the OS, and some ink; the system-only cursors stay system cursors.
-    #[test]
-    fn glyph_cursors_have_bitmaps() {
-        let painter_ctx = egui::Context::default();
-        for c in ALL {
-            let painted = paint(&egui::Painter::new(painter_ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING), c, pos2(50.0, 50.0));
-            for ppp in [1.0, 1.5, 2.0] {
-                let img = bitmap(c, ppp);
-                assert_eq!(img.is_some(), painted, "{c:?} at {ppp}x");
-                let Some(img) = img else { continue };
-                let [w, h] = img.size;
-                assert_eq!(img.rgba.len(), usize::from(w) * usize::from(h) * 4, "{c:?}");
-                assert!(img.hotspot[0] < w && img.hotspot[1] < h, "{c:?} hotspot {:?} in {w}x{h}", img.hotspot);
-                assert!(w <= MAX_BITMAP && h <= MAX_BITMAP, "{c:?} is {w}x{h}");
-                assert!(img.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255), "{c:?} has opaque ink");
-            }
-        }
-    }
-
-    /// The arrow's hotspot is its tip: ink there, nothing up and left of it.
-    #[test]
-    fn arrow_bitmap_hotspot_is_tip() {
-        for ppp in [1.0, 2.0] {
-            let Some(img) = bitmap(Cursor::Arrow, ppp) else { panic!("arrow has a bitmap") };
-            let [hx, hy] = img.hotspot;
-            assert!(alpha(&img, hx, hy + 2) > 128, "ink just below the tip at {ppp}x");
-            assert_eq!(alpha(&img, 0, 0), 0, "transparent corner at {ppp}x");
-            // The halo and the antialiasing margin, 2.5 points.
-            assert!(f32::from(hx.max(hy)) <= 2.5 * ppp + 1.0, "tip near the top left at {ppp}x: {:?}", img.hotspot);
-        }
-        let (one, two) = (bitmap(Cursor::Arrow, 1.0).map(|i| i.size), bitmap(Cursor::Arrow, 2.0).map(|i| i.size));
-        let (Some(one), Some(two)) = (one, two) else { panic!("arrow has bitmaps") };
-        assert!(two[0] >= one[0] * 2 - 2 && two[1] >= one[1] * 2 - 2, "2x is twice as big: {one:?} {two:?}");
+    /// The straight RGBA of pixel (x, y).
+    fn pixel(img: &CustomCursorImage, x: usize, y: usize) -> [u8; 4] {
+        let i = (y * img.size[0] as usize + x) * 4;
+        [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2], img.rgba[i + 3]]
     }
 
     /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, ink on
@@ -473,27 +487,121 @@ mod tests {
     #[test]
     fn anchor_point_hotspot_is_inside_its_square() {
         for ppp in [1.0f32, 2.0] {
-            let Some(img) = bitmap(Cursor::AnchorPoint, ppp) else { panic!("anchor point has a bitmap") };
-            let [hx, hy] = img.hotspot;
-            let px = |x: u16, y: u16| &img.rgba[(usize::from(y) * usize::from(img.size[0]) + usize::from(x)) * 4..][..4];
-            assert_eq!(px(hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
-            let edge = hy - (2.5 * ppp).round() as u16;
-            assert!(px(hx, edge)[0] < 64 && px(hx, edge)[3] > 200, "ink on the square's top edge at {ppp}x");
+            let img = rasterize(Cursor::AnchorPoint, ppp).expect("anchor point has a bitmap");
+            let [hx, hy] = img.hotspot.map(usize::from);
+            assert_eq!(pixel(&img, hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
+            let edge = hy - (2.5 * ppp).round() as usize;
+            let ink = pixel(&img, hx, edge);
+            assert!(ink[0] < 64 && ink[3] > 200, "ink on the square's top edge at {ppp}x: {ink:?}");
         }
     }
 
-    /// The cache hands back the same bitmap, so egui-winit (which keys OS cursors by its pointer)
-    /// doesn't rebuild the OS cursor every frame; another scale is another bitmap.
     #[test]
-    fn os_images_are_cached() {
+    fn every_glyph_becomes_a_bitmap_with_its_hotspot_inside() {
+        for ppp in [1.0, 1.25, 1.5, 2.0, 3.0] {
+            for c in GLYPHS {
+                let img = rasterize(c, ppp).unwrap_or_else(|| panic!("{c:?} at {ppp}"));
+                let [w, h] = img.size.map(usize::from);
+                assert_eq!(img.rgba.len(), w * h * 4, "{c:?}");
+                assert!(img.hotspot[0] < img.size[0] && img.hotspot[1] < img.size[1], "{c:?} at {ppp}: {img:?}");
+                assert!(w as f32 <= 50.0 * ppp && h as f32 <= 50.0 * ppp, "{c:?} at {ppp}: {img:?}");
+                assert!(img.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255), "{c:?}: nothing opaque");
+            }
+        }
+        for c in [Cursor::Hand, Cursor::HandGrab, Cursor::ZoomIn, Cursor::ZoomOut, Cursor::NotAllowed] {
+            assert!(rasterize(c, 1.0).is_none(), "{c:?} stays a system cursor");
+        }
+        for ppp in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e9] {
+            assert!(rasterize(Cursor::Arrow, ppp).is_none(), "{ppp}");
+        }
+    }
+
+    #[test]
+    fn the_arrow_bitmap_is_black_in_a_white_halo_with_the_tip_on_the_hotspot() {
+        let img = rasterize(Cursor::Arrow, 1.0).unwrap();
+        let [hx, hy] = img.hotspot.map(usize::from);
+        // The tip covers the hotspot's pixel; the body is solid black, the outline's halo white.
+        assert!(pixel(&img, hx, hy)[3] > 0, "{:?}", pixel(&img, hx, hy));
+        let body = pixel(&img, hx + 2, hy + 8);
+        assert!(body[3] == 255 && body[..3].iter().all(|&c| c < 40), "{body:?}");
+        assert!(img.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255 && p[..3].iter().all(|&c| c > 215)), "no white halo");
+        // Nothing left of or above the tip but the halo.
+        assert!((0..img.size[1] as usize).all(|y| pixel(&img, 0, y)[..3].iter().all(|&c| c > 100) || pixel(&img, 0, y)[3] < 128));
+        // At twice the pixels per point, twice the pixels.
+        let big = rasterize(Cursor::Arrow, 2.0).unwrap();
+        for i in 0..2 {
+            let ratio = f32::from(big.size[i]) / f32::from(img.size[i]);
+            assert!((1.8..=2.2).contains(&ratio), "{:?} vs {:?}", big.size, img.size);
+        }
+        let [bx, by] = big.hotspot.map(usize::from);
+        let body = pixel(&big, bx + 4, by + 16);
+        assert!(body[3] == 255 && body[..3].iter().all(|&c| c < 40), "{body:?}");
+    }
+
+    #[test]
+    fn each_bitmap_is_made_once_so_the_os_cursor_is_kept() {
+        let mut images = Images::default();
+        let a = images.get(Cursor::Pen, 1.5).unwrap();
+        let b = images.get(Cursor::Pen, 1.5).unwrap();
+        assert!(Arc::ptr_eq(&a.rgba, &b.rgba));
+        assert!(!Arc::ptr_eq(&a.rgba, &images.get(Cursor::Pen, 2.0).unwrap().rgba));
+        assert!(images.get(Cursor::Hand, 1.5).is_none());
+        assert!(images.get(Cursor::Arrow, f32::NAN).is_none());
+        assert_eq!(images.0.len(), 2);
+    }
+
+    /// One headless 800×600 frame of the whole window, a tenth of a second after the last.
+    fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+        let time = Some(ctx.input(|i| i.time) + 0.1);
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), time, events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        out
+    }
+
+    #[test]
+    fn the_canvas_hands_the_tool_cursor_to_the_os_and_idles_while_the_pointer_rests() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
         let ctx = egui::Context::default();
-        let (Some(a), Some(b)) = (os_image(&ctx, Cursor::Pen), os_image(&ctx, Cursor::Pen)) else { panic!("pen has a bitmap") };
-        assert!(std::sync::Arc::ptr_eq(&a.rgba, &b.rgba));
-        ctx.set_pixels_per_point(2.0);
-        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
-        assert_eq!(ctx.pixels_per_point(), 2.0);
-        let Some(c) = os_image(&ctx, Cursor::Pen) else { panic!("pen has a bitmap") };
-        assert!(c.size[0] > a.size[0]);
-        assert!(os_image(&ctx, Cursor::Hand).is_none());
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let canvas = app.canvas_rect.unwrap();
+        let over = canvas.center();
+        let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(over)]);
+        if OS_CURSORS {
+            let img = out.platform_output.cursor_image.as_ref().expect("the Selection tool's arrow as an OS cursor");
+            assert_eq!(img, &app.canvas.cursors.get(Cursor::Arrow, 1.0).unwrap());
+            // Where the OS can't show the bitmap, its system cursor.
+            assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Default);
+        } else {
+            assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::None);
+        }
+        // The same bitmap while the pointer moves (the OS keeps its cursor), and an idle window
+        // once it rests: no frame is asked for.
+        let next = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(over + vec2(5.0, 3.0))]);
+        if OS_CURSORS {
+            assert!(Arc::ptr_eq(&next.platform_output.cursor_image.unwrap().rgba, &out.platform_output.cursor_image.unwrap().rgba));
+        }
+        let mut idle = frame(&mut app, &ctx, vec![]);
+        for _ in 0..3 {
+            idle = frame(&mut app, &ctx, vec![]);
+        }
+        let delay = idle.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.repaint_delay).unwrap();
+        assert!(delay > std::time::Duration::from_millis(100), "{delay:?} {:?}", ctx.repaint_causes());
+        // Off the canvas, the panels' cursors.
+        let off = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(Pos2::new(canvas.left() - 20.0, canvas.center().y))]);
+        assert!(off.platform_output.cursor_image.is_none());
+    }
+
+    #[test]
+    fn arrow_hotspot_is_tip() {
+        let pts = arrow_points(pos2(10.0, 20.0));
+        assert_eq!(pts[0], pos2(10.0, 20.0));
+        assert!(pts.iter().all(|q| q.x >= 10.0 && q.y >= 20.0));
     }
 }

@@ -178,7 +178,7 @@ objects' fills or strokes differ (`fillMixed` / `strokeMixed`, drawn as a "?" pr
 | `invoke_menu` | `{command, params?}` | Invokes a menu item by command id. Includes UI commands such as `view.*` and `window.*` in remote mode. |
 | `open_panel` | `{panel}` | Remote only. `panel` is a panel id (`layers`, `swatches`, `colorGuide`, …, as `window.panel` takes) or its display label (`"Color Guide"`), in any case. |
 | `screenshot` | `{path?, scale?, artboard?, window?}` | Returns MCP image content (`image/png`, base64) plus a text block. Renders the artboard; `window:true` captures the app window (remote only). |
-| `open_file` | `{path}` | Opens any readable file as a new active document: `.vectorcraft`/`.drawcraft`, `.vctemplate`, `.svg`/`.svgz`, `.pdf`/`.ai`, `.ait`, `.eps`, `.dxf`, `.emf`, `.wmf`, PNG, JPEG, GIF, WebP, TIFF, BMP (an image opens as a document of its pixel size). Templates (`.vctemplate`, `.ait`) open as a new untitled document. PDF, `.ai` and SVG files saved with Preserve Editing reopen as the document they carry. `run_command document.formats` lists the formats. |
+| `open_file` | `{path}` | Opens any readable file as a new active document: `.vectorcraft`/`.drawcraft`, `.vctemplate`, `.svg`/`.svgz`, `.pdf`/`.ai`, `.ait`, `.eps`, `.dxf`, `.emf`, `.wmf`, PNG, JPEG, GIF, WebP, TIFF, BMP (an image opens as a document of its pixel size). Templates (`.vctemplate`, `.ait`) open as a new untitled document. PDF, `.ai` and SVG files saved with Preserve Editing reopen as the document they carry. The reply is `document.open`'s: its `warnings` say what didn't come in as it was (an EPS whose PostScript can't be read opens as its preview, and the warning names the PostScript error, the operator and the procedure). `run_command document.formats` lists the formats. |
 | `save_file` | `{path?}` | Runs `document.save`: the document's own file in its own format (native `.vectorcraft` unless it was opened from or saved as SVG, PDF or a restorable `.ai`; then `warnings` say what that format loses). A path's extension picks the format (`.vectorcraft`, `.vctemplate`, `.pdf`, `.svg`, `.svgz`, `.ai`: a PDF carrying the native document, which reopens editable). |
 | `export` | `{path?, format?, scale?, artboard?, range?, selection?, outlineText?, options?}` | `svg`, `svgz`, `pdf`, `eps`, `dxf`, `emf`, `wmf`, `png`, `jpg`, `webp`, `gif`, `png8` (an indexed `.png`), `tiff`, `bmp`, `tga`, `psd` (layered), `txt` (the document's text), `vectorcraft` or `template` (a native template). The tool's `format` enum and `document.formats` list them, generated from the engine's format table. When `format` is omitted, it comes from the path's extension. PDF writes one page per artboard: all of them, or `artboard` (0-based) / `range` (`"1-3, 5"`, 1-based); the other formats write one artboard. `options` carries more format options (e.g. `{"quality": 80}` for JPEG). `selection: true` exports the selected objects cropped to their bounds (the reply adds their `bounds`, and reports `format` and the encoder's `warnings` as a whole-document export does); `outlineText: true` writes SVG text as paths. Template layers are left out, live effects are kept, and exporting `vectorcraft` never changes the document's path. Without `path` the bytes come back as `dataBase64`. Both backends run the same `document.export` call. |
 | `add_text` | `{text, x?, y?, width?, height?, path?, mode?, pathEffect?, size?, font?, color?}` | Point type at (x, y); area type with `width`/`height`; or `path` + `mode` (`area`/`onPath`) to flow text in or along a path, with `pathEffect` (`rainbow`, `skew`, `3dRibbon`, `stairStep`, `gravity`). |
@@ -269,8 +269,12 @@ without a path), `file.newFromTemplate {path}`, `file.revert` and `file.formatOp
 with the values a save would use). Without a path the save commands return `{dataBase64, name, folder?, warnings}`. A document saved as SVG or PDF
 remembers its options, so the next save reuses them. A PDF opened with `pages`, `cropTo` or `password` is only part
 of the file, so Save asks for a new name instead of writing it back.
-`file.documentColorMode {mode, convert?, intent?}` switches the document colour mode, converting its colours
-through the colour settings (`object.convertDocumentColorMode` is an alias kept for older scripts).
+`file.documentColorMode {mode, convert?, intent?, grays?}` switches the document colour mode, converting the colours of
+the art, symbols, pattern tiles and swatches through the colour settings (`object.convertDocumentColorMode` is an
+alias kept for older scripts). Gray colours stay Gray and print on the black plate only. RGB greys are colours like any
+other: to CMYK they separate through the profile into four-colour greys and a rich black, as Illustrator converts
+them. `grays: "black"` puts RGB greys with R = G = B on the black plate instead, K = their grey value (the inks Edit Colors ›
+Convert to Grayscale before the switch would give); other colours convert as usual.
 
 SVG import keeps what the canvas edits live. `<pattern>` becomes a pattern swatch. A `<symbol>` with `<use>` becomes a
 symbol (named after its `data-name`, else its id) with an instance per `<use>`; a `<use>` that shows it differently
@@ -370,7 +374,8 @@ and Separation and DeviceN inks become spot swatches the art links to at its tin
 (DeviceCMYK, or ICC-based with four components) keep their ink amounts: a CMYK JPEG as it is, any other as a CMYK TIFF
 (masked CMYK images, and ones with 1, 2 or 4 bits per sample, open in RGB with a warning). Placing a CMYK TIFF keeps it
 CMYK too.
-`colorMode: "rgb" | "cmyk"` opens any file in that mode instead, its colours converted as `file.documentColorMode` does:
+`colorMode: "rgb" | "cmyk"` opens any file in that mode instead, its colours converted as `file.documentColorMode` does
+(`grays` too):
 
 ```json
 {"name":"run_command","arguments":{"command":"document.pdfInfo","params":{"path":"/tmp/brochure.pdf","thumbnail":2,"cropTo":"trim"}}}
@@ -561,8 +566,12 @@ repeated names, and ids the document doesn't have are dropped.
 
 ## Ruler guides
 
-Ruler guides are numbered in the order they were made. `guide.add {vertical, pos}` makes one (the x of a vertical
-guide, the y of a horizontal one, in points) → `{index}`; `guide.list` → `[{index, vertical, pos, selected}…]`.
+Ruler guides are numbered in the order they were made. `guide.add {vertical, pos, artboard?}` makes one (the x of a
+vertical guide, the y of a horizontal one, in points) → `{index}`. With `artboard` (an artboard's index) it is an
+artboard guide: it runs across that artboard only, moves with it (`artboard.move`, a pure move in
+`artboard.setProps`, `artboard.rearrange`), is copied with it (`artboard.duplicate`, `artboard.move {copy}`) and is
+deleted with it (`artboard.delete`); without, a canvas guide runs across the whole canvas. `guide.list` →
+`[{index, vertical, pos, selected, artboard?}…]` (`artboard` only for artboard guides).
 `guide.select {indexes: [index…], toggle?}` selects guides on their own (the art is deselected; `toggle` adds or
 removes them) → `{selected}`. `guide.move {index, pos}` puts one guide somewhere, `guide.move {dx?, dy?, copy?}`
 moves the selected ones (vertical guides by `dx`, horizontal ones by `dy`; `copy` leaves them and selects the
@@ -573,11 +582,15 @@ View › Guides › Lock Guides (`view.guides.lock`) deselects them and refuses 
 The Selection, Direct Selection and Group Selection tools pick a guide within the selection tolerance, over the art
 (an anchor on it comes first with Direct Selection), and drag the selected guides: `mods.alt` copies them,
 `mods.shift` snaps the dragged guide to the ruler's ticks, and otherwise it snaps to whole pixels, the grid or, with
-Smart Guides, the art's edges, centres and anchors. In the desktop app a guide dropped off the canvas onto its
-ruler is deleted, and hidden guides (View › Guides › Hide Guides) can't be picked.
+Smart Guides, the edges, centres (so the sides' midpoints) and anchors of the art and of the artboards; with Smart
+Guides off, View › Snap to Point pulls it onto anchors. In the desktop app a guide dragged out of a ruler snaps the
+same way and is made where it is released over the canvas (with the Artboard tool, as an artboard guide of the
+active artboard), a guide dropped off the canvas onto its ruler is deleted, and hidden guides (View › Guides › Hide
+Guides) can't be picked. An artboard guide is picked, drawn and snapped to across its artboard only.
 
 ```json
 {"name":"run_command","arguments":{"command":"guide.add","params":{"vertical":true,"pos":100}}}
+{"name":"run_command","arguments":{"command":"guide.add","params":{"vertical":false,"pos":200,"artboard":0}}}
 {"name":"pointer_gesture","arguments":{"tool":"selection","events":[{"kind":"down","x":100,"y":50},{"kind":"drag","x":140,"y":50},{"kind":"up","x":140,"y":50}]}}
 {"name":"run_command","arguments":{"command":"guide.list","params":{}}}
 ```
@@ -1016,6 +1029,24 @@ their facing handles are refitted so one cubic follows the two old segments; two
 {"name":"run_command","arguments":{"command":"path.removeAnchors","params":{}}}
 ```
 
+## Converting and cutting anchor points
+
+The Control bar's and the Properties panel's anchor buttons, one undo step each, act on the direct-selected anchors
+(all anchors of a path selected as a whole): `path.convertAnchors {to: "corner"|"smooth"}` retracts both handles,
+or pulls handles out in line with the neighbouring anchors (a smooth anchor keeps its own); `path.cutAtAnchors {}`
+(Cut Path at Selected Anchor Points) cuts there and answers `{ids}`: a closed path opens at the cut, its two ends
+on top of each other, and an open path becomes one path per piece. Each cut leaves one of its two anchors selected,
+so `path.moveAnchors {dx, dy}` (or a Direct Selection drag) pulls the path apart there; `path.join {}` (Connect
+Selected End Points) joins the ends again. `path.convertAnchor {id, subpath?, anchor, to, x?, y?}` and
+`path.split {id, subpath?, anchor}` do the same to one anchor (the Anchor Point and Scissors tools); the Pen with Alt
+held over a selected path's handle or anchor works as the Anchor Point tool.
+
+```json
+{"name":"run_command","arguments":{"command":"select.anchors","params":{"id":12,"anchors":[[0,2]]}}}
+{"name":"run_command","arguments":{"command":"path.cutAtAnchors","params":{}}}
+{"name":"run_command","arguments":{"command":"path.moveAnchors","params":{"dx":0,"dy":40}}}
+```
+
 ## Registration and trim marks
 
 Every document has the built-in `[Registration]` swatch (listed after None by `swatch.list`): a colour that prints on
@@ -1083,9 +1114,12 @@ size. The journal entry of a scaling command records the `strokes` and `corners`
 2 bottom-right, 3 bottom-left), else to the corners holding a Direct-Selected anchor (`select.anchors`), else to all
 four. Each corner keeps its own radius and kind (the shape's `live` in queries has `radii` and, when a corner isn't
 round, `kinds`); a corner with no radius is one anchor, a cut one two, and Direct-Selected corners stay selected as
-that changes. With the Selection or Direct Selection tool, dragging a corner widget rounds the corners whose widgets
-show (all four, or the Direct-Selected ones), Alt-clicking one cycles their kind and double-clicking one opens Corners
-(`ui.corners {id?, corners?}`, dialog `corners`: `kind`, `radius`; OK runs `object.setLiveShape`).
+that changes. Every corner is a circular arc, whatever the rectangle's proportions: a radius past half the shorter
+side draws at half of it (the same limit for every corner), and a rectangle from a file that kept an uneven scale in its
+transform (elliptical corners) gets circular ones in document units when its corners are next set. With the Selection or
+Direct Selection tool, dragging a corner widget rounds the corners whose widgets show (all four, or the Direct-Selected
+ones), outlining them in red once they reach that limit; Alt-clicking one cycles their kind and double-clicking one
+opens Corners (`ui.corners {id?, corners?}`, dialog `corners`: `kind`, `radius`; OK runs `object.setLiveShape`).
 
 ```json
 {"name":"run_command","arguments":{"command":"object.setLiveShape","params":{"id":12,"corners":[1],"radius":16}}}
@@ -1117,6 +1151,22 @@ The Selection & Anchor Display and General preferences apply to `pointer_gesture
   topmost again. Cmd held to borrow the selection tool from another tool clicks as usual.
 - `doubleClickToIsolate` (on by default): off, a `doubleclick` on a group with the Selection tool no longer isolates it.
 - `usePreciseCursors`: the Pen, Eyedropper, Slice and Blend tools' pointers are a crosshair.
+- `snapToPointTolerance` (1–8 px, 2 by default): with View › Snap to Point on and Smart Guides off (desktop app), the
+  point a selection is dragged by, a drawn point and a transform tool's reference point land on an anchor or a ruler
+  guide that near.
+- `moveLockedWithArtboard`: `artboard.move {moveArt: true}`, the Artboard tool and `artboard.rearrange` move locked and
+  hidden art with the artboard too; off (the default) it stays where it is.
+- `penRubberBand`, `curvatureRubberBand` (on by default): off, the Pen and Curvature tools draw no preview segment to
+  the pointer.
+- `showHandlesMultipleAnchors` (on by default): off, Direct Selection shows and drags direction handles only while a
+  single anchor is selected. `handleStyle` (`solid`, `hollow`, `large`) draws their ends (desktop app).
+- `hideCornerWidgetAbove` (177° by default): corners wider than this show no Live Corners widget (a rectangle's right
+  angles hide below 90°).
+- `transformPatternTiles` (off by default): the default of the transforms' `patterns` param (`object.transform`,
+  `object.move`, `object.rotate`, `object.scale`, `object.reflect`, `object.shear`, `object.transformEach`, the
+  Selection and transform tools, the dialogs' Transform Patterns): pattern fills and strokes move with the art.
+- `selectSameTintPercent` (off by default): `select.same.fillColor`, `strokeColor` and `fillAndStroke` take every tint
+  of a global or spot swatch; on, only the same tint.
 
 ```json
 {"name":"run_command","arguments":{"command":"prefs.set","params":{"key":"objectSelectionByPathOnly","value":true}}}
@@ -1126,7 +1176,55 @@ The Selection & Anchor Display and General preferences apply to `pointer_gesture
 The preferences for the view need the desktop app (`vectorcraft-cli mcp --connect`): `zoomWithMouseWheel` (the
 wheel zooms about the pointer, Shift-wheel scrolls up and down, Cmd/Ctrl-wheel sideways; the control channel's
 `ui.wheel` turns the wheel), `zoomToSelection` (on: Zoom In and Zoom Out centre the selection), `showToolTips`,
-`anchorSize` (1–7), `gridColor`, `gridStyle`, `gridsInBack`, `guideColor`, `guideStyle` and `recentFontsCount`.
+`anchorSize` (1–7), `gridColor`, `gridStyle`, `gridsInBack`, `guideColor`, `guideStyle`, `showPixelGrid` (on by
+default: in View › Pixel Preview at 600% zoom and above, a line at every document pixel over the art),
+`recentFontsCount`, `antiAliasedArtwork` (on by default; off, the canvas draws the art with hard edges — a pixel is
+painted when the art covers at least half of it — while raster effects and pattern tiles stay smooth; exports keep
+their own Anti-aliasing option) and
+`scrubNumericFields` (on: a horizontal drag on a numeric field's label steps the field, one undo step per drag; the
+control channel's `ui.drag` scrubs).
+
+The Smart Guides preferences (Preferences › Smart Guides) apply to `pointer_gesture` with Smart Guides on (the
+default view) and to the mouse; they change what the tools show and how far a target pulls, never where a snapped
+point lands:
+
+- `smartGuideColor` (`#ff3dfc` by default): the colour of the smart guides' lines and labels.
+- `alignmentGuides` (on by default): off, no line is drawn along the edge or centre the art lines up with; the art
+  still snaps into line.
+- `anchorPathLabels` (on by default): off, no "anchor", "center", "path" or "align" label.
+- `measurementLabels` (on by default): off, no size or offset readout while drawing, moving (Free Transform's move
+  too), dragging a ruler guide, drawing and resizing an artboard, or moving and resizing a slice.
+- `transformToolsGuides` (on by default): off, no readout while scaling or rotating with the Selection tool, the
+  Free Transform tool or the Rotate, Scale, Shear and Reflect tools.
+- `objectHighlighting` (on by default; desktop app): off, the Selection tools no longer outline the object under the
+  pointer. The outline also needs View › Smart Guides on.
+- `snappingTolerance` (0–40 px, 4 by default): how near an anchor, edge, centre or artboard edge pulls a drawn point,
+  a dragged selection, a bounding-box handle, a ruler guide or an artboard. With Smart Guides off, Snap to Point uses
+  `snapToPointTolerance` instead.
+
+Not read yet: Construction Guides and their Angles, and Spacing Guides (the tools draw neither).
+
+## Type preferences
+
+- `placeholderText` (on by default): type the Type tools place (`pointer_gesture` with `type`, `areaType`…) starts with
+  placeholder text, selected, so `type_text` replaces it; `text.create` and `text.createInPath` take `placeholder: true`.
+- `typeSizeIncrement`, `trackingIncrement`, `baselineShiftIncrement`: what `type.step {attribute: "size" | "leading" |
+  "tracking" | "kerning" | "baselineShift", by?}` steps by, on the text range given, the Type tool's selected text or the
+  selected type objects. `type.size.increase` / `type.size.decrease` (Cmd+Shift+. and Cmd+Shift+,) step the size; the
+  Type tool's Alt+arrows (`press_key {key: "Right", mods: {alt: true}}`) step kerning at a caret or tracking of the
+  selection (←/→), leading (↑/↓) and baseline shift (Shift+↑/↓), five steps with Cmd/Ctrl too.
+- `missingGlyphProtection` (on by default): `text.setStyle` and `text.setRangeStyle` changing the font leave the
+  characters the new font has no glyph for in the font that had one.
+- `typeSelectionByPathOnly` (off by default): on, the Selection tools (`pointer_gesture` with `selection`, and the
+  mouse) pick type on its type path only — the baseline of each of its lines (a vertical column's centre line), area
+  type's frame, type on a path's path — within `selectionTolerance`; a click among the glyphs, between the lines or
+  inside the frame selects nothing. Off, anywhere in the type's bounds selects it. Marquee selection is unchanged, and
+  the Type tools (a click among the characters edits them) and the Eyedropper (`eyedropper`) are not affected.
+
+```json
+{"name":"run_command","arguments":{"command":"prefs.set","params":{"values":{"typeSizeIncrement":4,"trackingIncrement":50}}}}
+{"name":"run_command","arguments":{"command":"type.step","params":{"attribute":"tracking","by":-2}}}
+```
 
 ## Width points
 
@@ -1285,7 +1383,21 @@ on top / at the bottom of the current layer. `edit.pasteOnAllArtboards` keeps th
 copied from. `layer.pasteRemembersLayers {on?}` (a document option, `document.inspect` → `pasteRemembersLayers`)
 pastes objects back into the layers they came from, by name, making missing ones.
 
+Artboards copy with their art. `artboard.copy {index?, art?}` puts an artboard on the clipboard together with the
+art fully inside it (`art` defaults to the Artboard tool's `moveArt` option, Move/Copy Artwork with Artboard; locked
+and hidden art only with prefs `moveLockedWithArtboard`); with the Artboard tool chosen, `edit.copy` does this for
+the tool's artboard and `edit.cut` runs `artboard.cut`, which also deletes them (never the only artboard). Then
+`edit.paste` adds a copy of the artboard right of the last one, with its art in the layers it came from, in one undo
+step (`edit.pasteInPlace`, `edit.pasteInFront` and `edit.pasteInBack` put it where it was; `edit.pasteOnAllArtboards`
+pastes only the art), in this document or another; the result's `artboard` is the new artboard's index.
+`artboard.duplicate {index?, art?}` (Window › Artboards › Duplicate Artboards, or a row dragged onto New Artboard)
+does the same in one step → `{index, ids}`, and `artboard.move {copy: true, moveArt: true}` is the Artboard tool's
+Alt-drag.
+
 ```json
+{"name":"run_command","arguments":{"command":"artboard.copy","params":{"index":0}}}
+{"name":"run_command","arguments":{"command":"edit.paste","params":{}}}
+{"name":"run_command","arguments":{"command":"artboard.duplicate","params":{"index":0,"art":true}}}
 {"name":"run_command","arguments":{"command":"clipboard.conflicts","params":{}}}
 {"name":"run_command","arguments":{"command":"edit.paste","params":{"center":[300,200],"swatchConflict":{"Brand":"add"}}}}
 {"name":"run_command","arguments":{"command":"layer.pasteRemembersLayers","params":{"on":true}}}
@@ -1394,8 +1506,11 @@ physical size) or `clipboard.importText {text}` (point text in the default type 
 (default: the first artboard); then any `edit.paste*` command pastes it. The desktop app does this itself: Copy and
 Cut publish the formats to the system clipboard, and a Paste outside text editing first reads what another app
 copied (SVG, then PDF, then text, then a bitmap; SVG markup in text counts as SVG). Pasting what VectorCraft copied
-keeps the lossless internal clipboard. Windows carries every format both ways; macOS and Linux carry one format
-(the text, else the PNG) and paste text and bitmaps. On the web only SVG text goes through the system clipboard.
+keeps the lossless internal clipboard. Windows carries every format both ways and pastes a bitmap from PNG, else
+from the device-independent bitmap screenshots copy (`CF_DIBV5`, then `CF_DIB`; alpha kept, opaque when it is zero
+throughout, at most 32768 px a side); macOS and Linux carry one format (the text, else the PNG) and paste text and
+bitmaps (macOS the pasteboard's PNG, else TIFF, as screenshots copy them). On the web Copy publishes SVG text, and
+Paste takes SVG text and the pictures and files a paste carries (a screenshot pastes as an embedded image).
 
 The `pasteTextFormatting` preference (`keep` or `plain`): with `plain`, text the Type tool copied pastes into type
 without its formatting, taking the style at the caret.
@@ -1858,7 +1973,11 @@ dictionaries (the standard ones are values in `systemdict`; `dictstack`, `intern
 intervals share storage, resources (categories made from `Generic`, `resourceforall`), executable filters (`cvx exec`
 runs their data; `flushfile` skips it), axial and radial shadings and shading patterns (gradients), images and image
 masks (data in the file through ASCII85, hex, run-length, Flate, LZW or DCT filters, or from procedures), and type as
-point type in the font the file names (embedded font programs are skipped). The artboard is the `%%HiResBoundingBox`
+point type in the font the file names (embedded font programs are skipped). In a file in Illustrator's own format
+(Illustrator 3–8 `.ai` and their EPS, written with the prolog that defines its operators) the groups it writes (`u` …
+`U`) come in as groups, nested as they were; clips and groups nest at most 128 deep. A PDF-compatible `.ai` doesn't
+mark its plain groups (only layers, clipping groups and groups with opacity, blending or a mask), so they open
+ungrouped. The artboard is the `%%HiResBoundingBox`
 (else `%%BoundingBox`; a letter page without one). A program the interpreter can't run (an operator it doesn't know,
 an error, a runaway loop) or that draws nothing comes in as its TIFF preview (palette previews with an alpha channel
 too) with a warning; without a preview, the art drawn up to the error is kept with a warning, and a file with none is
@@ -1989,6 +2108,52 @@ undo step. Object › Transform › Scale, the Scale tool and the Transform pane
 {"name":"run_command","arguments":{"command":"text.reshapeArea","params":{"id":42,"anchors":[[0,2]],"dx":40,"dy":60}}}
 ```
 
+## Converting between point type and area type
+
+With the Selection tool, a single selected point or area type object shows the type widget: a small circle beside
+the middle of its bounding box's right side, hollow on point type and filled on area type. Double-clicking it runs
+`type.convertToAreaType` (point type gets a frame around its text, which keeps its place and doesn't rewrap) or
+`type.convertToPointType` (soft line wraps become line breaks), the same commands as the Type menu's Convert To Area
+Type and Convert To Point Type. Either keeps the text and its styles and is one undo step; `ids` picks the objects
+(default: the selection).
+
+```json
+{"name":"run_command","arguments":{"command":"type.convertToAreaType","params":{"ids":[42]}}}
+```
+
+## Hanging punctuation (burasagari)
+
+`text.setFormat {burasagari: "none"|"standard"|"forced"}` sets the Paragraph panel menu's Burasagari (None / Regular /
+Force) of the selected type (or `ids`): an East Asian comma or full stop ending an area type line (、。，．, half-width
+､｡) hangs outside the frame, Regular only when it doesn't fit, Force always (the rest of the line then fills the
+measure). Closing brackets and Latin punctuation don't hang; point type, right-to-left and hyphenated lines are left as
+they are. The hanging mark is as wide as its punctuation spacing makes it (`mojikumi`). New type (the Type tools,
+`text.create`) takes `standard`; documents from before it and imported text keep `none`, and `none` isn't saved. One
+undo step.
+
+```json
+{"name":"run_command","arguments":{"command":"text.setFormat","params":{"burasagari":"forced"}}}
+```
+
+## Moving and flipping type on a path
+
+Type on a path flows between a start and an end bracket, stored as fractions of its path's length.
+`type.pathOptions {start?, end?, flip?, effect?, alignToPath?, spacing?, ids?}` sets them and the rest of Type on a
+Path Options: `end: null` puts the end bracket back at the end of the path (or once round a closed one); `flip`
+then turns the type to the other side of its path, the path running the other way and the brackets swapping ends so
+the type keeps its stretch of the path; `alignToPath` runs the `ascender`, `descender`, `center` or `baseline` (the
+default) along the path; `spacing` (points) closes glyphs up round the outside of curves and opens them up round the
+inside. With none of them it queries the first selected type on a path:
+`{start, end, flip: false, effect, alignToPath, spacing}`. The Options dialog shows Effect, Flip, Align to Path and
+Spacing and leaves the brackets where they are. As in the reference app, the Selection and Direct Selection tools
+show selected type on a path's brackets: dragging the start or end bracket (`pointer_gesture`) sets where the type
+begins or ends, dragging the centre bracket slides the type along its path and, dragged across the path, flips it
+(with Cmd/Ctrl held it only slides). Each is one undo step.
+
+```json
+{"name":"run_command","arguments":{"command":"type.pathOptions","params":{"start":0.25,"end":0.75,"flip":true}}}
+```
+
 ## Constrain proportions
 
 The link between W and H in the Transform panel, the Properties panel and the Control bar is the
@@ -2037,15 +2202,20 @@ tone (mono, or CMYK screens multiplied over each other), clipped to the art's ou
 
 ## Fonts
 
-Type can use the bundled fonts, fonts added to the session and the fonts installed on the system (none on the web).
-The installed fonts are cataloged once per session (in the background when the app starts, else on the first lookup
+Type can use the bundled fonts, fonts added to the session and the fonts installed on the system (none on the web):
+the system's and the user's font folders (Windows: `Fonts` and `%LOCALAPPDATA%\Microsoft\Windows\Fonts`, plus fonts
+registered outside them, such as fonts installed as shortcuts; macOS: `/System/Library/Fonts`, `/Library/Fonts`,
+`/Network/Library/Fonts`, `~/Library/Fonts` and downloaded system fonts; Linux and BSD: `/usr/share/fonts`,
+`/usr/local/share/fonts`, `~/.fonts` and the XDG data folders' `fonts`, `~/.local/share/fonts` among them, and in a
+Flatpak sandbox the host's fonts). The installed fonts are cataloged once per session (in the background when the app starts, else on the first lookup
 by family name), so opening, placing, pasting and importing files find them whatever ran before. `text.fontList`
 lists every family available, the installed ones included, as the font menus do: without the system's hidden
 families, whose names start with "." (macOS's ".SF NS", ".LastResort"), which still resolve when a document names
 them. With `family` it gives that family's styles (upright by weight, then italics) and fails when the family isn't
 available. `text.rescanFonts` (Character panel menu ›
 Refresh Font List) scans the font folders again, for fonts installed or removed since the app started: type set in a
-font that became available redraws in it, without editing the document.
+font that became available redraws in it, without editing the document. The app does so by itself when its window
+comes to the front and a font folder changed meanwhile.
 
 ```json
 {"name":"run_command","arguments":{"command":"text.fontList","params":{}}}

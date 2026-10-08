@@ -3,6 +3,7 @@
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use serde_json::json;
+use vectorcraft_engine::cmd::clipboard::{Flavour, TEXT};
 use vectorcraft_tools::{Mods, ToolKey};
 
 use crate::VectorcraftApp;
@@ -39,9 +40,18 @@ pub fn parse(s: &str) -> Option<KeyboardShortcut> {
         "Backspace" => Key::Backspace,
         "Tab" => Key::Tab,
         "~" => Key::Backtick,
-        k => Key::from_name(k)?,
+        // A modifier alone is never a chord's key: it couldn't fire (#487).
+        k => Key::from_name(k).filter(|k| !is_modifier(*k))?,
     };
     Some(KeyboardShortcut::new(m, key))
+}
+
+/// The modifier keys, which egui also reports as key presses of their own.
+pub(crate) fn is_modifier(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft | Key::ShiftRight | Key::ControlLeft | Key::ControlRight | Key::AltLeft | Key::AltRight | Key::SuperLeft | Key::SuperRight
+    )
 }
 
 /// Every command shortcut in effect (user overrides from Edit → Keyboard Shortcuts win), with the
@@ -58,7 +68,7 @@ pub(crate) fn all_shortcuts() -> Vec<(KeyboardShortcut, &'static str, serde_json
             v.push((sc, c.0, json!({})));
         }
     }
-    for (panel, _, _) in crate::state::ICON_PANELS {
+    for (panel, _) in crate::state::all_panels() {
         if let Some(sc) = crate::shortcut_editor::panel_shortcut(panel).and_then(parse) {
             v.push((sc, "window.panel", json!({ "panel": panel })));
         }
@@ -190,6 +200,10 @@ fn type_text(app: &mut VectorcraftApp, ctx: &egui::Context) {
 pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     // Followed before anything returns, so a key typed in a field isn't taken for a paste.
     let textless_paste = ctx.input(|i| app.paste_chord.textless_paste(&i.events));
+    // A numeric field being scrubbed has the keyboard: Escape cancels the drag.
+    if crate::scrub::phase(ctx) != crate::scrub::Phase::Idle {
+        return;
+    }
     if app.ui.dialog.is_some() || app.ui.palette_open {
         if crate::shortcut_editor::is_recording(app) {
             return;
@@ -217,7 +231,10 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 crate::canvas::apply_requests(app, r);
             }
             if k == Key::Escape && !busy && !claimed {
-                if app.session.active().is_some_and(|d| d.doc.pattern_edit.is_some()) {
+                // Escape leaves Presentation Mode first: it hides the menus and panels.
+                if app.ui.screen_mode == 3 {
+                    let _ = app.run("view.presentation", json!({}));
+                } else if app.session.active().is_some_and(|d| d.doc.pattern_edit.is_some()) {
                     let _ = app.run("object.pattern.done", json!({}));
                 } else if app.session.active().is_some_and(|d| d.isolation.is_some()) {
                     let _ = app.run("object.exitIsolation", json!({}));
@@ -297,7 +314,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         clip.push((id, None));
     }
     for (id, text) in clip {
-        app.clipboard_in = text;
+        app.clipboard_in = text.map(|t| Flavour { mime: TEXT, data: t.into_bytes() });
         crate::menus::invoke(app, id, json!({}));
     }
     if busy {

@@ -44,6 +44,14 @@ impl Default for ViewInfo {
     }
 }
 
+/// The RGB of a colour preference (`#rrggbb`), or `fallback` when it doesn't parse.
+fn rgb(hex: &str, fallback: [u8; 3]) -> [u8; 3] {
+    vectorcraft_color::Color::from_hex(hex).map_or(fallback, |c| {
+        let [r, g, b, _] = c.to_rgba8(1.0);
+        [r, g, b]
+    })
+}
+
 /// Requests from tools that only the frontend can fulfil.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiRequest {
@@ -158,9 +166,23 @@ impl Session {
             auto_add_delete: !self.prefs.disable_auto_add_delete,
             selection_tolerance: self.prefs.selection_tolerance,
             path_only: self.prefs.object_selection_by_path_only,
+            type_path_only: self.prefs.type_selection_by_path_only,
             double_click_isolate: self.prefs.double_click_to_isolate,
             select_behind: self.prefs.ctrl_click_selects_behind,
             highlight_anchors: self.prefs.highlight_anchors_on_hover,
+            snap_tolerance: self.prefs.snap_to_point_tolerance,
+            handles_multiple: self.prefs.show_handles_multiple_anchors,
+            corner_widget_max_angle: self.prefs.hide_corner_widget_above,
+            move_locked_with_artboard: self.prefs.move_locked_with_artboard,
+            pen_rubber_band: self.prefs.pen_rubber_band,
+            curvature_rubber_band: self.prefs.curvature_rubber_band,
+            placeholder_text: self.prefs.placeholder_text,
+            smart_guide_color: rgb(&self.prefs.smart_guide_color, vectorcraft_tools::guides::MAGENTA),
+            alignment_guides: self.prefs.alignment_guides,
+            anchor_path_labels: self.prefs.anchor_path_labels,
+            measurement_labels: self.prefs.measurement_labels,
+            transform_tools_guides: self.prefs.transform_tools_guides,
+            snapping_tolerance: self.prefs.snapping_tolerance,
             screen: view.screen,
             plane_widget: self.prefs.perspective_widget.show.then_some(self.prefs.perspective_widget.position),
         };
@@ -197,6 +219,30 @@ impl Session {
             self.keep_tool_settings();
         }
         self.apply_actions(acts)
+    }
+
+    /// A guide dragged out of a ruler, whatever the tool: a vertical one out of the left ruler, a
+    /// horizontal one out of the top ruler. `ev` is the pointer in document space (a drag, then the
+    /// release), over the canvas or not (`on_canvas`). The guide shows where the pointer is over
+    /// the canvas, snapped as a moved guide is, and is made where the button is released over it
+    /// (one undo step); released anywhere else, none is. With the Artboard tool it is an artboard
+    /// guide of the active artboard.
+    pub fn ruler_guide(&mut self, vertical: bool, ev: &PointerEvent, on_canvas: bool, view: ViewInfo) -> Result<()> {
+        let g = match self.ruler_guide.take() {
+            Some(g) => Some(g),
+            None => {
+                let boards = self.active().map_or(0, |d| d.doc.artboards.len());
+                let active = (self.tool.id() == "artboard").then(|| self.tool.options()["active"].as_u64()).flatten();
+                let artboard = active.and_then(|i| usize::try_from(i).ok()).filter(|i| *i < boards);
+                self.with_tool_cx(view, |_, cx| Some(vectorcraft_tools::rulerguide::NewGuide::new(cx, vertical, artboard)))
+            }
+        };
+        let Some(mut g) = g else { return Ok(()) };
+        let acts = self.with_tool_cx(view, |_, cx| g.pointer(cx, ev, on_canvas));
+        if ev.kind != PointerKind::Up {
+            self.ruler_guide = Some(g);
+        }
+        self.apply_actions(acts).map(drop)
     }
 
     /// Time passed while the pointer button is held (`dt` seconds; see [`Tool::tick`]): the
@@ -266,6 +312,10 @@ impl Session {
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
         let mut v = self.with_tool_cx(view, |t, cx| t.overlays(cx));
+        if let Some(g) = self.ruler_guide.take() {
+            v.extend(self.with_tool_cx(view, |_, cx| g.overlays(cx)));
+            self.ruler_guide = Some(g);
+        }
         if let Some(d) = self.active() {
             let w = self.prefs.perspective_widget;
             let place = w.show.then_some(WidgetPlace { screen: view.screen.as_ref(), corner: w.position });

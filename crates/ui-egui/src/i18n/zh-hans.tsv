@@ -126,6 +126,7 @@
 	Anchor Points	锚点
 	Anchor Points, Handle, and Bounding Box Display	锚点、手柄和定界框显示
 	Anchor/Path Labels	锚点/路径标签
+	Anchors:	锚点：
 	Angle	角度
 	Angle:	角度：
 	Angles	角度
@@ -183,6 +184,7 @@
 	Artwork Colors	图稿颜色
 	As Multiple Assets	作为多个资源
 	As Single Asset	作为单一资源
+	Ascender	上缘
 	Ask When Modified	修改时询问
 	Aspect Ratio	长宽比
 	Asset Export	资源导出
@@ -214,6 +216,7 @@
 	Background:	背景：
 	Backspace	Backspace
 	Bar Graph Tool	条形图工具
+	Baseline	基线
 	Baseline Shift	基线偏移
 	Basic Latin	基本拉丁文
 	Batch	批处理
@@ -246,6 +249,8 @@
 	Bottom	下
 	Bottom in Front	下方置前
 	Bottom-to-Bottom Leading	基线至基线行距
+	Burasagari	标点悬挂
+	Force	强制
 	Bottom:	下：
 	Bounds	边界
 	Bounds (Fill Proportionally)	边界 (按比例填满)
@@ -424,6 +429,7 @@
 	Compression:	压缩：
 	Condition identifier:	条件识别码：
 	Conflict {n} of {count}	冲突 {n}／{count}
+	Connect Selected End Points	连接所选端点
 	Consolidate All Windows	合并所有窗口
 	Constrain Angle	约束角度
 	Constrain Width and Height Proportions	约束宽高比例
@@ -441,6 +447,8 @@
 	Convert Color	转换颜色
 	Convert Document Color Mode	转换文档颜色模式
 	Convert Process to Global	将印刷色转换为全局色
+	Convert Selected Anchor Points to Corner	将所选锚点转换为尖角
+	Convert Selected Anchor Points to Smooth	将所选锚点转换为平滑
 	Convert text to outlines	将文字转换为轮廓
 	Convert To Area Type	转换为区域文字
 	Convert to Artboards	转换为画板
@@ -451,6 +459,7 @@
 	Convert to RGB	转换为 RGB
 	Convert to Shape	转换为形状
 	Convert to sRGB	转换为 sRGB
+	Convert:	转换：
 	Copied the CSS of {rules} object(s)	已复制 {rules} 个对象的 CSS
 	Copies:	份数：
 	Copy	复制
@@ -471,6 +480,9 @@
 	Corner Radius:	圆角半径：
 	Corner:	转角：
 	Corners	转角
+	Cut Path	切割路径
+	Descender	下缘
+	Flip	翻转
 	Round	圆角
 	Inverted Round	反向圆角
 	Corners…	转角…
@@ -505,6 +517,7 @@
 	Created:	创建时间：
 	Crop	裁剪
 	Crop Image	裁剪图像
+	Mask	蒙版
 	Crop Marks	裁切标记
 	Crop To	裁剪到
 	Crystallize Tool	晶格化工具
@@ -686,6 +699,8 @@
 	Duplicate	复制
 	Duplicate and Offset 10 pt	复制并偏移 10 pt
 	Duplicate Artboard	复制画板
+	Copy Artboard	拷贝画板
+	Cut Artboard	剪切画板
 	Duplicate Artboards	复制画板
 	Duplicate Brush	复制画笔
 	Duplicate Character Style	制作字符样式副本
@@ -916,6 +931,10 @@
 	Fit Artboard in Window	使画板适合窗口
 	Fit dashes to corners and ends	让虚线贴合转角与端点
 	Fit Headline	适合标题
+	Decrease Font Size	减小字体大小
+	Increase Font Size	增大字体大小
+	Spacing	间距
+	Step Type	按增量调整文字
 	Fit in View	适合视图
 	Fit in Window	适合窗口
 	Fit on Screen	显示全页
@@ -1119,6 +1138,8 @@
 	Image Map:	图像映射：
 	Image Size	图像大小
 	Image Trace	图像描摹
+	Image Tracing	图像描摹对象
+	Tracing Presets	描摹预设
 	Image Trace Presets	图像描摹预设
 	Image:	图像：
 	Images:	图像：
@@ -2356,7 +2377,7 @@
 	Simplify…	简化…
 	Simulate Colored Paper	模拟有色纸张
 	Simulate Paper	模拟纸张
-	Single / Double Column	单列/双列
+	Double Column	双列
 	Single Left Quotation Mark	左单引号
 	Single Quotes:	单引号：
 	Single Right Quotation Mark	右单引号
@@ -2456,6 +2477,8 @@
 	Stroke (X), double-click for the Color Picker	描边 (X)，双击打开拾色器
 	Stroke Color	描边颜色
 	Stroke Options	描边选项
+	Character:	字符：
+	Character options	字符选项
 	Stroke options	描边选项
 	Stroke Weight	描边粗细
 	Stroke:	描边：
@@ -2593,6 +2616,7 @@
 	Total Width:	总宽度：
 	Touch Type Tool	修饰文字工具
 	Trace	描摹
+	Trace the image with the Default preset	使用“默认”预设描摹图像
 	Tracing	描摹
 	Tracking	字距
 	Trademark Symbol	商标符号
@@ -2644,6 +2668,7 @@
 	Type becomes outlines, and strokes a CAD line can't draw become filled shapes.	文字变为轮廓，CAD 无法绘制的描边变为填充形状。
 	Type Object Selection by Path Only	仅按路径选择文字对象
 	Type on a Path	路径文字
+	Type on a Path Options	路径文字选项
 	Type on a Path Options…	路径文字选项…
 	Type on a Path Tool	路径文字工具
 	Type Orientation	文字方向
@@ -2818,6 +2843,7 @@
 	Zoom to Selection	缩放到所选对象
 	Zoom Tool	缩放工具
 	Zoom with Mouse Wheel	使用鼠标滚轮缩放
+	Scrub Numeric Fields by Dragging	拖动以调整数值字段
 	{count} file(s) in {folder}{note}. Show the package folder?	{folder} 中有 {count} 个文件{note}。要显示打包文件夹吗？
 	{count} linked file(s) not found	找不到 {count} 个链接文件
 	{count} linked image(s) changed since this document was saved. Show the new versions?	自存储此文档后，有 {count} 个链接图像已更改。要显示新版本吗？
@@ -3257,6 +3283,15 @@
 	Version	版本
 	% of all commits	占全部提交的百分比
 	Lines +/−	行数 +/−
+	Joins	连接
+	Miter	斜接
+	Bevel	斜角
+	Offset	偏移
+	Axis	轴
+axis	Horizontal	水平
+axis	Vertical	垂直
+axis	Both	两者
 	Drag to move	拖动以移动
 	Drag to float as a toolbar	拖动使其浮动为工具栏
 	Put back in the toolbar	放回工具栏
+	Float Tool Group	浮动工具组

@@ -2,9 +2,12 @@
 
 use std::ops::Range;
 
-use kurbo::{Affine, BezPath, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point, Rect, Shape, Vec2};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use unicode_bidi::{BidiInfo, Level};
-use vectorcraft_doc::{CharStyle, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathEffect, TextKind, TextObject};
+use vectorcraft_doc::{
+    Burasagari, CharStyle, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, TextKind, TextObject,
+};
+use vectorcraft_geom::{ArcPath, PathData};
 
 use crate::composer::{Breakpoint, compose};
 use crate::fontdb::FontDb;
@@ -56,7 +59,7 @@ impl Ctx<'_> {
     fn emit(&mut self, g: &SGlyph, pre: Affine, origin: Point, angle: f64, advance: f64, line: usize) {
         let src = self.db.outline(&g.face, g.gid);
         // A glyph whose leading space was taken off (mojikumi) is drawn that much earlier: an
-        // upright one in vertical type by turning about a point that much higher.
+        // upright one in vertical type by moving it up the column once it stands upright.
         let upright = self.vertical && !self.on_path && g.tcy.is_none() && stands_upright(g);
         let lead = if upright { 0.0 } else { g.lead };
         let local =
@@ -79,10 +82,11 @@ impl Ctx<'_> {
             // after the cell, and must not push the glyph off the centre line).
             let em = self.style_at(g.byte).size;
             let cell = if g.adv > 0.0 { upright_cell(g) } else { advance };
-            m = Affine::rotate_about(
-                -std::f64::consts::FRAC_PI_2,
-                Point::new(origin.x + cell * 0.5 - g.lead, origin.y - upright_centre(g, cell, em)),
-            ) * m;
+            // A leading space taken off moves it up the column after the turn (moving the
+            // turning point instead would move it across the column too).
+            m = Affine::translate((-g.lead, 0.0))
+                * Affine::rotate_about(-std::f64::consts::FRAC_PI_2, Point::new(origin.x + cell * 0.5, origin.y - upright_centre(g, cell, em)))
+                * m;
         }
         // Control characters (tabs) and soft hyphens draw nothing (fonts map them to .notdef).
         let outline = if src.elements().is_empty() || g.is_soft_hyphen() || g.ch.is_control() {
@@ -183,7 +187,7 @@ pub fn layout_with(db: &FontDb, t: &TextObject, opts: &LayoutOptions) -> TextLay
             cx.out.frames = regions.iter().map(|r| line_xf.transform_rect_bbox(r.cell)).collect();
             flow(&mut cx, &paras, &t.para, Some(&regions));
         }
-        TextKind::OnPath { path, start } => on_path(&mut cx, &paras, &t.para, &path.to_bezpath(), *start, path.is_closed(), t.path_effect),
+        TextKind::OnPath { path, .. } => on_path(&mut cx, &paras, t, path),
     }
     if vertical && !is_on_path {
         // Glyph origins, outlines and transforms to text space (lines stay in line space).
@@ -747,7 +751,8 @@ fn tab_advance(tabs: &[vectorcraft_doc::TabStop], origin: f64, x: f64, rest: &[S
 }
 
 /// Greedy break: returns (end glyph index, hyphenated) for a line starting at `i` of `width`.
-fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool) -> (usize, bool) {
+/// With burasagari, a comma or full stop that doesn't fit ends the line, hanging outside it.
+fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, burasagari: Burasagari) -> (usize, bool) {
     if !width.is_finite() {
         return (g.len(), false);
     }
@@ -757,6 +762,14 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool) -
     while j < g.len() {
         let gl = &g[j];
         if j > i && !gl.is_space() && x + gl.adv > width + EPS {
+            // It ends the line with the spaces after it.
+            if burasagari != Burasagari::None && hangs(gl) && kinsoku_allows(g, j) && g.get(j + 1).is_none_or(|n| n.byte != gl.byte) {
+                let mut end = j + 1;
+                while g.get(end).is_some_and(SGlyph::is_space) {
+                    end += 1;
+                }
+                return (end, false);
+            }
             break;
         }
         x += gl.adv;
@@ -801,6 +814,13 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool) -
         end -= 1;
     }
     (end, hy)
+}
+
+/// Can glyph `g` hang outside the line (burasagari)? An East Asian comma or full stop, full width
+/// (、。，．) or half width (､｡); not a closing bracket, nor Latin punctuation (Latin text keeps
+/// its line breaks and composer).
+fn hangs(g: &SGlyph) -> bool {
+    matches!(g.ch, '、' | '。' | '，' | '．' | '､' | '｡') && g.tcy.is_none()
 }
 
 /// Does kinsoku allow a line break after glyph `j`? Not after an opening bracket, nor before a
@@ -898,7 +918,10 @@ fn candidates(text: &str, g: &[SGlyph], hyphenate: bool) -> Vec<Breakpoint> {
 /// line metrics); `None` falls back to the greedy single-line composer.
 fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>) -> Option<Vec<(usize, bool)>> {
     let justified = !matches!(para.justify, Justify::Auto | Justify::Left | Justify::Center | Justify::Right);
-    if cx.opts.composer != Composer::EveryLine || !justified || pen.regions.is_none() || sg.len() < 2 {
+    // A paragraph whose commas or full stops may hang is composed line by line (as the Japanese
+    // single-line composer does).
+    let may_hang = para.burasagari != Burasagari::None && sg.iter().any(hangs);
+    if cx.opts.composer != Composer::EveryLine || !justified || pen.regions.is_none() || sg.len() < 2 || may_hang {
         return None;
     }
     let m = Metrics::of(&sg[0]);
@@ -969,6 +992,18 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
             let est = if i < n { Metrics::of(&sg[i]) } else { pm };
             let first_line = li_para == 0;
             let ind_l = para.left_indent + if first_line { para.first_line_indent } else { 0.0 };
+            // Mojikumi: an opening bracket starting a wrapped line is set flush with the line's
+            // start (the space before it goes), and the line has that much more room.
+            if !first_line
+                && !rtl
+                && para.mojikumi == Mojikumi::LineEndHalf
+                && let Some(g) = sg.get_mut(i)
+                && g.lead <= 0.0
+                && let Some(h) = punct_half(g, Punct::Opening)
+            {
+                g.adv -= h;
+                g.lead += h;
+            }
             // Place, break, then settle the baseline on the line's real metrics (moving on to the
             // next row/column if it no longer fits).
             let (baseline, x0, x1, end, hyph, m) = loop {
@@ -980,7 +1015,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 let width = x1 - x0 - ind_l - para.right_indent;
                 let (end, hyph) = match composed.as_ref().and_then(|c| c.get(li_para)) {
                     Some(&(e, h)) if e > i => (e, h),
-                    _ if i < n => break_line(cx.text, &sg, i, width, para.hyphenate),
+                    _ if i < n => break_line(cx.text, &sg, i, width, para.hyphenate, para.burasagari),
                     _ => (n, false),
                 };
                 let m = Metrics::max(&sg[i..end]).unwrap_or(pm);
@@ -1024,6 +1059,21 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 None => 0.0,
             };
             let w: f64 = sg[i..trimmed].iter().map(|g| g.adv).sum::<f64>() + hyphen.as_ref().map_or(0.0, |h| h.adv) - end_trim;
+            // Burasagari: a comma or full stop ending an area type line hangs outside it (Standard:
+            // when it doesn't fit; Forced: always). The rest of the line is aligned and justified
+            // without it, and it follows the line's last character.
+            let hang = (regions.is_some() && !rtl && hyphen.is_none() && trimmed > i + 1)
+                .then(|| sg.get(trimmed - 1))
+                .flatten()
+                .filter(|g| hangs(g))
+                .map(|g| g.adv - end_trim)
+                .filter(|_| match para.burasagari {
+                    Burasagari::None => false,
+                    Burasagari::Standard => w > width + EPS,
+                    Burasagari::Forced => true,
+                });
+            let body = if hang.is_some() { trimmed - 1 } else { trimmed };
+            let w = w - hang.unwrap_or(0.0);
             let (align, justify) = match para.justify {
                 Justify::Auto => (if rtl { 2 } else { 0 }, false),
                 Justify::Left => (0, false),
@@ -1036,17 +1086,17 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
             };
             let justify = justify && regions.is_some();
             let (mut per_space, mut per_gap, mut per_cjk) = (0.0, 0.0, 0.0);
-            let spaces = sg[i..trimmed].iter().filter(|g| g.is_space()).count();
+            let spaces = sg[i..body].iter().filter(|g| g.is_space()).count();
             // Japanese (and Chinese) lines are justified between their characters (JLREQ 3.8): the
             // gaps next to a CJK character, not inside a Latin word or a tate-chu-yoko block.
             let cjk_gap = |j: usize| {
-                j + 1 < trimmed
+                j + 1 < body
                     && sg
                         .get(j)
                         .zip(sg.get(j + 1))
                         .is_some_and(|(a, b)| !a.is_space() && !b.is_space() && !b.continues_tcy() && a.ch != '\t' && (is_cjk(a.ch) || is_cjk(b.ch)))
             };
-            let cjk_gaps = (i..trimmed).filter(|&j| cjk_gap(j)).count();
+            let cjk_gaps = (i..body).filter(|&j| cjk_gap(j)).count();
             if justify && (width - w).abs() > EPS {
                 if cjk_gaps > 0 && width > w {
                     // Spread over the CJK gaps and the word spaces alike.
@@ -1055,9 +1105,9 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 } else if spaces > 0 {
                     // Composed lines may shrink word spaces (never below zero).
                     per_space =
-                        ((width - w) / spaces as f64).max(-sg[i..trimmed].iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min));
+                        ((width - w) / spaces as f64).max(-sg[i..body].iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min));
                 } else if para.justify == Justify::JustifyAll && width > w {
-                    let gaps = sg.get(i + 1..trimmed).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count());
+                    let gaps = sg.get(i + 1..body).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count());
                     if gaps > 0 {
                         per_gap = (width - w) / gaps as f64;
                     }
@@ -1102,14 +1152,14 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
                 }
                 if g.ch == '\t' {
                     adv = tab_advance(&para.tabs, tab_origin, x, &sg[j + 1..trimmed.max(j + 1)]);
-                } else if j < trimmed {
+                } else if j < body {
                     if g.is_space() {
                         adv += per_space;
                     } else if per_cjk != 0.0 {
                         if cjk_gap(j) {
                             adv += per_cjk;
                         }
-                    } else if j + 1 < trimmed && sg.get(j + 1).is_some_and(|next| !next.continues_tcy()) {
+                    } else if j + 1 < body && sg.get(j + 1).is_some_and(|next| !next.continues_tcy()) {
                         // Between glyphs, never inside a tate-chu-yoko block (one cell).
                         adv += per_gap;
                     }
@@ -1155,43 +1205,31 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, regions: Opt
     }
 }
 
-/// Arc-length parameterised path.
-struct ArcPath {
-    segs: Vec<(PathSeg, f64, f64)>,
-    len: f64,
-}
-
-impl ArcPath {
-    fn new(p: &BezPath) -> Self {
-        let mut segs = Vec::new();
-        let mut cum = 0.0;
-        for s in p.segments() {
-            let l = s.arclen(1e-4);
-            if l > 1e-9 {
-                segs.push((s, cum, l));
-                cum += l;
+/// The distance along type on a path each glyph takes: its advance measured `spacing` points above
+/// the path (Type on a Path Options › Spacing), so glyphs close up round the outside of a curve and
+/// open up round the inside; just the advances without spacing. Glyphs start `from` along the path.
+fn path_steps(ap: &ArcPath, glyphs: &[SGlyph], from: f64, spacing: f64) -> Vec<f64> {
+    let mut s = from;
+    glyphs
+        .iter()
+        .map(|g| {
+            let mut step = g.adv;
+            if spacing != 0.0 && g.adv > 1e-9 {
+                // How far the path turns across the glyph: positive bending away from its top.
+                let ((_, a), (_, b)) = (ap.at(s), ap.at(s + g.adv));
+                let curvature = a.cross(b).atan2(a.dot(b)) / g.adv;
+                step = g.adv / (1.0 + curvature * spacing).clamp(0.25, 4.0);
             }
-        }
-        Self { segs, len: cum }
-    }
-
-    /// Point and unit tangent at arc length `s`.
-    fn at(&self, s: f64) -> (Point, Vec2) {
-        let s = s.clamp(0.0, self.len);
-        let i = self.segs.partition_point(|(_, c, _)| *c <= s).saturating_sub(1);
-        let (seg, c, l) = self.segs[i];
-        let t = seg.inv_arclen((s - c).min(l), 1e-4).clamp(0.0, 1.0);
-        let p = seg.eval(t);
-        let (t0, t1) = ((t - 1e-4).max(0.0), (t + 1e-4).min(1.0));
-        let d = seg.eval(t1) - seg.eval(t0);
-        let len = d.hypot();
-        (p, if len > 1e-12 { d / len } else { Vec2::new(1.0, 0.0) })
-    }
+            s += step;
+            step
+        })
+        .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &BezPath, start: f64, closed: bool, effect: PathEffect) {
+/// Lay type on a path out along `path` (text space), between its brackets.
+fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, path: &PathData) {
     cx.out.on_path = true;
+    let para = &t.para;
     let mut sg = Vec::new();
     // The first paragraph's direction aligns the line (Auto) and sets the caret's.
     let mut rtl = None;
@@ -1213,7 +1251,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
         (s.0, s.1)
     });
     let text_len = cx.text.len();
-    if ap.segs.is_empty() {
+    if ap.is_empty() {
         cx.out.overflow = !sg.is_empty();
         cx.out.lines.push(LineInfo {
             rtl,
@@ -1230,32 +1268,43 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
         });
         return;
     }
-    let centre = path.bounding_box().center();
-    let s_start = start.clamp(0.0, 1.0) * ap.len;
-    let avail = if closed { ap.len } else { ap.len - s_start };
-    let w: f64 = sg.iter().map(|g| g.adv).sum();
+    let centre = path.bounds().unwrap_or_default().center();
+    let (from, to) = t.kind.path_span().unwrap_or((0.0, 1.0));
+    let s_start = from * ap.len();
+    let avail = (to - from) * ap.len();
+    let spacing = if t.path_spacing.is_finite() { t.path_spacing } else { 0.0 };
+    let mut steps = path_steps(&ap, &sg, s_start, spacing);
+    let w: f64 = steps.iter().sum();
     let s0 = match para.justify {
         Justify::Auto if rtl => s_start + (avail - w).max(0.0),
         Justify::Center | Justify::JustifyCenter => s_start + ((avail - w) * 0.5).max(0.0),
         Justify::Right | Justify::JustifyRight => s_start + (avail - w).max(0.0),
         _ => s_start,
     };
+    if spacing != 0.0 && s0 != s_start {
+        // Spaced from where the alignment puts them, the curve under them is another.
+        steps = path_steps(&ap, &sg, s0, spacing);
+    }
+    // Align to Path: how far down (glyph space) the type moves to run its ascender, centre or
+    // descender along the path instead of its baseline.
+    let rise = match t.path_align {
+        PathAlign::Baseline => 0.0,
+        PathAlign::Ascender => m.0,
+        PathAlign::Descender => -m.1,
+        PathAlign::Center => (m.0 - m.1) * 0.5,
+    };
     let mut x = 0.0;
-    for g in &sg {
+    for (g, &step) in sg.iter().zip(&steps) {
         let s = s0 + x;
-        if s + g.adv - s_start > avail + 1e-6 {
+        if s + step - s_start > avail + 1e-6 {
             cx.out.overflow = true;
             break;
         }
-        let mut mid = s + g.adv * 0.5;
-        if closed {
-            mid = mid.rem_euclid(ap.len);
-        }
-        let (p, dir) = ap.at(mid);
+        let (p, dir) = ap.at(s + step * 0.5);
         let angle = dir.y.atan2(dir.x);
-        let half = Affine::translate((-g.adv * 0.5, 0.0));
+        let half = Affine::translate((-g.adv * 0.5, rise));
         // Glyph space: x along the advance, y down from the baseline; `pre` maps it onto the path.
-        let pre = match effect {
+        let pre = match t.path_effect {
             PathEffect::Rainbow => Affine::translate(p.to_vec2()) * Affine::rotate(angle) * half,
             // x axis along the tangent, y axis stays vertical.
             PathEffect::Skew => Affine::translate(p.to_vec2()) * Affine::new([dir.x, dir.y, 0.0, 1.0, 0.0, 0.0]) * half,
@@ -1264,10 +1313,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
                 let sx = if dir.x < 0.0 { -1.0 } else { 1.0 };
                 Affine::translate(p.to_vec2()) * Affine::new([sx, 0.0, -dir.y * sx, dir.x * sx, 0.0, 0.0]) * half
             }
-            PathEffect::StairStep => {
-                let s_left = if closed { s.rem_euclid(ap.len) } else { s };
-                Affine::translate(ap.at(s_left).0.to_vec2())
-            }
+            PathEffect::StairStep => Affine::translate(ap.at(s).0.to_vec2()) * Affine::translate((0.0, rise)),
             // x axis along the tangent; vertical edges point at the path's centre (kept on the glyph's
             // up side, and never closer than ~17° to the baseline so glyphs stay legible).
             PathEffect::Gravity => {
@@ -1278,17 +1324,19 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
                     up = -up;
                 }
                 if up.dot(n) < 0.3 {
-                    let t = up - n * up.dot(n);
-                    up = n * 0.3 + t / t.hypot().max(1e-9) * (1.0 - 0.09f64).sqrt();
+                    let along = up - n * up.dot(n);
+                    up = n * 0.3 + along / along.hypot().max(1e-9) * (1.0 - 0.09f64).sqrt();
                 }
                 Affine::translate(p.to_vec2()) * Affine::new([dir.x, dir.y, -up.x, -up.y, 0.0, 0.0]) * half
             }
         };
-        cx.emit(g, pre, p - dir * (g.adv * 0.5), angle, g.adv, 0);
-        x += g.adv;
+        // The caret's baseline moves with the type.
+        let origin = p - dir * (g.adv * 0.5) + Vec2::new(-dir.y, dir.x) * rise;
+        cx.emit(g, pre, origin, angle, g.adv, 0);
+        x += step;
     }
-    let (ps, _) = ap.at(if closed { s0.rem_euclid(ap.len) } else { s0 });
-    let (pe, _) = ap.at(if closed { (s0 + x).rem_euclid(ap.len) } else { s0 + x });
+    let (ps, _) = ap.at(s0);
+    let (pe, _) = ap.at(s0 + x);
     cx.out.lines.push(LineInfo {
         rtl,
         baseline: ps.y,
@@ -1300,7 +1348,7 @@ fn on_path(cx: &mut Ctx<'_>, paras: &[Range<usize>], para: &ParaStyle, path: &Be
         end: text_len,
         glyph_start: 0,
         glyph_end: cx.out.glyphs.len(),
-        avail: (0.0, ap.len),
+        avail: (0.0, ap.len()),
     });
 }
 

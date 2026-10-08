@@ -97,10 +97,11 @@ fn orientation(s: &mut Session, p: &Value, vertical: bool) -> Result<Value> {
     Ok(json!({"vertical": vertical, "ids": ids.iter().map(|id| id.0).collect::<Vec<_>>()}))
 }
 
-/// Recompute the layout bounds cache after a text edit.
+/// Recompute the layout caches (bounds and baselines) after a text edit.
 pub(crate) fn refresh_bounds(t: &mut TextObject) {
     let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
     t.cached_bounds = Some(lay.bounds);
+    t.cached_baselines = lay.baselines();
 }
 
 /// Text objects among `ids` and their descendants.
@@ -238,9 +239,11 @@ fn set_style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "nothing to change"));
     }
     let ids = text_targets(s, p, C)?;
+    let protect = s.prefs.missing_glyph_protection && (font.is_some() || style.is_some());
     s.edit("Character", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
+            let before = protect.then(|| t.runs.clone());
             for r in &mut t.runs {
                 let st = &mut r.style;
                 if let Some(f) = &font {
@@ -264,6 +267,9 @@ fn set_style(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some(f) = &features {
                     st.features = f.clone();
                 }
+            }
+            if let Some(before) = before {
+                super::textedit::protect_missing_glyphs(&before, &mut t.runs);
             }
             if let Some(j) = justify {
                 t.para.justify = j;
@@ -407,6 +413,36 @@ fn reshape_area(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod area_tests {
     use super::*;
+
+    #[test]
+    fn burasagari_is_set_per_paragraph_and_saved_only_when_on() {
+        use vectorcraft_doc::Burasagari;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+        let id = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "雅楽、笙。", "area": {"width": 200, "height": 100}})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let para = |s: &Session| match &s.doc().unwrap().doc.node(NodeId(id)).unwrap().kind {
+            NodeKind::Text(t) => t.para.clone(),
+            _ => panic!("text"),
+        };
+        // New type: Standard, as in Illustrator.
+        assert_eq!(para(&s).burasagari, Burasagari::Standard);
+        s.execute("select.set", &json!({"ids": [id]})).unwrap();
+        assert!(s.execute("text.setFormat", &json!({"burasagari": "strong"})).is_err());
+        s.execute("text.setFormat", &json!({"burasagari": "forced"})).unwrap();
+        assert_eq!(para(&s).burasagari, Burasagari::Forced);
+        assert_eq!(serde_json::to_value(para(&s)).unwrap()["burasagari"], "forced");
+        s.execute("text.setFormat", &json!({"burasagari": "none"})).unwrap();
+        assert_eq!(para(&s).burasagari, Burasagari::None);
+        // Saved only when on; documents from before it read as None.
+        assert!(serde_json::to_value(para(&s)).unwrap().get("burasagari").is_none());
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(para(&s).burasagari, Burasagari::Standard);
+        let old: vectorcraft_doc::ParaStyle = serde_json::from_value(json!({"justify": "Left"})).unwrap();
+        assert_eq!(old.burasagari, Burasagari::None);
+    }
 
     #[test]
     fn leading_model_is_set_per_paragraph_and_saved_only_when_top_to_top() {

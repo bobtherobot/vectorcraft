@@ -135,6 +135,7 @@
 	Anchor Points	錨點
 	Anchor Points, Handle, and Bounding Box Display	錨點、控制把手與邊框顯示
 	Anchor/Path Labels	錨點/路徑標籤
+	Anchors:	錨點：
 	Angle	角度
 	Angle:	角度：
 	Angles	角度
@@ -194,6 +195,7 @@
 	Artwork Colors	圖稿顏色
 	As Multiple Assets	作為多個資產
 	As Single Asset	作為單一資產
+	Ascender	上緣
 	Ask When Modified	修改時詢問
 	Aspect Ratio	長寬比
 	Asset Export	資產匯出
@@ -225,6 +227,7 @@
 	Background:	背景：
 	Backspace	Backspace
 	Bar Graph Tool	橫條圖工具
+	Baseline	基線
 	Baseline Shift	基線位移
 	Basic Latin	基本拉丁文
 	Batch	批次
@@ -257,6 +260,8 @@
 	Bottom	下
 	Bottom in Front	下方置前
 	Bottom-to-Bottom Leading	基線至基線行距
+	Burasagari	標點懸掛
+	Force	強制
 	Bottom:	下：
 	Bounds	邊界
 	Bounds (Fill Proportionally)	邊界 (按比例填滿)
@@ -297,6 +302,7 @@
 	Cap	端點
 	Cap:	端點：
 	Cascade	重疊顯示
+	Center	置中
 	Center Artwork	圖稿置中
 	Center on Artboard	在工作區域置中
 	Center-Justified Tab	置中對齊定位點
@@ -437,6 +443,7 @@
 	Compression:	壓縮：
 	Condition identifier:	條件識別碼：
 	Conflict {n} of {count}	衝突 {n}／{count}
+	Connect Selected End Points	連接所選端點
 	Consolidate All Windows	合併所有視窗
 	Constrain Angle	強制角度
 	Constrain Width and Height Proportions	強制寬度與高度比例
@@ -454,6 +461,8 @@
 	Convert Color	轉換顏色
 	Convert Document Color Mode	轉換文件色彩模式
 	Convert Process to Global	將印刷色轉換為整體色
+	Convert Selected Anchor Points to Corner	將所選錨點轉換為尖角
+	Convert Selected Anchor Points to Smooth	將所選錨點轉換為平滑
 	Convert text to outlines	將文字轉換為外框
 	Convert To Area Type	轉換為區域文字
 	Convert to Artboards	轉換為工作區域
@@ -464,6 +473,7 @@
 	Convert to RGB	轉換為 RGB
 	Convert to Shape	轉換為形狀
 	Convert to sRGB	轉換為 sRGB
+	Convert:	轉換：
 	Copied the CSS of {rules} object(s)	已複製 {rules} 個物件的 CSS
 	Copies:	份數：
 	Copy	複製
@@ -484,6 +494,9 @@
 	Corner Radius:	圓角半徑：
 	Corner:	轉角：
 	Corners	轉角
+	Cut Path	切斷路徑
+	Descender	下緣
+	Flip	翻轉
 	Round	圓角
 	Radius:	半徑：
 	Inverted Round	反向圓角
@@ -519,6 +532,7 @@
 	Created:	建立時間：
 	Crop	裁切
 	Crop Image	裁切影像
+	Mask	遮色片
 	Crop Marks	裁切標記
 	Crop To	裁切至
 	Crystallize Tool	結晶化工具
@@ -703,6 +717,8 @@
 	Duplicate	製作複本
 	Duplicate and Offset 10 pt	製作複本並位移 10 pt
 	Duplicate Artboard	製作工作區域複本
+	Copy Artboard	複製工作區域
+	Cut Artboard	剪下工作區域
 	Duplicate Artboards	製作工作區域複本
 	Duplicate Brush	製作筆刷複本
 	Duplicate Character Style	製作字元樣式複本
@@ -938,6 +954,10 @@
 	Fit Artboard in Window	使工作區域符合視窗
 	Fit dashes to corners and ends	讓虛線貼合轉角與端點
 	Fit Headline	符合標題
+	Decrease Font Size	縮小字體大小
+	Increase Font Size	放大字體大小
+	Spacing	間距
+	Step Type	依增量調整文字
 	Fit in View	符合檢視
 	Fit in Window	符合視窗
 	Fit on Screen	顯示全頁
@@ -1147,6 +1167,8 @@
 	Image Map:	影像地圖：
 	Image Size	影像尺寸
 	Image Trace	影像描圖
+	Image Tracing	影像描圖物件
+	Tracing Presets	描圖預設集
 	Image Trace Presets	影像描圖預設集
 	Image:	影像：
 	Images:	影像：
@@ -2437,7 +2459,7 @@
 	Simplify…	簡化…
 	Simulate Colored Paper	模擬有色紙張
 	Simulate Paper	模擬紙張
-	Single / Double Column	單欄 / 雙欄
+	Double Column	雙欄
 	Single Left Quotation Mark	左單引號
 	Single Quotes:	單引號：
 	Single Right Quotation Mark	右單引號
@@ -2537,6 +2559,8 @@
 	Stroke (X), double-click for the Color Picker	筆畫 (X)，按兩下開啟檢色器
 	Stroke Color	筆畫顏色
 	Stroke Options	筆畫選項
+	Character:	字元：
+	Character options	字元選項
 	Stroke options	筆畫選項
 	Stroke Weight	筆畫寬度
 	Stroke:	筆畫：
@@ -2675,6 +2699,7 @@
 	Total Width:	總寬度：
 	Touch Type Tool	觸控文字工具
 	Trace	描圖
+	Trace the image with the Default preset	使用「預設」預設集描圖影像
 	Tracing	描圖中
 	Tracking	字距
 	Trademark Symbol	商標符號
@@ -2726,6 +2751,7 @@
 	Type becomes outlines, and strokes a CAD line can't draw become filled shapes.	文字會變成外框，CAD 線條無法繪製的筆畫會變成填色形狀。
 	Type Object Selection by Path Only	僅以路徑選取文字物件
 	Type on a Path	路徑文字
+	Type on a Path Options	路徑文字選項
 	Type on a Path Options…	路徑文字選項…
 	Type on a Path Tool	路徑文字工具
 	Type Orientation	文字方向
@@ -2901,6 +2927,7 @@
 	Zoom to Selection	縮放至選取範圍
 	Zoom Tool	縮放工具
 	Zoom with Mouse Wheel	使用滑鼠滾輪縮放
+	Scrub Numeric Fields by Dragging	拖曳以調整數值欄位
 	{count} file(s) in {folder}{note}. Show the package folder?	{folder} 中有 {count} 個檔案{note}。要顯示封裝資料夾嗎？
 	{count} linked file(s) not found	找不到 {count} 個連結檔案
 	{count} linked image(s) changed since this document was saved. Show the new versions?	自儲存此文件後，有 {count} 個連結影像已變更。要顯示新版本嗎？
@@ -3030,6 +3057,15 @@
 	Version	版本
 	% of all commits	佔全部提交的比例
 	Lines +/−	行數 +/−
+	Joins	轉角
+	Miter	尖角
+	Bevel	斜角
+	Offset	位移
+	Axis	軸
+axis	Horizontal	水平
+axis	Vertical	垂直
+axis	Both	兩者
 	Drag to move	拖曳以移動
 	Drag to float as a toolbar	拖曳使其浮動為工具列
 	Put back in the toolbar	放回工具列
+	Float Tool Group	浮動工具組

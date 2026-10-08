@@ -89,7 +89,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Indents and paragraph spacing are distances (General); type sizes follow Units ▸ Type.
     let unit = app.session.general_unit();
     let label = |ui: &mut Ui, s: &str, tip: &str| {
-        ui.add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(s).size(11.5).strong().color(t.text))).on_hover_text(tip);
+        let l = ui.add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(s).size(11.5).strong().color(t.text))).on_hover_text(tip);
+        crate::scrub::note_label(ui, l.rect);
     };
     egui::Grid::new("para-grid").num_columns(4).spacing([4.0, 4.0]).show(ui, |ui| {
         label(ui, "→|", tl!("Left Indent"));
@@ -161,6 +162,23 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         if menu_item(ui, tl!("Bottom-to-Bottom Leading"), has, has && !top_to_top) {
             format(app, json!({"leadingModel": "romanBaseline"}));
         }
+        // Hanging punctuation: a comma or full stop ending a line stands outside it.
+        let hang = style.as_ref().map(|(_, p)| p.burasagari);
+        ui.add_enabled_ui(has, |ui| {
+            // Indented like the items beside it (their check column).
+            ui.menu_button(format!("   {}", tl!("Burasagari")), |ui| {
+                use vectorcraft_doc::Burasagari;
+                for (label, b, key) in [
+                    (tl!("None"), Burasagari::None, "none"),
+                    (tl!("Regular"), Burasagari::Standard, "standard"),
+                    (tl!("Force"), Burasagari::Forced, "forced"),
+                ] {
+                    if menu_item(ui, label, true, hang == Some(b)) {
+                        format(app, json!({"burasagari": key}));
+                    }
+                }
+            });
+        });
     }
     ui.separator();
     menu_item(ui, tl!("Single-line Composer"), false, false);
@@ -170,7 +188,7 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         para_cmd(app, "text.setStyle", json!({"justify": "auto"}));
         format(
             app,
-            json!({"leftIndent": 0, "rightIndent": 0, "firstLineIndent": 0, "spaceBefore": 0, "spaceAfter": 0, "hyphenate": false, "direction": "auto", "leadingModel": "romanBaseline"}),
+            json!({"leftIndent": 0, "rightIndent": 0, "firstLineIndent": 0, "spaceBefore": 0, "spaceAfter": 0, "hyphenate": false, "direction": "auto", "leadingModel": "romanBaseline", "burasagari": "standard"}),
         );
     }
 }

@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Text",
             [],
             None,
-            "{x, y, text, vertical?: bool = false, size?: pt, font?: family, style?, color?, area?: {width, height}} → {id}",
+            "{x, y, text, vertical?: bool = false, size?: pt, font?: family, style?, color?, area?: {width, height}, placeholder?: bool (fill it with placeholder text instead, as the Type tools do with prefs placeholderText)} → {id}",
             has_doc,
             text_create
         ),
@@ -414,16 +414,25 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
         let h = f64_or(a, "height", 100.0);
         t.kind = vectorcraft_doc::TextKind::Area { frame: shapes::rectangle(Rect::new(0.0, 0.0, w, h)) };
     }
-    let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t);
-    t.cached_bounds = Some(lay.bounds);
+    if bool_or(p, "placeholder", false) {
+        super::typemenu::fill_with_placeholder(&mut t);
+    } else {
+        super::typecmd::refresh_bounds(&mut t);
+    }
     add_node(s, "Type", NodeKind::Text(Box::new(t)), Appearance::default(), None)
 }
 
 /// The paragraph attributes new type gets (the Type tools, `text.create`): aligned to the start of
 /// each paragraph's direction (left, right for Hebrew and Arabic), Japanese punctuation composed
-/// with Line-end Punctuation Half Width. Imported text keeps its own.
+/// with Line-end Punctuation Half Width and Standard burasagari (as in Illustrator). Imported text
+/// keeps its own.
 pub(crate) fn new_type_para() -> vectorcraft_doc::ParaStyle {
-    vectorcraft_doc::ParaStyle { justify: vectorcraft_doc::Justify::Auto, mojikumi: vectorcraft_doc::Mojikumi::LineEndHalf, ..Default::default() }
+    vectorcraft_doc::ParaStyle {
+        justify: vectorcraft_doc::Justify::Auto,
+        mojikumi: vectorcraft_doc::Mojikumi::LineEndHalf,
+        burasagari: vectorcraft_doc::Burasagari::Standard,
+        ..Default::default()
+    }
 }
 
 /// The character style new type gets: `size`, `font`, `style` and `color` from `p`, else the
