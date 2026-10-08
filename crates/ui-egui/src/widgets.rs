@@ -146,8 +146,24 @@ pub fn dim_name(ui: &mut Ui, text: &str) -> Response {
     ui.label(egui::RichText::new(text).color(t.text).size(12.5))
 }
 
+/// Preferences › Units › Numbers Without Units Are Points (#394; on until set): the app sets it
+/// when the preference changes (`prefs_dialog::apply_runtime`), the length fields read it.
+pub(crate) fn set_bare_numbers_are_points(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("bare_numbers_are_points"), on));
+}
+
+/// The unit a number typed with no unit into a field in `unit` is read in: `unit`, or for a field
+/// in picas points with Numbers Without Units Are Points on (where `12` could be either). A typed
+/// unit (`12 mm`, `2p6`, `1in`) always wins.
+pub(crate) fn typed_unit(ctx: &egui::Context, unit: Unit) -> Unit {
+    let bare_points = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bare_numbers_are_points"))).unwrap_or(true);
+    if bare_points && unit == Unit::Picas { Unit::Points } else { unit }
+}
+
 /// A recessed numeric field showing `value` (points) in `unit`. Returns the new value (points)
-/// when the user commits (Enter / focus loss). Supports unit suffixes and arithmetic.
+/// when the user commits (Enter / focus loss). Supports unit suffixes and arithmetic; a number
+/// without a unit is in `unit` ([`typed_unit`]: in points in a picas field with Numbers Without
+/// Units Are Points on).
 pub fn num_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value: Option<f64>, unit: Unit, width: f32) -> Option<f64> {
     let t = Tokens::get(ui.ctx());
     let id = ui.id().with(id);
@@ -181,12 +197,13 @@ pub fn num_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value:
         })
         .inner;
     select_all_on_focus(ui, &resp, &buf);
-    // ↑/↓ step in the field's unit; a drag on its label scrubs it.
-    let stepped = step_with_arrows(ui, &resp, &mut buf, |b| Some(unit.from_pt(unit.parse(b)?)), |v| unit.format(unit.to_pt(v)));
+    // ↑/↓ and the wheel step in the field's unit; a drag on its label scrubs it.
+    let read = typed_unit(ui.ctx(), unit);
+    let stepped = step_value(ui, &resp, &mut buf, |b| Some(unit.from_pt(read.parse(b)?)), |v| unit.format(unit.to_pt(v)));
     let scrubbed = scrub::field(ui, id, rect, &buf, value.map(|v| unit.from_pt(v)), STEP_DECIMALS);
     let commit = resp.lost_focus() && buf != shown;
     ui.data_mut(|d| d.insert_temp(id, buf.clone()));
-    if commit { unit.parse(&buf) } else { stepped.or(scrubbed).map(|v| unit.to_pt(v)) }
+    if commit { read.parse(&buf) } else { stepped.or(scrubbed).map(|v| unit.to_pt(v)) }
 }
 
 /// The places a stepped value in a unit field keeps (no 12.300000001).
@@ -198,26 +215,58 @@ pub(crate) fn round_to(v: f64, decimals: i32) -> f64 {
     (v * scale).round() / scale
 }
 
-/// ↑/↓ in focused numeric field `resp` step the number `buf` shows (`read` parses it, `show`
-/// formats it) by one (Shift: ten, Ctrl/Cmd: a tenth), applied at once as in Illustrator's panels
-/// and dialogs. The new text replaces `buf`, all selected so typing replaces it. Returns the new
-/// number when a step was taken.
-fn step_with_arrows(ui: &Ui, resp: &Response, buf: &mut String, read: impl Fn(&str) -> Option<f64>, show: impl Fn(f64) -> String) -> Option<f64> {
+/// One step of a numeric field with each modifier, most specific first (a plain pattern would also
+/// match Shift): ten with Shift, a tenth with Ctrl/Cmd, else one.
+const STEPS: [(egui::Modifiers, f64); 3] = [(egui::Modifiers::SHIFT, 10.0), (egui::Modifiers::COMMAND, 0.1), (egui::Modifiers::NONE, 1.0)];
+
+/// ↑/↓ in focused numeric field `resp`, or the mouse wheel turned over it, step the number `buf`
+/// shows (`read` parses it, `show` formats it) by one per press or wheel notch ([`STEPS`]: Shift
+/// ten, Ctrl/Cmd a tenth), applied at once as in Illustrator's panels and dialogs. The new text
+/// replaces `buf`, all selected so typing replaces it. Returns the new number when a step was
+/// taken. While the pointer is over the focused field the wheel is the field's (the panel under it
+/// doesn't scroll); an unfocused field leaves the wheel to the panel and the canvas.
+fn step_value(ui: &Ui, resp: &Response, buf: &mut String, read: impl Fn(&str) -> Option<f64>, show: impl Fn(f64) -> String) -> Option<f64> {
     // Memory focus, as the field's highlight and its typing use: `Response::has_focus` also needs the
     // window to report keyboard focus.
     if !ui.memory(|m| m.has_focus(resp.id)) {
         return None;
     }
-    use egui::{Key, Modifiers};
+    use egui::{Event, Key, MouseWheelUnit};
+    let wheel = resp.contains_pointer();
+    // Wheel turns in notches: a line each, or `line` points of a trackpad or a fine wheel; what is
+    // left of a notch carries over to the next turn.
+    let (line, notch_id) = (ui.ctx().options(|o| o.input_options.line_scroll_speed), resp.id.with("wheel"));
+    let mut notches: f32 = if wheel { ui.data(|d| d.get_temp(notch_id)).unwrap_or(0.0) } else { 0.0 };
     let mut steps = 0.0;
     ui.input_mut(|i| {
-        // Most specific first: a plain pattern would also take Shift+↑.
-        for (mods, size) in [(Modifiers::SHIFT, 10.0), (Modifiers::COMMAND, 0.1), (Modifiers::NONE, 1.0)] {
+        for (mods, size) in STEPS {
             let up = i.count_and_consume_key(mods, Key::ArrowUp) as f64;
             let down = i.count_and_consume_key(mods, Key::ArrowDown) as f64;
             steps += size * (up - down);
         }
+        if !wheel {
+            return;
+        }
+        i.events.retain(|e| {
+            let Event::MouseWheel { unit, delta, modifiers, .. } = e else { return true };
+            let Some((_, size)) = STEPS.iter().find(|(m, _)| modifiers.matches_logically(*m)) else { return true };
+            // Shift may turn the wheel sideways (the Mac does).
+            let d = if modifiers.shift { delta.x + delta.y } else { delta.y };
+            notches += match unit {
+                MouseWheelUnit::Point => d / line.max(1.0),
+                MouseWheelUnit::Line | MouseWheelUnit::Page => d,
+            };
+            let whole = notches.trunc();
+            notches -= whole;
+            steps += size * f64::from(whole);
+            false
+        });
+        // The rest of a turn egui spreads over the next frames scrolls nothing either.
+        i.smooth_scroll_delta = egui::Vec2::ZERO;
     });
+    if wheel {
+        ui.data_mut(|d| d.insert_temp(notch_id, notches));
+    }
     if steps == 0.0 {
         return None;
     }
@@ -331,6 +380,22 @@ pub fn plain_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, valu
     mixed_field(ui, id, Some(value), suffix, decimals, width)
 }
 
+/// [`plain_field`] for a number kept within `range` (the values of dialogs and preferences): what is
+/// typed, stepped or scrubbed is clamped into it and rounded to `decimals` places (0: a count).
+pub fn range_field(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+    decimals: usize,
+    width: f32,
+) -> Option<f64> {
+    let (lo, hi) = (*range.start(), *range.end());
+    let places = decimals.min(6) as i32;
+    plain_field(ui, id, value.clamp(lo, hi), suffix, decimals, width).map(|v| round_to(v, places).clamp(lo, hi))
+}
+
 /// [`plain_field`] for a value the selected objects may not share: `None` shows a blank field.
 pub fn mixed_field(
     ui: &mut Ui,
@@ -355,10 +420,10 @@ pub fn mixed_field(
     let shown = value.map(show).unwrap_or_default();
     let (mut buf, resp, rect) = recessed_text(ui, id, &shown, width, 1);
     select_all_on_focus(ui, &resp, &buf);
-    // ↑/↓ step at the field's precision (a count ignores Ctrl/Cmd's tenth); a drag on its label
-    // scrubs it.
+    // ↑/↓ and the wheel step at the field's precision (a count ignores Ctrl/Cmd's tenth); a drag on
+    // its label scrubs it.
     let decimals = decimals.min(6) as i32;
-    let stepped = step_with_arrows(ui, &resp, &mut buf, read, show).map(|v| round_to(v, decimals));
+    let stepped = step_value(ui, &resp, &mut buf, read, show).map(|v| round_to(v, decimals));
     let scrubbed = scrub::field(ui, id, rect, &buf, value, decimals);
     if resp.lost_focus() && buf != shown { read(&buf) } else { stepped.or(scrubbed).filter(|&v| Some(v) != value) }
 }
@@ -1265,13 +1330,15 @@ pub fn opt_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value:
         });
     let resp = framed.inner;
     select_all_on_focus(ui, &resp, &buf);
+    // ↑/↓ and the wheel step a value (an empty field stays empty); a drag on its label scrubs it.
+    let stepped = step_value(ui, &resp, &mut buf, |b| Some(unit.from_pt(unit.parse(b)?)), |v| unit.number(unit.to_pt(v)));
     let scrubbed = scrub::field(ui, id, framed.response.rect, &buf, value.map(|v| unit.from_pt(v)), STEP_DECIMALS);
     ui.data_mut(|d| d.insert_temp(id, buf.clone()));
     if resp.lost_focus() && buf != shown {
         let s = buf.trim();
-        if s.is_empty() { Some(None) } else { unit.parse(s).map(Some) }
+        if s.is_empty() { Some(None) } else { typed_unit(ui.ctx(), unit).parse(s).map(Some) }
     } else {
-        scrubbed.map(|v| Some(unit.to_pt(v)))
+        stepped.or(scrubbed).map(|v| Some(unit.to_pt(v)))
     }
 }
 

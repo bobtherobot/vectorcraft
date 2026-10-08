@@ -1,7 +1,7 @@
 //! The document canvas: rendering, rulers, navigation, pointer routing to tools and on-canvas
 //! selection visuals (bounding box, anchors, handles, smart-guide style labels).
 
-use egui::{Color32, CornerRadius, Pos2, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Color32, CornerRadius, Pos2, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use serde_json::json;
 use vectorcraft_doc::{Node, NodeKind, Unit};
 use vectorcraft_geom::{Affine, BezPath, PathEl, Point, Rect};
@@ -91,6 +91,10 @@ fn drag_id() -> egui::Id {
 fn temp_tool_id() -> egui::Id {
     egui::Id::new("canvas-temp-tool")
 }
+/// Where the pointer was last seen during a press on the canvas.
+fn drag_pos_id() -> egui::Id {
+    egui::Id::new("canvas-drag-pos")
+}
 
 /// Selection, Direct Selection and Group Selection: the tools Cmd switches to for a drag.
 pub(crate) fn is_selection_tool(id: &str) -> bool {
@@ -156,8 +160,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     if app.ui.home.is_some_and(|k| k != crate::menus::home_key(app)) {
         app.ui.home = None;
     }
-    if app.session.active().is_none() || app.ui.home.is_some() {
+    if crate::menus::home_showing(app) {
         home(app, ui, full);
+        return;
+    }
+    if app.session.active().is_none() {
+        // No document and Show The Home Screen When No Documents Are Open off: an empty window.
+        ui.painter().rect_filled(full, 0.0, t.panel_darker);
         return;
     }
     let rect = if app.ui.view.rulers && app.ui.screen_mode < 3 { egui::Rect::from_min_max(full.min + vec2(RULER, RULER), full.max) } else { full };
@@ -453,6 +462,10 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     let v = *app.view().unwrap_or(&View::default());
     let xf = Xf::new(rect, &v);
     let hover = pointer.hover_pos().filter(|p| rect.contains(*p));
+    // A lifted pen or finger takes the pointer away in the frame it lifts (egui's `PointerGone`),
+    // so a tap whose press and lift come in one frame has no hover position: it presses (and
+    // double-taps) where it was seen last (#491).
+    let at = hover.or_else(|| pointer.interact_pos().filter(|p| rect.contains(*p)));
     app.hover_doc = hover.map(|p| xf.to_doc(p));
     let view = app.view_info();
     let drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id()));
@@ -494,7 +507,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     if pointer.primary_pressed()
         && resp.hovered()
         && !middle_pan
-        && let Some(p) = hover
+        && let Some(p) = at
     {
         ui.ctx().memory_mut(|mem| mem.stop_text_input());
         app.ui.flyout = None;
@@ -520,7 +533,10 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
             dispatch(app, &ev, view);
             kind
         };
-        ui.data_mut(|dd| dd.insert_temp(drag_id(), d));
+        ui.data_mut(|dd| {
+            dd.insert_temp(drag_id(), d);
+            dd.insert_temp(drag_pos_id(), p);
+        });
     } else if drag.is_none()
         && resp.hovered()
         && pointer.button_pressed(egui::PointerButton::Middle)
@@ -529,9 +545,11 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
         // Middle-button drag pans the view whatever the tool.
         ui.data_mut(|dd| dd.insert_temp(drag_id(), Drag::Pan { start, center: v.center, middle: true }));
     } else if let Some(d) = drag {
-        let p = pointer.interact_pos().unwrap_or(rect.center());
+        // The pointer gone (a pen lifted with its press), the drag ends where it was last seen.
+        let p = pointer.interact_pos().or_else(|| ui.data(|dd| dd.get_temp(drag_pos_id()))).unwrap_or(rect.center());
         let held = if middle_pan { pointer.button_down(egui::PointerButton::Middle) } else { pointer.primary_down() };
         if held {
+            ui.data_mut(|dd| dd.insert_temp(drag_pos_id(), p));
             match d {
                 Drag::Pan { start, center, .. } => {
                     let d = xf.delta_to_doc(p - start);
@@ -569,7 +587,10 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
                 }
             }
         } else {
-            ui.data_mut(|dd| dd.remove::<Drag>(drag_id()));
+            ui.data_mut(|dd| {
+                dd.remove::<Drag>(drag_id());
+                dd.remove::<Pos2>(drag_pos_id());
+            });
             match d {
                 Drag::ZoomBox { start } => {
                     let r = egui::Rect::from_two_pos(start, p);
@@ -608,7 +629,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
         dispatch(app, &ev, view);
     }
     if resp.double_clicked()
-        && let Some(p) = hover
+        && let Some(p) = at
     {
         let ev = PointerEvent { kind: PointerKind::DoubleClick, pos: xf.to_doc(p), mods: mods(m, space), pressure: 1.0 };
         let before = app.session.tool_id().to_string();
@@ -1544,7 +1565,7 @@ fn draw_overlays(p: &egui::Painter, xf: &Xf, overlays: &[Overlay], t: &Tokens, l
     }
 }
 
-/// The Home screen shown when no document is open.
+/// The Home screen (`app.home`; with no document open, unless its preference is off).
 fn home(app: &mut VectorcraftApp, ui: &mut Ui, rect: egui::Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(rect, 0.0, t.panel_darker);
@@ -1647,7 +1668,20 @@ fn upload(app: &mut VectorcraftApp, ctx: &egui::Context, img: &vectorcraft_rende
     }
 }
 
+/// The Contextual Task Bar's area.
+fn task_bar_id() -> egui::Id {
+    egui::Id::new("task-bar")
+}
+
+/// Where the Contextual Task Bar was last drawn (none while it isn't shown).
+pub(crate) fn task_bar_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    let id = task_bar_id();
+    ctx.memory(|m| m.areas().is_visible(&egui::LayerId::new(egui::Order::Middle, id)).then(|| m.area_rect(id)).flatten())
+}
+
 /// The Contextual Task Bar: a floating pill under the selection with the most likely next actions.
+/// Its handle drags it anywhere on the canvas; unpinned it keeps that offset as it follows the
+/// selection, pinned it stays put ([`crate::state::TaskBarPlace`]).
 fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
@@ -1680,12 +1714,36 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
     }
     items.push((tl!("Duplicate"), "copy", "edit.duplicate"));
     let fill = first.as_ref().map(|f| f.appearance.fill_paint()).unwrap_or_default();
+    let doc = st.uid;
     let anchor = xf.to_screen(Point::new(b.center().x, b.y1));
     let est_w = 118.0 + items.iter().map(|(l, _, _)| l.len() as f32 * 7.2 + 44.0).sum::<f32>();
-    let x = (anchor.x - est_w / 2.0).clamp(xf.rect.left() + 8.0, (xf.rect.right() - est_w - 8.0).max(xf.rect.left() + 8.0));
-    let y = (anchor.y + 28.0).min(xf.rect.bottom() - 56.0);
-    let mut run: Option<String> = None;
-    egui::Area::new(egui::Id::new("task-bar")).order(egui::Order::Middle).fixed_pos(pos2(x, y)).show(ui.ctx(), |ui| {
+    // Its place under the selection, then where the handle moved it, kept on the canvas (with the
+    // bar's size last frame, the estimate before it first shows).
+    let under = pos2(anchor.x - est_w / 2.0, anchor.y + 28.0);
+    let id = task_bar_id();
+    let size = egui::AreaState::load(ui.ctx(), id).and_then(|s| s.size).unwrap_or(vec2(est_w, 44.0));
+    let bounds = xf.rect.shrink(8.0);
+    let keep_in = |p: Pos2| p.clamp(bounds.min, (bounds.max - size).max(bounds.min));
+    let place = &mut app.ui.task_bar_place;
+    // Just unpinned: follow the selection from the pinned spot.
+    if !place.pinned
+        && let Some(at) = place.pin_at.take()
+    {
+        place.offset = Some((doc, xf.rect.min + at - under));
+    }
+    let pos = keep_in(match place.pin_at {
+        Some(at) => xf.rect.min + at,
+        None => under + place.offset.filter(|(d, _)| *d == doc).map_or(Vec2::ZERO, |(_, o)| o),
+    });
+    place.shown_at = Some(pos - xf.rect.min);
+    // Pinned before it ever showed: hold it here.
+    if place.pinned && place.pin_at.is_none() {
+        place.pin_at = place.shown_at;
+    }
+    let pinned = place.pinned;
+    let mut moved = Vec2::ZERO;
+    let mut run: Option<(&str, serde_json::Value)> = None;
+    egui::Area::new(id).order(egui::Order::Middle).fixed_pos(pos).show(ui.ctx(), |ui| {
         egui::Frame::NONE
             .fill(t.panel)
             .stroke(Stroke::new(1.0, t.tool_active))
@@ -1695,8 +1753,15 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    let (g, _) = ui.allocate_exact_size(vec2(4.0, 28.0), Sense::hover());
-                    ui.painter().rect_filled(g.shrink2(vec2(0.5, 4.0)), CornerRadius::same(2), t.button_border);
+                    let (g, grip) = ui.allocate_exact_size(vec2(4.0, 28.0), Sense::drag());
+                    let active = grip.hovered() || grip.dragged();
+                    ui.painter().rect_filled(g.shrink2(vec2(0.5, 4.0)), CornerRadius::same(2), if active { t.text_dim } else { t.button_border });
+                    if grip.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        moved = grip.drag_delta();
+                    } else if grip.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
                     for (label, icon, cmd) in &items {
                         let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), t.text_strong);
                         let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 38.0, 30.0), Sense::click());
@@ -1707,7 +1772,7 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
                         crate::icons::paint(ui, icon, egui::Rect::from_min_size(r.min + vec2(8.0, 7.0), vec2(16.0, 16.0)), t.icon);
                         ui.painter().galley(pos2(r.left() + 30.0, r.center().y - galley.size().y / 2.0), galley, t.text_strong);
                         if resp.clicked() {
-                            run = Some(cmd.to_string());
+                            run = Some((*cmd, json!({})));
                         }
                     }
                     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 30.0), Sense::click());
@@ -1723,16 +1788,41 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
                         app.ui.open_panel = Some("swatches".into());
                     }
                     if widgets::icon_button(ui, "lock", tl!("Lock (⌘2)"), false, 30.0).clicked() {
-                        run = Some("object.lock".into());
+                        run = Some(("object.lock", json!({})));
                     }
-                    if widgets::icon_button(ui, "ellipsis", tl!("Hide Contextual Task Bar"), false, 30.0).clicked() {
-                        run = Some("window.taskBar".into());
-                    }
+                    let more = widgets::icon_button(ui, "ellipsis", tl!("More Options"), false, 30.0);
+                    egui::Popup::menu(&more).show(|ui| {
+                        ui.set_min_width(170.0);
+                        let bar = [
+                            (tl!("Hide Bar"), "window.taskBar", false),
+                            (tl!("Pin Bar Position"), "window.taskBar.pin", pinned),
+                            (tl!("Reset Bar Position"), "window.taskBar.reset", false),
+                        ];
+                        for (label, cmd, checked) in bar {
+                            if widgets::menu_item(ui, label, true, checked) {
+                                run = Some((cmd, json!({})));
+                            }
+                        }
+                        ui.separator();
+                        if widgets::menu_item(ui, tl!("Show Properties Panel"), true, false) {
+                            run = Some(("window.panel", json!({"panel": "properties"})));
+                        }
+                    });
                 });
             });
     });
-    if let Some(c) = run {
-        crate::menus::invoke(app, &c, json!({}));
+    if moved != Vec2::ZERO {
+        let to = keep_in(pos + moved);
+        let place = &mut app.ui.task_bar_place;
+        if place.pinned {
+            place.pin_at = Some(to - xf.rect.min);
+        } else {
+            place.offset = Some((doc, to - under));
+        }
+        ui.ctx().request_repaint();
+    }
+    if let Some((c, p)) = run {
+        crate::menus::invoke(app, c, p);
     }
 }
 
@@ -2791,5 +2881,156 @@ mod tests {
         assert!(app.session.tool_composing());
         assert!(!app.take_ime_discard());
         assert_eq!(plain(&app, id), "雅がくらくか");
+    }
+
+    /// The events eframe's winit integration sends for a pen (Windows Ink) or a finger: a touch
+    /// with its pressure, and the mouse it stands in for (#491).
+    fn pen(phase: egui::TouchPhase, pos: Pos2, force: f32) -> Vec<egui::Event> {
+        let touch = egui::Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(1), phase, pos, force: Some(force) };
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        match phase {
+            egui::TouchPhase::Start => vec![touch, egui::Event::PointerMoved(pos), button(true)],
+            egui::TouchPhase::Move => vec![touch, egui::Event::PointerMoved(pos)],
+            egui::TouchPhase::End | egui::TouchPhase::Cancel => vec![touch, button(false), egui::Event::PointerGone],
+        }
+    }
+
+    /// A pen stroke across `pts` (document points), one frame per sample, with its pressures.
+    fn pen_stroke(app: &mut VectorcraftApp, ctx: &egui::Context, pts: &[(f64, f64, f32)]) {
+        let xf = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap());
+        let last = pts.len() - 1;
+        for (i, &(x, y, force)) in pts.iter().enumerate() {
+            let phase = if i == 0 { egui::TouchPhase::Start } else { egui::TouchPhase::Move };
+            frame(app, ctx, pen(phase, xf.to_screen(Point::new(x, y)), force));
+            if i == last {
+                frame(app, ctx, pen(egui::TouchPhase::End, xf.to_screen(Point::new(x, y)), force));
+            }
+        }
+    }
+
+    /// #491: a pen or a finger draws as the mouse does, and its pressure reaches the tools that
+    /// use it; the pointer leaving with the lift doesn't move the stroke's end.
+    #[test]
+    fn pen_and_touch_input_drive_the_tools_with_their_pressure() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 800, "height": 600})).unwrap();
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, vec![]);
+        app.select_tool("pencil");
+        pen_stroke(&mut app, &ctx, &[(100.0, 100.0, 0.5), (140.0, 120.0, 0.6), (180.0, 150.0, 0.7), (220.0, 200.0, 0.4)]);
+        let b = app.session.active().unwrap().doc.art_bounds().expect("the pen drew a path");
+        assert!(b.x0 > 90.0 && b.y0 > 90.0 && b.x1 < 230.0 && b.y1 < 210.0 && b.x1 > 200.0, "the stroke stays where the pen went: {b:?}");
+
+        // Bloat with Use Pressure Pen: each sample carries the pen's pressure.
+        app.session.execute("shape.rectangle", &json!({"x": 300, "y": 300, "width": 200, "height": 200})).unwrap();
+        app.select_tool("bloat");
+        app.session.set_tool_option("usePressure", &json!(true));
+        pen_stroke(&mut app, &ctx, &[(500.0, 350.0, 0.2), (500.0, 400.0, 0.5), (500.0, 420.0, 0.8)]);
+        let (cmd, p) = app.session.journal.last().unwrap().clone();
+        assert_eq!(cmd, "object.liquify");
+        let pressures: Vec<f64> = p["points"].as_array().unwrap().iter().map(|s| (s[2].as_f64().unwrap() * 100.0).round() / 100.0).collect();
+        assert_eq!(pressures.first(), Some(&0.2), "the press's own pressure: {pressures:?}");
+        assert!(pressures.contains(&0.5) && pressures.contains(&0.8), "{pressures:?}");
+    }
+
+    /// #491: a pen tap whose press and lift come in one frame selects what it tapped, and the
+    /// lift (the pointer gone with it) doesn't drag the selection to the canvas's centre.
+    #[test]
+    fn a_pen_tap_within_one_frame_clicks_where_it_tapped() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 800, "height": 600})).unwrap();
+        let id = app.session.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 100, "height": 100})).unwrap()["id"].as_u64().unwrap();
+        app.session.execute("select.none", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, vec![]);
+        app.select_tool("selection");
+        let before = app.session.active().unwrap().doc.art_bounds();
+        let at = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap()).to_screen(Point::new(150.0, 150.0));
+        let mut tap = pen(egui::TouchPhase::Start, at, 0.5);
+        tap.extend(pen(egui::TouchPhase::End, at, 0.5));
+        frame(&mut app, &ctx, tap);
+        frame(&mut app, &ctx, vec![]);
+        let doc = app.session.active().unwrap();
+        assert_eq!(doc.selection.objects, vec![vectorcraft_doc::NodeId(id)]);
+        assert_eq!(doc.doc.art_bounds(), before, "the tap moved nothing");
+    }
+
+    /// The Contextual Task Bar's handle drags it: unpinned it keeps that offset as it follows the
+    /// selection, pinned it stays put when the selection changes, unpinned again it follows from
+    /// there, and Reset Bar Position puts it back under the selection. It never leaves the canvas,
+    /// also when the window shrinks.
+    #[test]
+    fn the_task_bar_is_dragged_by_its_handle_pinned_and_reset() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        let mut square =
+            |x: f64, y: f64| app.session.execute("shape.rectangle", &json!({"x": x, "y": y, "width": 40, "height": 40})).unwrap()["id"].clone();
+        let (a, b) = (square(120.0, 40.0), square(220.0, 150.0));
+        app.select_tool("selection");
+        let ctx = egui::Context::default();
+        let bar = || task_bar_rect(&ctx).expect("the task bar shows");
+        let select = |app: &mut VectorcraftApp, id: &serde_json::Value| {
+            app.session.execute("select.set", &json!({"ids": [id]})).unwrap();
+            frame(app, &ctx, vec![]);
+            frame(app, &ctx, vec![]);
+            bar().min
+        };
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let drag = |app: &mut VectorcraftApp, by: Vec2| {
+            let grip = pos2(bar().left() + 11.0, bar().center().y);
+            frame(app, &ctx, vec![egui::Event::PointerMoved(grip)]);
+            frame(app, &ctx, vec![button(grip, true)]);
+            frame(app, &ctx, vec![egui::Event::PointerMoved(grip + by)]);
+            frame(app, &ctx, vec![button(grip + by, false)]);
+            frame(app, &ctx, vec![]);
+            bar().min
+        };
+        let near = |p: Pos2, q: Pos2| assert!((p - q).length() < 1.5, "{p:?} is not at {q:?}");
+        let (under_a, under_b) = (select(&mut app, &a), select(&mut app, &b));
+        assert!(under_b.y > under_a.y + 100.0, "each bar sits under its selection");
+
+        // Dragged unpinned: it keeps its offset from the selection.
+        select(&mut app, &a);
+        let by = vec2(40.0, -30.0);
+        near(drag(&mut app, by), under_a + by);
+        near(select(&mut app, &b), under_b + by);
+        assert!(!app.ui.task_bar_place.pinned);
+
+        // Pinned: it stays where it is across selection changes, and the handle still moves it.
+        assert_eq!(app.run("window.taskBar.pin", json!({})).unwrap(), json!(true));
+        assert_eq!(crate::menus::checked(&app, "window.taskBar.pin", &json!({})), Some(true));
+        near(select(&mut app, &a), under_b + by);
+        let spot = drag(&mut app, vec2(-20.0, 10.0));
+        near(spot, under_b + by + vec2(-20.0, 10.0));
+        near(select(&mut app, &b), spot);
+
+        // Unpinned: it follows the selection from where it is, kept on the canvas.
+        assert_eq!(app.run("window.taskBar.pin", json!({"pinned": false})).unwrap(), json!(false));
+        near(select(&mut app, &a), spot);
+        let canvas = app.canvas_rect.unwrap();
+        let last = canvas.max - vec2(8.0, 8.0) - bar().size();
+        near(select(&mut app, &b), (under_b + (spot - under_a)).min(last));
+        assert!(app.run("window.taskBar.pin", json!({"pinned": "yes"})).is_err());
+
+        // Kept on the canvas: dragged far off, then pinned in the corner of a shrinking window.
+        near(drag(&mut app, vec2(-2000.0, -2000.0)), canvas.min + vec2(8.0, 8.0));
+        app.run("window.taskBar.pin", json!({"pinned": true})).unwrap();
+        drag(&mut app, vec2(2000.0, 2000.0));
+        near(bar().max, canvas.max - vec2(8.0, 8.0));
+        let small = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(640.0, 480.0))), ..Default::default() };
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(small.clone(), |ui| show(&mut app, ui));
+            out.textures_delta.clear();
+        }
+        let canvas = app.canvas_rect.unwrap();
+        assert!(canvas.width() < 700.0, "the canvas shrank: {canvas:?}");
+        near(bar().max, canvas.max - vec2(8.0, 8.0));
+
+        // Reset: back under the selection, unpinned.
+        frame(&mut app, &ctx, vec![]);
+        app.run("window.taskBar.reset", json!({})).unwrap();
+        assert!(!app.ui.task_bar_place.pinned);
+        near(select(&mut app, &a), under_a);
+        near(select(&mut app, &b), under_b);
     }
 }

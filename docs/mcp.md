@@ -189,6 +189,16 @@ objects' fills or strokes differ (`fillMixed` / `strokeMixed`, drawn as a "?" pr
 | `text_wrap` | `{ids?, offset?, invert?, release?}` | Area type below the objects (same layer) flows around them. |
 | `undo` / `redo` | `{}` | |
 
+With `mods.shift`, a marquee dragged with the Selection tool toggles the objects it reaches (the selected ones leave
+the selection, the others join it, the rest stays), and one dragged with Direct or Group Selection toggles the anchors
+inside it (a path left with none leaves the selection, one with all of them is selected whole). The Lasso adds anchors
+with `mods.shift` and takes them away with `mods.alt`. They run `select.toggle {ids}` and `select.anchorsMany {items,
+mode: "set"|"add"|"toggle"|"subtract"}`:
+
+```json
+{"name":"pointer_gesture","arguments":{"tool":"selection","mods":{"shift":true},"events":[{"kind":"down","x":180,"y":80},{"kind":"drag","x":300,"y":200},{"kind":"up","x":380,"y":200}]}}
+```
+
 Appearance stacks: an object can carry several fills and strokes (`appearance.addFill`, `appearance.addStroke`), indexed
 in paint order (0 is painted first, the bottom row of the Appearance panel). `paint.setFill`, `paint.setStroke`,
 `stroke.set`, `stroke.setAdvanced`, `paint.editGradient`, `paint.setGradientGeom` and `transparency.set` take
@@ -1180,9 +1190,11 @@ wheel zooms about the pointer, Shift-wheel scrolls up and down, Cmd/Ctrl-wheel s
 default: in View › Pixel Preview at 600% zoom and above, a line at every document pixel over the art),
 `recentFontsCount`, `antiAliasedArtwork` (on by default; off, the canvas draws the art with hard edges — a pixel is
 painted when the art covers at least half of it — while raster effects and pattern tiles stay smooth; exports keep
-their own Anti-aliasing option) and
+their own Anti-aliasing option),
 `scrubNumericFields` (on: a horizontal drag on a numeric field's label steps the field, one undo step per drag; the
-control channel's `ui.drag` scrubs).
+control channel's `ui.drag` scrubs), `showHomeScreen` (on by default: the Home screen while no document is open;
+off, an empty window, and the Home button or `app.home` still shows the screen) and `autoCollapseIconPanels` (off by
+default: on, a click away from a panel popped out of the icon column puts it away).
 
 The Smart Guides preferences (Preferences › Smart Guides) apply to `pointer_gesture` with Smart Guides on (the
 default view) and to the mouse; they change what the tools show and how far a target pulls, never where a snapped
@@ -1201,6 +1213,16 @@ point lands:
 - `snappingTolerance` (0–40 px, 4 by default): how near an anchor, edge, centre or artboard edge pulls a drawn point,
   a dragged selection, a bounding-box handle, a ruler guide or an artboard. With Smart Guides off, Snap to Point uses
   `snapToPointTolerance` instead.
+
+With Smart Guides on, a bounding-box handle dragged with the Selection or Free Transform tool (`mods.shift`
+proportional, `mods.alt` from the centre) lands on another object's anchor or centre (labelled "anchor" or
+"center"), else its corners and side line up with the edges and centres of the other objects and the artboards (a
+line and "align"). The Rotate, Scale, Shear and Reflect tools start a drag from the anchor or centre they grab and
+snap the pointer as drawing tools do, so dragging a corner onto another object's anchor scales exactly onto it:
+
+```json
+{"name":"pointer_gesture","arguments":{"tool":"scale","events":[{"kind":"down","x":100,"y":100},{"kind":"up","x":100,"y":100},{"kind":"down","x":199,"y":198},{"kind":"drag","x":302,"y":262},{"kind":"up","x":302,"y":262}]}}
+```
 
 Not read yet: Construction Guides and their Angles, and Spacing Guides (the tools draw neither).
 
@@ -1305,6 +1327,10 @@ three: General (rulers, positions and sizes, the Info panel, dialog distances, c
 (`document.inspect` → `units`): `document.setUnits {units}` (Document Setup) sets it for that document, and
 `prefs.set {key: "unitsGeneral", value}` sets it for the active document too (one undo step) and is the units
 `file.new` starts in when it gets no `units`. Stroke and Type are the preferences `unitsStroke` and `unitsType`.
+`numbersWithoutUnitsArePoints` (on by default) makes the desktop app's length fields in picas read a number typed
+with no unit in points (`12` is 12 pt, `2p6` and `1p` stay picas, `12 mm` millimetres); off, it is in picas. Fields in
+other units read it in their unit either way, and the Preferences dialog dims the option unless a unit is Picas.
+Command params are in points either way.
 `prefs.list` marks the length preferences (`keyboardIncrement`, `cornerRadius`, `pasteOffset`, `gridlineEvery`,
 `typeSizeIncrement`, `baselineShiftIncrement`) with `measure: "general"|"type"`; they are kept in points and also take
 a string with a unit. Unit names: `Points`, `Picas`, `Inches`, `Millimeters`, `Centimeters`, `Pixels`, `Feet & Inches`,

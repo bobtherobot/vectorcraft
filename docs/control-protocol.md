@@ -18,13 +18,13 @@ so only enable it while you use it. Transport: `apps/vectorcraft/src/control_ser
 | `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | | every command with label, shortcut, params doc, enablement |
 | `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does |
-| `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), view, canvas rect, window size, perf, background saves and exports still running |
+| `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), `taskBar` (`pinned`, and `rect` `[x, y, w, h]` while the Contextual Task Bar shows), view, canvas rect, window size, perf, background saves and exports still running |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
 | `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
 | `ui.tool.select` / `ui.tool.list` | `{tool}` | |
 | `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | synthetic keyboard input |
-| `ui.wheel` | `{x, y, dy?, dx?, unit?: "line"\|"point", shift?, alt?, cmd?}` | a mouse wheel turn over screen point (x, y): `dy` notches up (+) or down, `dx` sideways. Over the canvas the wheel scrolls and Cmd- or Alt-wheel (Option on the Mac) zooms about the pointer; with the `zoomWithMouseWheel` preference the wheel and Alt-wheel zoom about the pointer, Shift-wheel scrolls up and down and Cmd-wheel (Ctrl on Windows and Linux) sideways |
+| `ui.wheel` | `{x, y, dy?, dx?, unit?: "line"\|"point", shift?, alt?, cmd?}` | a mouse wheel turn over screen point (x, y): `dy` notches up (+) or down, `dx` sideways. Over the canvas the wheel scrolls and Cmd- or Alt-wheel (Option on the Mac) zooms about the pointer; with the `zoomWithMouseWheel` preference the wheel and Alt-wheel zoom about the pointer, Shift-wheel scrolls up and down and Cmd-wheel (Ctrl on Windows and Linux) sideways. Over a focused numeric field (click it first) each notch steps its value as Up/Down do (Shift: ten, Cmd/Ctrl: a tenth) and the panel stays put; over anything else in a panel the wheel scrolls it |
 | `ui.set` | `{brightness?, panel?, rulers?, outline?, grid?, smartGuides?, boundingBox?, controlBar?}` | |
 | `ui.dialog.set` / `.confirm` / `.cancel` | `{field, value}` | fill and submit the open dialog |
 | `ui.screenshot` | `{path?}` | capture the window (PNG). Needs a presented frame: with the screen locked or the window minimized/covered it fails after ~8 s with an explanatory error |
@@ -204,6 +204,15 @@ layout holding `tool` (omitted toggles; a tool alone in its slot is an error). W
 that open its flyout raise the strip instead. The strips (`ui.floating_flyouts` in `ui.inspect`: the group's tools
 and the strip's top-left corner) are saved with the preferences and in user workspaces; the built-in workspaces
 float none.
+
+The Contextual Task Bar: its handle (the grip at its left end) drags it anywhere on the canvas, which always holds
+it whole, also when the window shrinks. Unpinned, the bar keeps that offset as it follows the selection, until
+another document becomes active. Its More Options (…) menu has Hide Bar (`window.taskBar`); Pin Bar Position
+(`window.taskBar.pin {pinned?}`, omitted toggles, checked while pinned), which holds the bar where it is across
+selection changes (the handle still moves it) and, turned off, lets it follow the selection again from there; Reset
+Bar Position (`window.taskBar.reset`), which unpins it and puts it back under the selection; and Show Properties
+Panel. As in Illustrator, neither the position nor the pin is saved: each launch starts with the bar under the
+selection.
 
 Flatten Transparency: `ui.flattenTransparencyDialog` opens the `flattenTransparency` dialog for the selection
 (fields `preset`: a preset name, setting it loads that preset's options; the option keys of
