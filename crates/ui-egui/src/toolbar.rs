@@ -1037,4 +1037,55 @@ pub(crate) mod tests {
         let r = ctx.memory(|m| m.area_rect(floating_area("pen"))).unwrap();
         assert!(r.min.x.is_finite() && r.min.y.is_finite() && r.left() >= 0.0, "on screen: {r:?}");
     }
+
+    /// Hover `at` for two seconds, coming from elsewhere: the texts painted meanwhile.
+    fn hovered_texts(app: &mut VectorcraftApp, ctx: &egui::Context, t0: f64, at: Pos2) -> Vec<String> {
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut shown = vec![];
+        for i in 0..20 {
+            let events = match i {
+                0 => vec![Event::PointerGone],
+                1 => vec![Event::PointerMoved(at)],
+                _ => vec![],
+            };
+            let time = t0 + f64::from(i) * 0.1;
+            let raw = egui::RawInput {
+                events,
+                time: Some(time),
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(400.0, 1200.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                theme::show_tooltips(ui.ctx(), app.session.prefs.show_tool_tips);
+                show(app, ui);
+            });
+            out.textures_delta.clear();
+            out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
+        }
+        shown
+    }
+
+    #[test]
+    fn a_floating_flyouts_buttons_have_tool_tips_when_tool_tips_are_on() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        let tools: Vec<String> = ["rectangle", "roundedRectangle", "star"].map(String::from).to_vec();
+        app.ui.floating_flyouts.push(crate::state::FloatingFlyout { tools, pos: [150.0, 600.0] });
+        let ctx = egui::Context::default();
+        shapes_button(&mut app, &ctx);
+        frame(&mut app, &ctx, 1.0, vec![]);
+        let strip = ctx.memory(|m| m.area_rect(floating_area("rectangle"))).unwrap();
+        let star = pos2(strip.left() + STRIP_BUTTON.x * 2.5, strip.center().y);
+        let tip = tl!("Star Tool").to_string();
+        assert!(hovered_texts(&mut app, &ctx, 10.0, star).contains(&tip), "on by default");
+        app.session.prefs.show_tool_tips = false;
+        assert!(!hovered_texts(&mut app, &ctx, 20.0, star).contains(&tip), "off: no tool tip");
+        app.session.prefs.show_tool_tips = true;
+        assert!(hovered_texts(&mut app, &ctx, 30.0, star).contains(&tip), "on again");
+    }
 }
