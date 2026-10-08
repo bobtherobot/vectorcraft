@@ -18,10 +18,11 @@ Or double-click `launchers/linux/install.sh` in your file manager and choose **R
 
 It adds **VectorCraft** to your desktop and applications menu, with its icon. It launches:
 
-- this checkout's build (`target/release/vectorcraft`) when there is one, so after
-  `cargo build --release -p vectorcraft` the icon always opens your latest build;
-- else, when [Rust](https://rustup.rs) is installed, that build, made first. Built on your own
-  machine, it opens without the macOS and Windows warnings that unsigned downloads get;
+- with [Rust](https://rustup.rs) installed, this checkout's build (`target/release/vectorcraft`),
+  brought up to date first: cargo rebuilds only what changed, and does nothing when nothing did.
+  Built on your own machine, it opens without the macOS and Windows warnings that unsigned
+  downloads get;
+- else this checkout's build, when there is one;
 - otherwise the AppImage from the latest release, downloaded to `~/.local/share/vectorcraft/`
   and checked against the release's `SHA256SUMS.txt`.
 
@@ -30,7 +31,8 @@ Options (`--help` lists them):
 | Option | What it does |
 | --- | --- |
 | `--download` | use the release AppImage even if you have a local build or Rust |
-| `--local --build` | build from source first (needs [Rust](https://rustup.rs)) |
+| `--build` | build from source first (the default with [Rust](https://rustup.rs); fails without it) |
+| `--no-build` | launch the local build as it is, even when the sources are newer |
 | `--no-desktop-icon` | only add the applications-menu entry |
 | `--repo OWNER/NAME` | download from another GitHub repository |
 

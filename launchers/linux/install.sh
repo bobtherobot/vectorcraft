@@ -3,16 +3,19 @@
 # menu, with the app icon. No root needed; run it again to update, uninstall.sh to remove.
 #
 # Which app it launches:
-#   - this checkout's release build (target/release/vectorcraft), when there is one;
-#   - else, when Rust is installed, that build, made first (no signing warnings on any OS);
+#   - with Rust installed, this checkout's release build (target/release/vectorcraft), brought up
+#     to date first: cargo rebuilds what changed since the last build, and does nothing when
+#     nothing did (no signing warnings on any OS);
+#   - else this checkout's release build, when there is one;
 #   - otherwise the AppImage from the latest GitHub Release, downloaded and sha256-checked into
 #     ~/.local/share/vectorcraft/.
 #
-# Usage: launchers/linux/install.sh [--local | --download] [--build] [--no-desktop-icon]
-#                                   [--repo OWNER/NAME]
-#   --local            use this checkout's build (fails if there is none; add --build)
+# Usage: launchers/linux/install.sh [--local | --download] [--build | --no-build]
+#                                   [--no-desktop-icon] [--repo OWNER/NAME]
+#   --local            use this checkout's build (fails if there is none and Rust isn't installed)
 #   --download         use the latest release's AppImage, even with a local build or Rust
-#   --build            build the release binary first (needs Rust: https://rustup.rs)
+#   --build            build the release binary (the default with Rust; fails without it)
+#   --no-build         use the local build as it is, even when the sources are newer
 #   --no-desktop-icon  only add the applications-menu entry
 #   --repo OWNER/NAME  GitHub repository to download from (default: this checkout's origin,
 #                      falling back to storytold/vectorcraft when it has no release)
@@ -31,7 +34,7 @@ TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 LOCAL_BIN="$TARGET_DIR/release/vectorcraft"
 
 MODE=auto
-BUILD=0
+BUILD=auto
 DESKTOP_ICON=1
 REPO=""
 while [ $# -gt 0 ]; do
@@ -39,6 +42,7 @@ while [ $# -gt 0 ]; do
     --local) MODE=local; shift ;;
     --download) MODE=download; shift ;;
     --build) BUILD=1; shift ;;
+    --no-build) BUILD=0; shift ;;
     --no-desktop-icon) DESKTOP_ICON=0; shift ;;
     --repo) REPO="${2:-}"; shift 2 ;;
     -h | --help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
@@ -120,14 +124,21 @@ download_appimage() {
 }
 
 # --- Pick the app ---------------------------------------------------------------------------
-# With Rust installed and no build yet, build rather than download.
-if [ "$MODE" = auto ] && [ ! -x "$LOCAL_BIN" ] && command -v cargo >/dev/null; then
-  BUILD=1
+# With Rust installed, a local build is brought up to date rather than launched stale (or
+# downloaded). A release download needs no build.
+if [ "$BUILD" = auto ]; then
+  BUILD=0
+  if [ "$MODE" != download ] && command -v cargo >/dev/null; then BUILD=1; fi
 fi
 if [ "$BUILD" = 1 ]; then
   command -v cargo >/dev/null || die "--build needs Rust (https://rustup.rs)"
-  echo "==> Building VectorCraft (release; the first build takes a while)"
+  if [ -x "$LOCAL_BIN" ]; then
+    echo "==> Updating the release build (only what changed is rebuilt; --no-build skips this)"
+  else
+    echo "==> Building VectorCraft (release; the first build takes a while)"
+  fi
   (cd "$ROOT" && cargo build --release -p vectorcraft)
+  echo "    built $(date -r "$LOCAL_BIN" '+%Y-%m-%d %H:%M')"
 fi
 case "$MODE" in
   local) [ -x "$LOCAL_BIN" ] || die "no local build at $LOCAL_BIN (add --build)"; APP="$LOCAL_BIN" ;;
