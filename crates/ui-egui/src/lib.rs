@@ -22,6 +22,7 @@ pub mod control;
 pub mod cursors;
 pub mod dialogs;
 pub mod dock;
+pub mod drag_layers;
 pub mod find_font;
 pub mod i18n;
 pub mod icon_data;
@@ -220,6 +221,8 @@ pub struct CanvasCache {
     pub print_tiling: Option<PrintTilingCache>,
     /// [`VectorcraftApp::selection_box`] for (document uid, revision, Use Preview Bounds).
     pub selection_box: Option<((u64, u64, bool), Option<vectorcraft_doc::OrientedBox>)>,
+    /// A drag's art drawn in layers (see [`drag_layers`]).
+    pub drag: Option<drag_layers::DragLayers>,
 }
 
 /// [`CanvasCache::slices`]: the layout of the slices of (document uid, revision).
@@ -344,6 +347,7 @@ impl VectorcraftApp {
                 slices: None,
                 print_tiling: None,
                 selection_box: None,
+                drag: None,
             },
             perf: Perf::default(),
             integrated_titlebar: false,

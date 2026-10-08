@@ -274,6 +274,9 @@ fn main() -> eframe::Result {
             .with_title_shown(false)
             .with_icon(app_icon())
             .with_app_id("ai.storyteller.vectorcraft"),
+        // One frame queued, not eframe's default two: art dragged under the OS cursor (which moves
+        // at hardware speed) trails it by a frame less.
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration { surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY, ..Default::default() },
         ..Default::default()
     };
     eframe::run_native(
