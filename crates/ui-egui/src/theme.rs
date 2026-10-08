@@ -330,6 +330,19 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
     });
 }
 
+/// The tooltip delay egui uses when tool tips are on (its own default).
+const TOOLTIP_DELAY: f32 = 0.5;
+
+/// Honour the Show Tool Tips preference. egui has no switch for tooltips, but one whose delay never
+/// elapses never shows (and `request_repaint_after_secs` ignores an infinite wait). Writes the
+/// style only when the setting changes.
+pub fn show_tooltips(ctx: &egui::Context, on: bool) {
+    let delay = if on { TOOLTIP_DELAY } else { f32::INFINITY };
+    if ctx.global_style().interaction.tooltip_delay != delay {
+        ctx.global_style_mut(|s| s.interaction.tooltip_delay = delay);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,5 +354,14 @@ mod tests {
             assert_eq!(Brightness::parse(b.label()), Some(b));
         }
         assert!(!Tokens::for_brightness(Brightness::Light).dark);
+    }
+
+    #[test]
+    fn tooltips_follow_the_preference() {
+        let ctx = egui::Context::default();
+        show_tooltips(&ctx, false);
+        assert!(ctx.global_style().interaction.tooltip_delay.is_infinite());
+        show_tooltips(&ctx, true);
+        assert_eq!(ctx.global_style().interaction.tooltip_delay, TOOLTIP_DELAY);
     }
 }

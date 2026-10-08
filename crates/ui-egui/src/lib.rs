@@ -678,6 +678,7 @@ impl VectorcraftApp {
         } else {
             self.fonts_ready = true;
         }
+        theme::show_tooltips(ctx, self.session.prefs.show_tool_tips);
         self.frame += 1;
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
