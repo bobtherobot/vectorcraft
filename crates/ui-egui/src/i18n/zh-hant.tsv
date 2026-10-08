@@ -3030,3 +3030,6 @@
 	Version	版本
 	% of all commits	佔全部提交的比例
 	Lines +/−	行數 +/−
+	Drag to move	拖曳以移動
+	Drag to float as a toolbar	拖曳使其浮動為工具列
+	Put back in the toolbar	放回工具列

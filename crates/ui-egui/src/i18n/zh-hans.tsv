@@ -3257,3 +3257,6 @@
 	Version	版本
 	% of all commits	占全部提交的百分比
 	Lines +/−	行数 +/−
+	Drag to move	拖动以移动
+	Drag to float as a toolbar	拖动使其浮动为工具栏
+	Put back in the toolbar	放回工具栏
