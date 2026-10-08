@@ -386,7 +386,9 @@ fn bottom_bar(app: &mut VectorcraftApp, ui: &mut Ui, view: &View, doc: &Document
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let trash = widgets::icon_button(&mut child, "trash-2", tl!("Delete Selection"), false, 24.0);
     // A target circle dropped on the trash clears that appearance; dragged rows are deleted.
-    if let Some(d) = trash.dnd_release_payload::<PanelDrag>()
+    // Peek at the payload's type before taking it: egui's take drops a payload of another type.
+    if trash.dnd_hover_payload::<PanelDrag>().is_some()
+        && let Some(d) = trash.dnd_release_payload::<PanelDrag>()
         && let PanelDrag::Appearance(id) = *d
     {
         actions.push(("appearance.clear".into(), json!({"ids": [id.0]})));
@@ -427,6 +429,11 @@ fn bottom_bar(app: &mut VectorcraftApp, ui: &mut Ui, view: &View, doc: &Document
         } else if button.dnd_hover_payload::<LayersDrag>().is_some_and(|d| matches!(*d, LayersDrag::Rows(_))) {
             child.painter().rect_stroke(button.rect, 3.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
         }
+    }
+    let over_trash = trash.dnd_hover_payload::<LayersDrag>().is_some_and(|d| matches!(*d, LayersDrag::Rows(_)))
+        || trash.dnd_hover_payload::<PanelDrag>().is_some_and(|d| matches!(*d, PanelDrag::Appearance(_)));
+    if over_trash {
+        child.painter().rect_stroke(trash.rect, 3.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
     }
     if widgets::icon_button(&mut child, "search", tl!("Locate Object"), false, 24.0).clicked() {
         actions.push(("layer.locate".into(), json!({})));
@@ -1212,21 +1219,39 @@ mod tests {
         // Dropped on the trash, the layer's appearance is cleared (and nothing is deleted).
         let st = app.session.active().unwrap();
         let count = st.doc.node_count();
-        let trash = {
-            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui));
-            out.textures_delta.clear();
-            // The bottom bar's rightmost button, under the right end of its top divider.
-            let divider = Tokens::get(&ctx).divider;
-            let corner = out.shapes.iter().rev().find_map(|c| match &c.shape {
-                egui::Shape::LineSegment { points, stroke } if stroke.color == divider => Some(points[1]),
-                _ => None,
-            });
-            corner.unwrap() + vec2(-12.0, 15.0)
-        };
+        let trash = trash_pos(&mut app, &ctx);
         drag(&mut app, &ctx, c[0], trash, false);
         let st = app.session.active().unwrap();
         assert_eq!(st.doc.node(layer).unwrap().opacity, 1.0);
         assert_eq!(st.doc.node_count(), count);
+    }
+
+    /// The trash button: the bottom bar's rightmost button, under the right end of its top divider.
+    fn trash_pos(app: &mut VectorcraftApp, ctx: &egui::Context) -> egui::Pos2 {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(app, ui));
+        out.textures_delta.clear();
+        let divider = Tokens::get(ctx).divider;
+        let corner = out.shapes.iter().rev().find_map(|c| match &c.shape {
+            egui::Shape::LineSegment { points, stroke } if stroke.color == divider => Some(points[1]),
+            _ => None,
+        });
+        corner.unwrap() + vec2(-12.0, 15.0)
+    }
+
+    #[test]
+    fn dragging_rows_onto_the_trash_deletes_them() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
+        app.session.execute("layer.new", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        // Rows top first: Layer 2, Layer 1. Grab Layer 2 by its name, left of its target circle.
+        let (c, _) = frame(&mut app, &ctx, vec![], false);
+        let top = app.session.active().unwrap().doc.layers[1].id;
+        let trash = trash_pos(&mut app, &ctx);
+        drag(&mut app, &ctx, c[0] - vec2(100.0, 0.0), trash, false);
+        let doc = &app.session.active().unwrap().doc;
+        assert_eq!(doc.layers.len(), 1);
+        assert!(doc.node(top).is_none());
     }
 
     #[test]
