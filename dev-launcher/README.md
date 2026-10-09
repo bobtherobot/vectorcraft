@@ -16,6 +16,10 @@ This creates a separate desktop launcher with a **dev** badge. Each time you ope
 
 Run `install.sh` in a terminal. It builds the app, adds the launchers, and opens the app.
 
+> **Note:** the first run can take a while. If you haven't built the app before, it downloads the
+> libraries the app uses and compiles everything from scratch. After that, launches are quick:
+> only what you changed gets rebuilt.
+
 ### Linux (Mint, Ubuntu, Debian, Fedora, …)
 
 ```sh
