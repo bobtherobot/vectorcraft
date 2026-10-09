@@ -123,34 +123,37 @@ fn prefs_serde_round_trip_and_tolerates_missing_fields() {
     assert_eq!(partial.corner_radius, 12.0);
 }
 
-/// Performance › Graphics Processor (#306): power saving by default, set by value or label, kept
-/// through a save/load round trip, and a bad value is an error that changes nothing.
+/// Performance › Graphics Processor (#306, #502): automatic by default, set by value or label,
+/// kept through a save/load round trip, and a bad value (0.5.0's `powerSaving` among them) is an
+/// error that changes nothing.
 #[test]
-fn gpu_preference_defaults_to_power_saving_and_validates() {
+fn gpu_preference_defaults_to_automatic_and_validates() {
     let mut s = Session::new();
-    assert_eq!(s.prefs.gpu_preference, "powerSaving");
-    assert_eq!(s.execute("prefs.get", &json!({"key": "gpuPreference"})).unwrap(), json!("powerSaving"));
+    assert_eq!(s.prefs.gpu_preference, "automatic");
+    assert_eq!(s.execute("prefs.get", &json!({"key": "gpuPreference"})).unwrap(), json!("automatic"));
     s.execute("prefs.set", &json!({"key": "gpuPreference", "value": "highPerformance"})).unwrap();
     assert_eq!(s.prefs.gpu_preference, "highPerformance");
     s.execute("prefs.set", &json!({"key": "gpuPreference", "value": "Power Saving (integrated)"})).unwrap();
-    assert_eq!(s.prefs.gpu_preference, "powerSaving");
-    for bad in [json!("turbo"), json!(""), json!(1), json!(null), json!(["highPerformance"])] {
+    assert_eq!(s.prefs.gpu_preference, "lowPower");
+    s.execute("prefs.set", &json!({"key": "gpuPreference", "value": "automatic"})).unwrap();
+    assert_eq!(s.prefs.gpu_preference, "automatic");
+    for bad in [json!("powerSaving"), json!("turbo"), json!(""), json!(1), json!(null), json!(["highPerformance"])] {
         assert!(s.execute("prefs.set", &json!({"key": "gpuPreference", "value": bad})).is_err(), "{bad}");
-        assert_eq!(s.prefs.gpu_preference, "powerSaving");
+        assert_eq!(s.prefs.gpu_preference, "automatic");
     }
-    let p = Prefs { gpu_preference: "highPerformance".into(), ..Default::default() };
+    let p = Prefs { gpu_preference: "lowPower".into(), ..Default::default() };
     let back: Prefs = serde_json::from_value(p.to_json()).unwrap();
-    assert_eq!(back.gpu_preference, "highPerformance");
+    assert_eq!(back.gpu_preference, "lowPower");
     // Preference files written before the preference existed get the default.
     let old: Prefs = serde_json::from_value(json!({"gpuPerformance": true})).unwrap();
-    assert_eq!(old.gpu_preference, "powerSaving");
+    assert_eq!(old.gpu_preference, "automatic");
     let l = s.execute("prefs.list", &json!({})).unwrap();
     let row = l.as_array().unwrap().iter().find(|e| e["key"] == "gpuPreference").unwrap().clone();
     assert_eq!(row["category"], "Performance");
-    assert_eq!(row["options"], json!(["powerSaving", "highPerformance"]));
+    assert_eq!(row["options"], json!(["automatic", "lowPower", "highPerformance"]));
     s.execute("prefs.set", &json!({"key": "gpuPreference", "value": "highPerformance"})).unwrap();
     s.execute("prefs.reset", &json!({"category": "Performance"})).unwrap();
-    assert_eq!(s.prefs.gpu_preference, "powerSaving");
+    assert_eq!(s.prefs.gpu_preference, "automatic");
 }
 
 /// Selection & Anchor Display › Tolerance, Object Selection by Path Only and Command Click to
@@ -277,6 +280,33 @@ fn snap_to_point_lands_a_dragged_selection_on_anchors() {
     assert_eq!(drag(&mut s, v), (276.5, 76.0), "1.8 px is beyond 1 px");
     set_pref(&mut s, "snapToPointTolerance", json!(2));
     assert_eq!(drag(&mut s, ViewInfo { snap_to_point: false, ..v }), (276.5, 76.0), "View › Snap to Point off");
+}
+
+/// Smart Guides › Spacing Guides (#394): a square dragged 21 pt to the right of a row of two
+/// squares 20 pt apart lands 20 pt from it, with the gaps marked; off, it stays at 21.
+#[test]
+fn spacing_guides_space_a_dragged_square_like_its_row() {
+    use vectorcraft_tools::PointerKind::{Down, Drag, Up};
+    let mut s = new_doc();
+    square(&mut s, 20.0, 300.0);
+    square(&mut s, 90.0, 300.0);
+    let m = square(&mut s, 200.0, 305.0);
+    let v = ViewInfo::default();
+    s.select_tool("selection", v).unwrap();
+    // `m` grabbed by its centre and dragged so its left edge is 21 pt from the second square.
+    let drag = |s: &mut Session| {
+        gesture(s, v, &[(Down, 225.0, 330.0), (Drag, 200.0, 330.0), (Drag, 186.0, 330.0)]);
+        let marks = s.overlays(v).iter().filter(|o| matches!(o, vectorcraft_tools::Overlay::Line { a, b, .. } if a.y == b.y)).count();
+        gesture(s, v, &[(Up, 186.0, 330.0)]);
+        let at = top_left(s, m).0;
+        s.execute("edit.undo", &json!({})).unwrap();
+        (at, marks)
+    };
+    let (at, marks) = drag(&mut s);
+    assert_eq!(at, 160.0, "20 pt from it");
+    assert!(marks >= 2, "both gaps marked");
+    set_pref(&mut s, "spacingGuides", json!(false));
+    assert_eq!(drag(&mut s), (161.0, 0), "off: where it was dragged");
 }
 
 /// Preferences › Smart Guides (#394): Color, Alignment Guides, Anchor/Path Labels, Measurement

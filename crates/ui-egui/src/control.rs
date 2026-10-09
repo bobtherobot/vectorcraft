@@ -84,6 +84,8 @@ pub fn inspect(app: &VectorcraftApp, ctx: &egui::Context) -> Value {
             "pinned": app.ui.task_bar_place.pinned,
             "rect": crate::canvas::task_bar_rect(ctx).map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
         },
+        // The Free Transform tool's widget, where it shows.
+        "freeTransformWidget": crate::free_transform::rect(ctx).map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
         "view": app.view().map(|v| serde_json::to_value(v).unwrap_or_default()),
         "canvasRect": app.canvas_rect.map(|c| json!([c.left(), c.top(), c.width(), c.height()])),
         "window": [r.width(), r.height()],
@@ -91,6 +93,8 @@ pub fn inspect(app: &VectorcraftApp, ctx: &egui::Context) -> Value {
         "activeDocument": app.session.active_index(),
         "perf": {"frameMs": app.perf.frame_ms, "renderMs": app.perf.render_ms, "fps": app.perf.fps},
         "graphicsAdapter": app.graphics_adapter,
+        // The menus are in the macOS menu bar rather than the window.
+        "nativeMenuBar": app.services.native_menu.is_some(),
         // Saves and exports still being written in the background (Background Save / Export).
         "background": app.background.jobs.iter().map(|j| j.label.as_str()).collect::<Vec<_>>(),
     })

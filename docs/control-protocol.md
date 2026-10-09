@@ -18,11 +18,11 @@ so only enable it while you use it. Transport: `apps/vectorcraft/src/control_ser
 | `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | | every command with label, shortcut, params doc, enablement |
 | `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does |
-| `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), `taskBar` (`pinned`, and `rect` `[x, y, w, h]` while the Contextual Task Bar shows), view, canvas rect, window size, perf, background saves and exports still running |
+| `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), `taskBar` (`pinned`, and `rect` `[x, y, w, h]` while the Contextual Task Bar shows), `freeTransformWidget` (`[x, y, w, h]` while the Free Transform widget shows), view, canvas rect, window size, perf, background saves and exports still running, `nativeMenuBar` (true when the menus are in the macOS menu bar rather than the window; `ui.menu.list` lists the in-window menus either way) |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
 | `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
 | `ui.tool.select` / `ui.tool.list` | `{tool}` | |
-| `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse |
+| `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse: `mods.cmd` held at a press with any tool but a selection tool drags with the selection tool chosen last (Direct Selection with the Pen until one is), and the release gives the tool back as it was |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | synthetic keyboard input |
 | `ui.wheel` | `{x, y, dy?, dx?, unit?: "line"\|"point", shift?, alt?, cmd?}` | a mouse wheel turn over screen point (x, y): `dy` notches up (+) or down, `dx` sideways. Over the canvas the wheel scrolls and Cmd- or Alt-wheel (Option on the Mac) zooms about the pointer; with the `zoomWithMouseWheel` preference the wheel and Alt-wheel zoom about the pointer, Shift-wheel scrolls up and down and Cmd-wheel (Ctrl on Windows and Linux) sideways. Over a focused numeric field (click it first) each notch steps its value as Up/Down do (Shift: ten, Cmd/Ctrl: a tenth) and the panel stays put; over anything else in a panel the wheel scrolls it |
 | `ui.set` | `{brightness?, panel?, rulers?, outline?, grid?, smartGuides?, boundingBox?, controlBar?}` | |
@@ -154,7 +154,7 @@ Clicking a swatch there runs `swatch.library.add {library, names: [name], apply}
 one with Alt), so one undo step adds and applies it; Shift/Cmd-clicks select swatches and colour groups for
 Add to Swatches.
 `window.swatchLibrary.other {path?}` loads a library file (or another document's swatches) and opens it there;
-opening a `.vcswatches` or `.gpl` file with `app.open` does the same. `ui.saveSwatchLibrary {names?}` opens the
+opening a `.vcswatches`, `.gpl` or `.ase` file with `app.open` does the same. `ui.saveSwatchLibrary {names?}` opens the
 `saveSwatchLibrary` dialog (fields `name`, `format`: `vcswatches`/`gpl`/`css`, `user`: save to the user library
 folder, `selectedOnly` with `names`); `ui.dialog.confirm` runs `swatch.library.save` (to a file it asks for a path).
 
@@ -213,6 +213,27 @@ selection changes (the handle still moves it) and, turned off, lets it follow th
 Bar Position (`window.taskBar.reset`), which unpins it and puts it back under the selection; and Show Properties
 Panel. As in Illustrator, neither the position nor the pin is saved: each launch starts with the bar under the
 selection.
+
+The Free Transform widget: while the Free Transform tool (E) is active, a small box at the canvas's top left holds
+Constrain over the tool's three modes, Free Transform, Perspective Distort and Free Distort. The buttons set the tool's
+options, as `tool.setOption {key: "mode", value: "free"|"perspective"|"distort"}` and `{key: "constrain", value}` do:
+Constrain acts as Shift held (proportional scaling, moves and rotations by 45°) and does nothing in the distort modes,
+where it is greyed. The modifier keys still work while dragging (Cmd on a corner distorts it freely, Cmd+Alt+Shift in
+perspective, Cmd on a side shears).
+
+Floating panels: dragging a dock tab, a panel icon or a popped-out panel's title out of the dock floats that panel
+inside the window, and the strip right of the dock's tabs floats the whole Properties | Layers | Libraries group. A
+floating group moves by its title bar (or the strip right of its tabs); a tab dragged out of it floats on its own;
+dropped on another group's title bar or tabs it stacks with that group, and dropped on the dock (lit up while the
+pointer is over it) or closed with its × its panels go back to the tabbed group or the icon column.
+`window.panel.float {panel, x?, y?, onto?, group?}` floats a panel (with `group`, its whole group) with its top-left
+corner at `x`, `y` (window points; default cascaded), or stacks it with the floating group holding `onto`;
+`window.panel.dock {panel, group?}` puts it back. `panel` takes the `window.panel` ids and labels, and `"tools"` for
+the Tools panel, which floats by its title bar and docks on the window's left edge. `window.panel` on a floating
+panel shows its tab. `ui.floating_panels` in `ui.inspect` lists the groups (panel ids, the index of the tab shown,
+the top-left corner) and `ui.toolbar_pos` the Tools panel's corner (null: docked); both are saved with the
+preferences and in user workspaces (the built-in workspaces dock everything), and a corner saved on a bigger window
+is clamped into this one when drawn. Floating panels stay inside the app window (no separate OS windows).
 
 Flatten Transparency: `ui.flattenTransparencyDialog` opens the `flattenTransparency` dialog for the selection
 (fields `preset`: a preset name, setting it loads that preset's options; the option keys of
@@ -277,9 +298,9 @@ Width Point Edit: double-clicking a width point with the Width tool, or `ui.widt
 value: true}` then confirm (the Delete button) removes the point with `stroke.widthPoint.remove`.
 
 Corners: double-clicking a Live Corners widget with the Selection or Direct Selection tool, or `ui.corners {id?,
-corners?}`, opens the `corners` dialog for a live rectangle's corners (the Direct-Selected ones, else all four; fields
-`id`, `corners`: indices 0–3 clockwise from the top-left, `kind`: round, invertedRound or chamfer, `radius` in points;
-`kind` or `radius` is absent while the corners differ). `ui.dialog.confirm` runs `object.setLiveShape` with them.
+corners?}`, opens the `corners` dialog for a path's corners (the Direct-Selected ones, else every corner; fields `id`,
+`corners`: anchor indices of the path with its corners uncut, a rectangle's 0–3 clockwise from the top-left, `kind`:
+round, invertedRound or chamfer, `radius` in points; `kind` or `radius` is absent while the corners differ). `ui.dialog.confirm` runs `object.setLiveShape` with them.
 
 Perspective plane options: double-clicking a plane widget of the perspective grid, or `ui.perspectivePlane {plane}`,
 opens the `perspectivePlane` dialog (fields `plane`: left, right or ground; `location`: points along the plane's

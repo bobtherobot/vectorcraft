@@ -38,7 +38,8 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 app.run("app.home", json!({})).ok();
             }
             ui.add_space(2.0);
-            let menus_end = if app.native_menu {
+            // With the macOS menu bar the menus are at the top of the screen instead.
+            let menus_end = if app.services.native_menu.is_some() {
                 let full = ui.max_rect();
                 ui.painter().text(full.center(), egui::Align2::CENTER_CENTER, "VectorCraft", egui::FontId::proportional(13.5), t.text);
                 ui.cursor().min.x
@@ -112,10 +113,32 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
 /// An anchor button: icon, tooltip, command and the convert command's `to`.
 type AnchorButton<'a> = (&'a str, &'a str, &'a str, Option<&'a str>);
 
-/// What the Control bar and the Properties panel offer for direct-selected anchors: "Convert:"
-/// corner or smooth, then "Anchors:" remove, connect (Join) and cut. Each group is a row of its
-/// own: inline in the Control bar, one under the other in a panel.
-pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui) {
+/// The anchor controls the Control bar and the Properties panel show.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AnchorControls {
+    None,
+    /// Paths selected as a whole with a tool that edits anchors (Direct Selection, the Pen…),
+    /// which shows all their anchors selected: "Convert:" only, as removing or cutting at every
+    /// anchor isn't what they're for.
+    Convert,
+    /// Anchors direct-selected: "Convert:" and "Anchors:".
+    All,
+}
+
+/// Which anchor controls show for the selection and the active tool.
+pub fn anchor_controls(app: &VectorcraftApp) -> AnchorControls {
+    let Some(st) = app.session.active() else { return AnchorControls::None };
+    if !st.selection.anchors.is_empty() {
+        return AnchorControls::All;
+    }
+    let paths = st.selection.objects.iter().any(|id| st.doc.node(*id).is_some_and(|n| matches!(n.kind, NodeKind::Path { .. })));
+    if paths && vectorcraft_tools::catalog::edits_anchors(app.session.tool_id()) { AnchorControls::Convert } else { AnchorControls::None }
+}
+
+/// What the Control bar and the Properties panel offer for selected anchors ([`anchor_controls`]):
+/// "Convert:" corner or smooth, then "Anchors:" remove, connect (Join) and cut. Each group is a
+/// row of its own: inline in the Control bar, one under the other in a panel.
+pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui, controls: AnchorControls) {
     let t = Tokens::get(ui.ctx());
     let mut run = None;
     let groups: [(&str, &[AnchorButton]); 2] = [
@@ -135,7 +158,12 @@ pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui) {
             ],
         ),
     ];
-    for (label, buttons) in groups {
+    let shown = match controls {
+        AnchorControls::None => 0,
+        AnchorControls::Convert => 1,
+        AnchorControls::All => groups.len(),
+    };
+    for (label, buttons) in groups.into_iter().take(shown) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(label).size(12.0).color(t.text));
             for &(icon, tip, id, to) in buttons {
@@ -149,6 +177,9 @@ pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui) {
         crate::menus::invoke(app, id, p);
     }
 }
+
+/// The room the Control bar's inline X/Y/W/H fields need; with less, only the Transform link shows.
+const INLINE_TRANSFORM_WIDTH: f32 = 440.0;
 
 /// The Control bar (Window → Control), context-sensitive like Illustrator's.
 pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
@@ -170,9 +201,9 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let sel = st.selection.objects.clone();
                 let units = app.session.general_unit();
                 let first = sel.first().and_then(|id| st.doc.node(*id)).cloned();
-                let anchor_mode = !st.selection.anchors.is_empty();
+                let anchors = anchor_controls(app);
                 let label = match &first {
-                    Some(_) if sel.len() == 1 && anchor_mode => tl!("Anchor Point"),
+                    Some(_) if sel.len() == 1 && anchors != AnchorControls::None => tl!("Anchor Point"),
                     Some(vectorcraft_doc::Node { kind: NodeKind::Image(im), .. }) if sel.len() == 1 => {
                         if im.link.is_some() {
                             tl!("Linked File")
@@ -184,8 +215,8 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     _ => tl!(crate::panels::appearance::object_label(app)),
                 };
                 ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
-                if anchor_mode {
-                    anchor_buttons(app, ui);
+                if anchors != AnchorControls::None {
+                    anchor_buttons(app, ui, anchors);
                 }
                 ui.add_space(6.0);
                 // An image or an Image Trace object shows its own controls in place of Fill and Stroke.
@@ -256,9 +287,13 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     }
                 }
                 ui.separator();
-                // Transform fields.
+                // The Transform link opens the whole Transform panel (reference point, rotate,
+                // shear, options) in a popover; X/Y/W/H follow inline while the bar has room.
+                crate::panels::transform::link(app, ui);
                 // The bounding box, rotated with rotated objects: its centre and its own sides.
-                if let Some(b) = app.selection_box() {
+                if let Some(b) = app.selection_box()
+                    && ui.available_width() >= INLINE_TRANSFORM_WIDTH
+                {
                     let c = b.center();
                     let link = app.session.prefs.constrain_proportions;
                     for (k, lbl, v) in [("x", "X:", c.x), ("y", "Y:", c.y), ("width", "W:", b.rect.width()), ("height", "H:", b.rect.height())] {
@@ -288,10 +323,12 @@ fn tab_title(d: &vectorcraft_engine::DocState, zoom: f64, outline: bool) -> Stri
     format!("{}{} @ {} ({mode})", d.title(), if d.is_dirty() { "*" } else { "" }, zoom_label(zoom).replace('%', " %"))
 }
 
-/// Document tab strip: "Name* @ 66.67% (RGB/Preview)".
+/// Document tab strip: "Name* @ 66.67% (RGB/Preview)". User Interface › Large Tabs makes the tabs
+/// taller, with larger titles.
 pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::hover());
+    let (height, title_size) = if app.session.prefs.large_tabs { (44.0, 14.0) } else { (35.0, 12.5) };
+    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     ui.painter().rect_filled(strip, 0.0, t.tab_strip);
     ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.border));
     let mut x = strip.left();
@@ -303,7 +340,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let title = tab_title(d, zoom, app.ui.view.outline);
         // On the Home screen no tab is the current one.
         let is_active = Some(i) == active && app.ui.home.is_none();
-        let galley = ui.painter().layout_no_wrap(title, theme::semibold(12.5), if is_active { t.text_strong } else { t.text_dim });
+        let galley = ui.painter().layout_no_wrap(title, theme::semibold(title_size), if is_active { t.text_strong } else { t.text_dim });
         let w = galley.size().x + 50.0;
         let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
         let resp = ui.interact(r, ui.id().with(("tab", i)), Sense::click());
@@ -486,6 +523,9 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
 
 /// Contextual hint for the active tool: segments of (text, bold). Keys in bold segments are
 /// written as shortcuts are ("Alt+Click"); [`hint_segments`] names them for the platform.
+/// The hint of the Zoom tool with Performance › Animated Zoom on.
+const ANIMATED_ZOOM_HINT: &str = "zoom.animated";
+
 fn hint_for(tool: &str) -> Option<&'static [(&'static str, bool)]> {
     Some(match tool {
         "selection" => &[
@@ -556,6 +596,16 @@ fn hint_for(tool: &str) -> Option<&'static [(&'static str, bool)]> {
             (" to zoom out  |  ", false),
             ("Drag", true),
             (" to zoom into an area", false),
+        ],
+        ANIMATED_ZOOM_HINT => &[
+            ("Click", true),
+            (" to zoom in  |  ", false),
+            ("Alt+Click", true),
+            (" to zoom out  |  ", false),
+            ("Drag", true),
+            (" right or left to zoom in or out  |  ", false),
+            ("Hold", true),
+            (" to keep zooming", false),
         ],
         "eyedropper" => &[
             ("Click", true),
@@ -643,8 +693,8 @@ fn hint_for(tool: &str) -> Option<&'static [(&'static str, bool)]> {
 /// can insist a complete language covers them.
 pub fn hint_strings() -> Vec<&'static str> {
     let mut v = Vec::new();
-    for tool in vectorcraft_tools::catalog::all_tools() {
-        for &(text, bold) in hint_for(tool.id).unwrap_or(&[]) {
+    for tool in vectorcraft_tools::catalog::all_tools().map(|t| t.id).chain([ANIMATED_ZOOM_HINT]) {
+        for &(text, bold) in hint_for(tool).unwrap_or(&[]) {
             let text = if bold { text.rsplit_once('+').map_or(text, |(_, k)| k) } else { text };
             if !text.is_empty() && !text.chars().all(|c| c.is_ascii_digit()) && !v.contains(&text) {
                 v.push(text);
@@ -698,7 +748,10 @@ pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "?", theme::semibold(11.0), t.text);
                 ui.add_space(6.0);
                 let mut job = egui::text::LayoutJob::default();
-                for (txt, bold) in hint_segments(app.session.tool_id()) {
+                let tool = app.session.tool_id();
+                // The Zoom tool's drag zooms to an area, or with Animated Zoom zooms as it goes.
+                let hint = if tool == "zoom" && crate::canvas::animated_zoom(&app.session.prefs) { ANIMATED_ZOOM_HINT } else { tool };
+                for (txt, bold) in hint_segments(hint) {
                     let font = if bold { theme::semibold(12.5) } else { egui::FontId::proportional(12.5) };
                     job.append(&txt, 0.0, egui::TextFormat { font_id: font, color: if bold { t.text_strong } else { t.text }, ..Default::default() });
                 }
@@ -800,5 +853,34 @@ mod tests {
         assert!(title(&s).ends_with("(<Opacity Mask>/Opacity Mask)"), "{}", title(&s));
         s.execute("transparency.stopEditingOpacityMask", &json!({})).unwrap();
         assert!(title(&s).ends_with("(RGB/Preview)"));
+    }
+
+    /// The Zoom tool's hint follows Performance › Animated Zoom (#394): a drag zooms as it goes,
+    /// or (off) zooms into the area dragged across.
+    #[test]
+    fn the_zoom_hint_follows_animated_zoom() {
+        fn texts(s: &egui::Shape, out: &mut String) {
+            match s {
+                egui::Shape::Text(t) => out.push_str(t.galley.text()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut app = crate::VectorcraftApp::new(Session::new(), Default::default());
+        app.select_tool("zoom");
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let hint = |app: &mut crate::VectorcraftApp| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| super::hint_bar(app, ui));
+            out.textures_delta.clear();
+            let mut shown = String::new();
+            out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
+            shown
+        };
+        let on = hint(&mut app);
+        assert!(on.contains(" right or left to zoom in or out") && on.contains("Hold"), "{on}");
+        app.run("prefs.set", json!({"key": "animatedZoom", "value": false})).unwrap();
+        let off = hint(&mut app);
+        assert!(off.contains(" to zoom into an area") && !off.contains("Hold"), "{off}");
     }
 }

@@ -9,8 +9,15 @@ use crate::{icons, scrub};
 
 /// Square icon button; `selected` draws the pressed well.
 pub fn icon_button(ui: &mut Ui, icon: &str, tip: &str, selected: bool, size: f32) -> Response {
+    let (_, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    paint_icon_button(ui, resp, icon, tip, selected)
+}
+
+/// [`icon_button`] drawn for a response the caller made (its own id or sense).
+pub fn paint_icon_button(ui: &mut Ui, resp: Response, icon: &str, tip: &str, selected: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    let rect = resp.rect;
+    let size = rect.width();
     let bg = if selected {
         t.tool_active
     } else if resp.hovered() {
@@ -112,6 +119,21 @@ pub fn section_header(ui: &mut Ui, text: &str) {
     ui.add_space(2.0);
     ui.label(egui::RichText::new(tl!(text)).size(13.0).color(t.text));
     ui.add_space(2.0);
+}
+
+/// A collapsible section's header across the panel: a chevron (down while `open`) and `text`;
+/// a click anywhere on it toggles the section. Whether it was clicked.
+pub fn section_toggle(ui: &mut Ui, text: &str, open: bool) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 3.0, t.hover);
+    }
+    let chevron = Rect::from_center_size(pos2(rect.left() + 8.0, rect.center().y), vec2(12.0, 12.0));
+    icons::paint(ui, if open { "chevron-down" } else { "chevron-right" }, chevron, if resp.hovered() { t.text_strong } else { t.icon });
+    ui.painter().text(pos2(rect.left() + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, tl!(text), theme::semibold(12.5), t.text);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, tl!(text)));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 /// Full-width 1 px divider with vertical margins.
@@ -648,16 +670,70 @@ pub(crate) fn combo<R>(
         .stroke(Stroke::new(1.0, t.input_border))
         .corner_radius(CornerRadius::same(3))
         .show(ui, |ui| {
+            if searchable {
+                return searchable_combo(ui, ui.id().with(id), current, width - 4.0, list);
+            }
             egui::ComboBox::from_id_salt(ui.id().with(id))
                 .selected_text(egui::RichText::new(current).size(12.0))
                 .width(width - 4.0)
-                .close_behavior(if searchable { egui::PopupCloseBehavior::CloseOnClickOutside } else { egui::PopupCloseBehavior::CloseOnClick })
-                .height(if searchable { f32::INFINITY } else { ui.spacing().combo_height })
+                .height(ui.spacing().combo_height)
                 .show_ui(ui, list)
                 .inner
                 .flatten()
         })
         .inner
+}
+
+/// A dropdown whose list keeps its own search field and scrolling rows (the font menu): drawn as
+/// egui's combo box, but in a popup without the scroll area egui puts around a combo's list, so
+/// the field stays at the top and only the rows scroll (#555). A click outside closes it.
+fn searchable_combo<R>(ui: &mut Ui, id: egui::Id, current: &str, width: f32, list: impl FnOnce(&mut Ui) -> Option<R>) -> Option<R> {
+    let popup = id.with("popup");
+    let open = egui::Popup::is_id_open(ui.ctx(), popup);
+    let pad = ui.spacing().button_padding;
+    let icon = Vec2::splat(ui.spacing().icon_width);
+    let galley = egui::WidgetText::from(egui::RichText::new(current).size(12.0)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        width - 2.0 * pad.x - ui.spacing().icon_spacing - icon.x,
+        egui::TextStyle::Button,
+    );
+    let height = (galley.size().y.max(icon.y) + 2.0 * pad.y).max(ui.spacing().interact_size.y);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let v = if open { ui.visuals().widgets.open } else { *ui.style().interact(&resp) };
+        ui.painter().rect(rect.expand(v.expansion), v.corner_radius, v.weak_bg_fill, v.bg_stroke, StrokeKind::Inside);
+        let inner = rect.shrink2(pad);
+        ui.painter().galley(egui::Align2::LEFT_CENTER.align_size_within_rect(galley.size(), inner).min, galley, v.text_color());
+        // egui's combo arrow: a downward triangle.
+        let arrow =
+            Rect::from_center_size(egui::Align2::RIGHT_CENTER.align_size_within_rect(icon, inner).center(), vec2(icon.x * 0.7, icon.y * 0.45));
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![arrow.left_top(), arrow.right_top(), arrow.center_bottom()],
+            v.fg_stroke.color,
+            Stroke::NONE,
+        ));
+    }
+    // It opens below the button, or above it when there is more room there, and the list gets
+    // the room left (the popup's frame aside).
+    const GAP: f32 = 12.0;
+    let screen = ui.ctx().content_rect();
+    let frame = ui.spacing().menu_margin.sum().y + GAP;
+    let (below, above) = (screen.bottom() - rect.bottom() - frame, rect.top() - screen.top() - frame);
+    let (align, room) = if below >= above { (egui::RectAlign::BOTTOM_START, below) } else { (egui::RectAlign::TOP_START, above) };
+    egui::Popup::menu(&resp)
+        .id(popup)
+        .width(rect.width())
+        .align(align)
+        .align_alternatives(&[])
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(ui.available_width());
+            ui.set_max_height(room);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            list(ui)
+        })
+        .and_then(|r| r.inner)
 }
 
 /// A popover anchored to `resp`, opened and closed by `toggle` (usually `resp.clicked()`), and
@@ -799,18 +875,23 @@ pub fn opacity_blend(
     edit
 }
 
-/// The 3×3 reference point locator. Returns a new index when clicked.
+/// The 3×3 reference point locator: nine squares, the eight outer ones joined by a line around
+/// the box (the centre one stands alone), the current one filled. Returns a new index when clicked.
 pub fn reference_point(ui: &mut Ui, current: usize) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
-    let size = 22.0;
+    // 5 pt squares with 4 pt gaps; the origin is snapped to whole points so the 1 pt lines through
+    // the squares' centres stay crisp.
+    let (sq, step) = (5.0, 9.0);
+    let size = 2.0 * step + sq;
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    let o = rect.min.round();
+    let centre = |i: usize| o + Vec2::new(sq / 2.0 + (i % 3) as f32 * step, sq / 2.0 + (i / 3) as f32 * step);
+    let line = Stroke::new(1.0, t.text_dim);
+    ui.painter().rect_stroke(Rect::from_two_pos(centre(0), centre(8)), 0.0, line, StrokeKind::Middle);
     let mut out = None;
-    let step = size / 2.0 - 2.5;
-    ui.painter().rect_stroke(rect.shrink(4.5), 0.0, Stroke::new(1.0, t.text_dim), StrokeKind::Middle);
     for i in 0..9 {
-        let c = Pos2::new(rect.left() + 3.0 + (i % 3) as f32 * step + 1.5, rect.top() + 3.0 + (i / 3) as f32 * step + 1.5);
-        let r = Rect::from_center_size(c, Vec2::splat(5.0));
-        let resp = ui.interact(r.expand(1.5), ui.id().with(("refpt", i)), Sense::click());
+        let r = Rect::from_center_size(centre(i), Vec2::splat(sq));
+        let resp = ui.interact(r.expand(2.0), ui.id().with(("refpt", i)), Sense::click());
         if resp.clicked() {
             out = Some(i);
         }
@@ -818,7 +899,7 @@ pub fn reference_point(ui: &mut Ui, current: usize) -> Option<usize> {
             ui.painter().rect_filled(r, 0.0, t.text);
         } else {
             ui.painter().rect_filled(r, 0.0, t.panel);
-            ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.text_dim), StrokeKind::Inside);
+            ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim }), StrokeKind::Inside);
         }
     }
     out
@@ -896,8 +977,21 @@ pub fn check(ui: &mut Ui, label: &str, value: bool, enabled: bool) -> bool {
     check3(ui, label, Some(value), enabled)
 }
 
+/// [`check`] with tooltip `tip` on the box and its label. Returns true when toggled.
+pub fn check_tip(ui: &mut Ui, label: &str, value: bool, enabled: bool, tip: &str) -> bool {
+    let (clicked, resp) = check_row(ui, label, Some(value), enabled);
+    resp.on_hover_text(tip);
+    clicked
+}
+
 /// Three-state [`check`]: `None` shows a dash (a neutral or mixed state). Returns true when clicked.
 pub fn check3(ui: &mut Ui, label: &str, value: Option<bool>, enabled: bool) -> bool {
+    check_row(ui, label, value, enabled).0
+}
+
+/// [`check3`], also returning the row's response (what a tooltip goes on: a widget around it never
+/// counts as hovered under the box).
+fn check_row(ui: &mut Ui, label: &str, value: Option<bool>, enabled: bool) -> (bool, Response) {
     let t = Tokens::get(ui.ctx());
     let (bx, resp, border) = choice_row(ui, label, enabled);
     let checked = value == Some(true);
@@ -915,7 +1009,7 @@ pub fn check3(ui: &mut Ui, label: &str, value: Option<bool>, enabled: bool) -> b
         }
         Some(false) => {}
     }
-    enabled && resp.clicked()
+    (enabled && resp.clicked(), resp)
 }
 
 /// Radio button in the style of [`check`], with a disabled state. Returns true when clicked.

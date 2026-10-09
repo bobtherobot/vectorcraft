@@ -82,6 +82,7 @@ impl Session {
     /// Switch to tool `id` without choosing it afresh (back from a temporary tool: a hidden
     /// perspective grid stays hidden), finishing any pending tool work first.
     pub fn switch_tool(&mut self, id: &str, view: ViewInfo) -> Result<()> {
+        self.give_back_tool(view)?;
         if self.tool.id() == id {
             return Ok(());
         }
@@ -89,7 +90,45 @@ impl Session {
         self.apply_actions(acts)?;
         self.keep_tool_settings();
         self.tool = self.make_tool(id);
+        if vectorcraft_tools::catalog::is_selection_tool(id) {
+            self.last_selection_tool = Some(self.tool.id());
+        }
         Ok(())
+    }
+
+    /// The selection tool Cmd lends tool `id` for a drag: the one chosen last; until one is,
+    /// Direct Selection to the tools that edit anchors (the Pen) and Selection to the others.
+    /// None for the selection tools themselves and the view tools.
+    fn lent_tool(&self, id: &str) -> Option<&'static str> {
+        use vectorcraft_tools::catalog::{edits_anchors, is_selection_tool};
+        if is_selection_tool(id) || matches!(id, "hand" | "zoom" | "rotateView") {
+            return None;
+        }
+        Some(self.last_selection_tool.unwrap_or(if edits_anchors(id) { "directSelection" } else { "selection" }))
+    }
+
+    /// A press with Cmd held (Ctrl elsewhere) and any other tool than a selection tool: the
+    /// selection tool [`Self::lent_tool`] takes the gesture, pressing without Cmd (a plain click,
+    /// not Select Behind). The tool lent to stays as it was, unaware, until the release.
+    fn lend_selection_tool(&mut self, ev: &PointerEvent) -> PointerEvent {
+        if ev.kind != PointerKind::Down || !ev.mods.cmd || self.lender.is_some() {
+            return *ev;
+        }
+        let Some(id) = self.lent_tool(self.tool.id()) else { return *ev };
+        let lent = self.make_tool(id);
+        self.lender = Some(std::mem::replace(&mut self.tool, lent));
+        PointerEvent { mods: Mods { cmd: false, ..ev.mods }, ..*ev }
+    }
+
+    /// The lent selection tool's gesture is over: the tool it was lent to is back as it was (the
+    /// Pen goes on drawing its path).
+    pub(crate) fn give_back_tool(&mut self, view: ViewInfo) -> Result<()> {
+        let Some(lender) = self.lender.take() else { return Ok(()) };
+        let acts = self.with_tool_cx(view, |t, cx| t.deactivate(cx));
+        let r = self.apply_actions(acts);
+        self.keep_tool_settings();
+        self.tool = lender;
+        r.map(drop)
     }
 
     /// A fresh `id` tool with the options it keeps ([`settings`]): its last values, from this
@@ -139,6 +178,7 @@ impl Session {
         let (unit, stroke_unit) = (self.general_unit(), self.stroke_unit());
         let cx = ToolContext {
             doc: &st.doc,
+            revision: (st.uid, st.revision),
             selection: &st.selection,
             zoom: view.zoom,
             isolation: st.isolation,
@@ -165,6 +205,7 @@ impl Session {
             slices_locked: self.menu.slices_locked,
             auto_add_delete: !self.prefs.disable_auto_add_delete,
             selection_tolerance: self.prefs.selection_tolerance,
+            anchor_size: self.prefs.anchor_size,
             path_only: self.prefs.object_selection_by_path_only,
             type_path_only: self.prefs.type_selection_by_path_only,
             double_click_isolate: self.prefs.double_click_to_isolate,
@@ -182,7 +223,13 @@ impl Session {
             anchor_path_labels: self.prefs.anchor_path_labels,
             measurement_labels: self.prefs.measurement_labels,
             transform_tools_guides: self.prefs.transform_tools_guides,
+            spacing_guides: self.prefs.spacing_guides,
             snapping_tolerance: self.prefs.snapping_tolerance,
+            construction_angles: if self.prefs.construction_guides {
+                vectorcraft_tools::guides::construction_angles(&self.prefs.construction_angles)
+            } else {
+                &[]
+            },
             screen: view.screen,
             plane_widget: self.prefs.perspective_widget.show.then_some(self.prefs.perspective_widget.position),
         };
@@ -212,13 +259,19 @@ impl Session {
         if let Some(r) = self.plane_widget_pointer(ev, view) {
             return r;
         }
+        let ev = &self.lend_selection_tool(ev);
         let acts = self.with_tool_cx(view, |t, cx| t.pointer(cx, ev));
-        self.take_tool_panic()?;
-        // A gesture may change options (Alt-drag sizes a Liquify brush): keep them.
+        let r = self.take_tool_panic().and_then(|()| {
+            // A gesture may change options (Alt-drag sizes a Liquify brush): keep them.
+            if ev.kind == PointerKind::Up {
+                self.keep_tool_settings();
+            }
+            self.apply_actions(acts)
+        });
         if ev.kind == PointerKind::Up {
-            self.keep_tool_settings();
+            self.give_back_tool(view)?;
         }
-        self.apply_actions(acts)
+        r
     }
 
     /// A guide dragged out of a ruler, whatever the tool: a vertical one out of the left ruler, a
@@ -325,9 +378,20 @@ impl Session {
     }
 
     /// The pointer the active tool shows at `p` (General › Use Precise Cursors makes the drawing
-    /// tools' a crosshair, [`Cursor::precise`]).
+    /// tools' a crosshair, [`Cursor::precise`]). With Cmd held, the pointer of the selection tool a
+    /// press would borrow ([`Self::lend_selection_tool`]).
     pub fn cursor(&mut self, p: Point, mods: Mods, view: ViewInfo) -> Cursor {
-        let c = self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods));
+        let lent = if mods.cmd && self.lender.is_none() { self.lent_tool(self.tool.id()) } else { None };
+        let c = match lent {
+            Some(id) => {
+                let lent = self.make_tool(id);
+                let own = std::mem::replace(&mut self.tool, lent);
+                let c = self.with_tool_cx(view, |t, cx| t.cursor(cx, p, Mods { cmd: false, ..mods }));
+                self.tool = own;
+                c
+            }
+            None => self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods)),
+        };
         if self.prefs.use_precise_cursors { c.precise() } else { c }
     }
 

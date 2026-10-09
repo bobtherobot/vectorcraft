@@ -17,6 +17,7 @@ pub mod background;
 mod brand;
 pub mod canvas;
 pub mod chrome;
+mod clipboard_probe;
 pub mod community;
 pub mod control;
 pub mod credits;
@@ -25,15 +26,19 @@ pub mod dev_build;
 pub mod dialogs;
 pub mod dock;
 pub mod find_font;
+pub mod floating;
 pub mod font_menu;
+mod free_transform;
 pub mod graphics;
 pub mod i18n;
 pub mod icon_data;
 pub mod icons;
 pub mod io;
 pub mod menus;
+pub mod native_menu;
 pub mod palette;
 pub mod panels;
+pub mod picks;
 pub mod place;
 pub mod prefs_dialog;
 pub mod print;
@@ -47,6 +52,7 @@ pub mod sysclip;
 pub mod theme;
 pub mod titlebar;
 pub mod toolbar;
+mod touch;
 mod ui_fonts;
 pub mod unsaved;
 pub mod widgets;
@@ -77,6 +83,8 @@ mod tests_home;
 #[cfg(test)]
 mod tests_labels;
 #[cfg(test)]
+mod tests_nativemenu;
+#[cfg(test)]
 mod tests_nativeoptions;
 #[cfg(test)]
 mod tests_numfields;
@@ -90,6 +98,8 @@ mod tests_pastechords;
 mod tests_pathtype;
 #[cfg(test)]
 mod tests_pdfoutput;
+#[cfg(test)]
+mod tests_picks;
 #[cfg(test)]
 mod tests_place;
 #[cfg(test)]
@@ -129,6 +139,8 @@ mod tests_sysclip;
 #[cfg(test)]
 mod tests_sysclip_emf;
 #[cfg(test)]
+mod tests_sysclip_probe;
+#[cfg(test)]
 mod tests_transparencygrid;
 #[cfg(test)]
 mod tests_widthtool;
@@ -142,7 +154,7 @@ use vectorcraft_engine::{Session, ViewInfo};
 
 pub use control::{ControlRequest, ControlResponse};
 pub use state::{UiState, View};
-pub use sysclip::SystemClipboard;
+pub use sysclip::{ClipboardProbeFactory, SystemClipboard};
 
 /// What a file dialog shows: a suggested file name (save dialogs), the folder to start in and the
 /// file-type filters.
@@ -205,6 +217,10 @@ pub struct Services {
     /// Paste takes SVG, PDF, text and bitmaps from other apps. Without it, SVG text only (through
     /// egui and `clipboard_read`).
     pub system_clipboard: Option<Box<dyn SystemClipboard>>,
+    /// A second system-clipboard handle, for checking whether Paste has something to take on a
+    /// background thread (Linux: an X11 clipboard owner that never answers would freeze the UI).
+    /// Taken on the first frame. Without it the check runs on the UI thread.
+    pub clipboard_probe: Option<ClipboardProbeFactory>,
     /// File → Show in Folder: select a file in the system file manager (desktop).
     pub reveal: Option<RevealFn>,
     /// Write a file from any thread (desktop): lets Background Save and Export write off the UI
@@ -221,6 +237,12 @@ pub struct Services {
     /// File → Print: the system's printers and print queue (desktop), the browser's print dialog
     /// (web). Without it Print saves the job as a PDF.
     pub print: Option<Box<dyn print::PrintService>>,
+    /// The macOS menu bar, when the desktop app installed one: the in-window menus are hidden then.
+    pub native_menu: Option<native_menu::NativeMenu>,
+    /// Show file dialogs off the UI thread (desktop Linux, where a dialog in line holds the window
+    /// and the compositor finds it not answering): what asked runs again with the answer
+    /// ([`picks`]). Without it they are shown in line.
+    pub start_pick: Option<picks::StartPick>,
 }
 
 /// Cached canvas raster.
@@ -237,6 +259,8 @@ pub struct CanvasCache {
     pub print_tiling: Option<PrintTilingCache>,
     /// [`VectorcraftApp::selection_box`] for (document uid, revision, Use Preview Bounds).
     pub selection_box: Option<((u64, u64, bool), Option<vectorcraft_doc::OrientedBox>)>,
+    /// [`VectorcraftApp::selection_bounds`] for (document uid, revision).
+    pub selection_bounds: Option<((u64, u64), Option<vectorcraft_geom::Rect>)>,
     /// The tools' cursors as OS cursor bitmaps.
     pub cursors: cursors::Images,
 }
@@ -263,6 +287,13 @@ pub struct CacheKey {
     pub rot: f64,
     /// General › Anti-aliased Artwork.
     pub anti_alias: bool,
+    /// [`vectorcraft_render::placed_document::generation`]: placed documents' bitmaps made since.
+    pub placed: u64,
+    /// View › Pixel Preview: the document pixels rendered (x0, y0, x1, y1), one per point, shown
+    /// with hard edges. None: the art is rendered for the screen.
+    pub pixel: Option<[i64; 4]>,
+    /// Images sampled smoothly ([`vectorcraft_render::RenderOptions::smooth_images`]).
+    pub smooth_images: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -281,12 +312,11 @@ pub struct VectorcraftApp {
     pub perf: Perf,
     /// macOS: draw our own title strip under the traffic lights.
     pub integrated_titlebar: bool,
-    /// The host installed a native menu bar (macOS): don't draw in-window menus.
-    pub native_menu: bool,
     /// Last applied effect (Effect → Apply Last Effect).
     pub last_effect: Option<(String, serde_json::Value)>,
-    /// Commands whose shortcuts the native menu handles (skip them in egui to avoid double firing).
-    pub native_shortcuts: std::collections::HashSet<String>,
+    /// Commands run through [`Self::run`] so far: the native menu bar reads its rows again when it
+    /// moves ([`native_menu::sync`]).
+    run_count: u64,
     control_rx: Option<Receiver<ControlRequest>>,
     /// (token, path, reply, deadline ms): a window that isn't presented never delivers its frame.
     pending_screenshots: Vec<(u64, Option<String>, Sender<ControlResponse>, f64)>,
@@ -330,8 +360,16 @@ pub struct VectorcraftApp {
     /// (SVG without a `system_clipboard`) while the internal clipboard is empty. It enables the
     /// Paste menu items.
     pub(crate) system_paste: bool,
-    /// When `system_paste` was last checked (app time, s; at most once per frame).
+    /// When `system_paste` was last checked in line (app time, s; at most once per frame).
     system_paste_at: f64,
+    /// The thread that checks the system clipboard for `system_paste` instead
+    /// ([`Services::clipboard_probe`]).
+    clipboard_probe: Option<clipboard_probe::Probe>,
+    /// File dialogs shown off the UI thread and what runs again with their answers.
+    pub(crate) picks: picks::Picks,
+    /// The look for fonts installed or removed while the app was in the background, running
+    /// ([`Self::refresh_installed_fonts`]): whether they were.
+    font_check: Option<std::sync::mpsc::Receiver<bool>>,
     /// Keyboard pastes of something other than text (see [`shortcuts::PasteChord`]).
     pub(crate) paste_chord: shortcuts::PasteChord,
     /// Saves and exports running in the background (Preferences → File Handling).
@@ -378,13 +416,13 @@ impl VectorcraftApp {
                 slices: None,
                 print_tiling: None,
                 selection_box: None,
+                selection_bounds: None,
                 cursors: Default::default(),
             },
             perf: Perf::default(),
             integrated_titlebar: false,
-            native_menu: false,
             last_effect: None,
-            native_shortcuts: Default::default(),
+            run_count: 0,
             clipboard_out: None,
             clipboard_published: None,
             clipboard_in: None,
@@ -408,6 +446,9 @@ impl VectorcraftApp {
             place: Default::default(),
             system_paste: false,
             system_paste_at: f64::NEG_INFINITY,
+            clipboard_probe: None,
+            picks: picks::Picks::default(),
+            font_check: None,
             paste_chord: Default::default(),
             background: Default::default(),
             recovery: Default::default(),
@@ -470,6 +511,17 @@ impl VectorcraftApp {
 
     /// Run a UI or engine command by id. The single entry point for every frontend path.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A file dialog it shows off the UI thread runs it again with the path picked.
+        if self.picks.is_entry_free() {
+            let entry = picks::Entry::Command(id.to_string(), params.clone());
+            return picks::as_entry(self, move || entry, |app| app.run_now(id, params));
+        }
+        self.run_now(id, params)
+    }
+
+    /// [`Self::run`] it, inside what asks for file dialogs.
+    fn run_now(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        self.run_count = self.run_count.wrapping_add(1);
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
@@ -544,28 +596,14 @@ impl VectorcraftApp {
 
     /// Select a tool (also used by the toolbar and shortcuts).
     pub fn select_tool(&mut self, id: &str) {
-        self.change_tool(id, true);
-    }
-
-    /// Go back to tool `id` after a temporary one, without choosing it afresh
-    /// ([`vectorcraft_engine::Session::switch_tool`]).
-    pub fn restore_tool(&mut self, id: &str) {
-        self.change_tool(id, false);
-    }
-
-    fn change_tool(&mut self, id: &str, choose: bool) {
         let v = self.view_info();
-        let r = if choose { self.session.select_tool(id, v) } else { self.session.switch_tool(id, v) };
-        if let Err(e) = r {
+        if let Err(e) = self.session.select_tool(id, v) {
             self.ui.status = e.to_string();
         }
         if let Some(g) = vectorcraft_tools::catalog::group_of(id)
             && let Some(slot) = self.ui.group_tool.get_mut(g)
         {
             *slot = id.to_string();
-        }
-        if canvas::is_selection_tool(id) {
-            self.ui.last_selection_tool = id.to_string();
         }
         toolbar::remember(self, id);
         self.ui.flyout = None;
@@ -707,6 +745,22 @@ impl VectorcraftApp {
         self.canvas.selection_box = Some((key, b));
         b
     }
+
+    /// The selection's visual bounds (stroke and effects included), square to the page: measured
+    /// once per revision, as the canvas reads it every frame (a traced photo selects a group of
+    /// hundreds of thousands of paths).
+    pub fn selection_bounds(&mut self) -> Option<vectorcraft_geom::Rect> {
+        let st = self.session.active()?;
+        let key = (st.uid, st.revision);
+        if let Some((k, b)) = self.canvas.selection_bounds
+            && k == key
+        {
+            return b;
+        }
+        let b = st.doc.bounds_of(&st.selection.objects, true);
+        self.canvas.selection_bounds = Some((key, b));
+        b
+    }
 }
 
 /// eframe isn't a dependency of this crate (the host owns the event loop); these entry points are
@@ -729,7 +783,12 @@ impl VectorcraftApp {
     }
 
     fn logic_frame(&mut self, ctx: &egui::Context) {
-        i18n::set_current(self.ui_language());
+        let lang = self.ui_language();
+        i18n::set_current(lang);
+        // The engine gives new type the Japanese defaults while the UI is in Japanese.
+        if self.session.ui_language.as_deref() != Some(lang.code()) {
+            self.session.ui_language = Some(lang.code().to_string());
+        }
         self.adopt_context(ctx);
         if !self.styled {
             theme::install_fonts(ctx);
@@ -747,12 +806,23 @@ impl VectorcraftApp {
         }
         self.last_time = now;
         self.sync_views();
-        // Read the system clipboard only when that alone decides whether Paste is enabled, and at
-        // most a few times a second (opening it locks it against other apps on some systems).
-        if !(0.0..SYSTEM_CLIPBOARD_POLL).contains(&(now - self.system_paste_at)) {
-            self.system_paste_at = now;
-            self.system_paste = self.session.clipboard.is_empty() && self.session.active().is_some() && self.system_clipboard_pasteable();
+        // Read the system clipboard only when that alone decides whether Paste is enabled. A
+        // background thread reads it where the host installs one (an unresponsive owner must never
+        // stall the frame loop); otherwise, or once that thread is gone, it is read here, at most a
+        // few times a second (opening it locks it against other apps on some systems).
+        let wanted = self.session.clipboard.is_empty() && self.session.active().is_some();
+        if let Some(make) = self.services.clipboard_probe.take() {
+            self.clipboard_probe = clipboard_probe::Probe::start(make, ctx.clone());
         }
+        if let Some(pasteable) = self.clipboard_probe.as_mut().and_then(|p| p.pasteable(wanted)) {
+            self.system_paste = pasteable;
+        } else if !(0.0..SYSTEM_CLIPBOARD_POLL).contains(&(now - self.system_paste_at)) {
+            self.clipboard_probe = None;
+            self.system_paste_at = now;
+            self.system_paste = wanted && self.system_clipboard_pasteable();
+        }
+        self.poll_font_check(ctx);
+        picks::poll(self, ctx);
         background::poll(self);
         if !self.background.jobs.is_empty() {
             // Keep the status bar's progress moving and pick the result up when it arrives.
@@ -791,6 +861,7 @@ impl VectorcraftApp {
             ctx.copy_text(t);
         }
         self.drain_inbox();
+        native_menu::run(self, ctx);
         if self.fonts_ready {
             shortcuts::handle(self, ctx);
         }
@@ -825,10 +896,38 @@ impl VectorcraftApp {
 
     /// Fonts installed or removed while the app was in the background are listed when it comes
     /// back (Refresh Font List by itself): a look at the font folders, a scan only when they changed.
+    /// The look runs on another thread (asking DirectWrite for the fonts font services loaded
+    /// meanwhile takes tens of milliseconds on Windows, #579), [`Self::poll_font_check`] scans.
     fn refresh_installed_fonts(&mut self) {
-        if vectorcraft_text::FontDb::global().installed_fonts_changed() {
-            // A failure shows in the status bar, as the menu item's does.
-            let _ = self.run("text.rescanFonts", json!({}));
+        if self.font_check.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let look = move || {
+            // The UI gone meanwhile has nothing to refresh.
+            let _ = tx.send(vectorcraft_text::FontDb::global().installed_fonts_changed());
+        };
+        let spawned =
+            if cfg!(target_arch = "wasm32") { None } else { std::thread::Builder::new().name("font-check".into()).spawn(look.clone()).ok() };
+        if spawned.is_none() {
+            look();
+        }
+        self.font_check = Some(rx);
+    }
+
+    /// Rescan the fonts once [`Self::refresh_installed_fonts`]'s look says they changed.
+    fn poll_font_check(&mut self, ctx: &egui::Context) {
+        let Some(check) = &self.font_check else { return };
+        match check.try_recv() {
+            Ok(changed) => {
+                self.font_check = None;
+                if changed {
+                    // A failure shows in the status bar, as the menu item's does.
+                    let _ = self.run("text.rescanFonts", json!({}));
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(50)),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.font_check = None,
         }
     }
 
@@ -836,6 +935,13 @@ impl VectorcraftApp {
     /// modifiers egui holds (`i.modifiers`), so a synthetic key, button or wheel turn holds its own
     /// for the frames it spans (a drag's moves included); the keyboard's come back after.
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        // The native menu's key equivalents become the input their keys make, ahead of what came
+        // after them (see `native_menu`).
+        let keys = self.services.native_menu.as_mut().map(native_menu::NativeMenu::take_keys).unwrap_or_default();
+        if !keys.is_empty() {
+            let events: Vec<egui::Event> = keys.into_iter().flat_map(|k| native_menu::key_events(k, || self.system_clipboard_text())).collect();
+            raw.events.splice(0..0, events);
+        }
         for e in &raw.events {
             match e {
                 egui::Event::ModifiersChanged(m) => self.host_modifiers = *m,
@@ -900,6 +1006,7 @@ impl VectorcraftApp {
         let t0 = now_ms();
         scrub::begin_frame(self, &ctx);
         font_menu::end_stale_preview(self, &ctx);
+        floating::track(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         if self.ui.screen_mode < 2 {
             chrome::app_bar(self, ui);
@@ -924,6 +1031,7 @@ impl VectorcraftApp {
             canvas::show(self, ui);
         });
         dock::floating_panel(self, &ctx);
+        floating::show(self, &ctx);
         panels::library_panel::show_window(self, &ctx);
         dialogs::show(self, &ctx);
         palette::show(self, &ctx);
@@ -932,6 +1040,7 @@ impl VectorcraftApp {
         }
         self.ui_fonts.frame(&ctx);
         scrub::end_frame(self, &ctx);
+        native_menu::sync(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;
         let _ = json!(null);
     }

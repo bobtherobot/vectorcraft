@@ -8,7 +8,7 @@
 //! reads from a paste itself ([`VectorcraftApp::paste_from_host`]).
 
 use serde_json::{Value, json};
-use vectorcraft_engine::cmd::clipboard::{EMF, Flavour, PASTE_ORDER, PDF, SVG, TEXT, looks_like_svg};
+use vectorcraft_engine::cmd::clipboard::{BITMAP, EMF, Flavour, PASTE_ORDER, PDF, SVG, TEXT, is_address, looks_like_svg};
 
 use crate::VectorcraftApp;
 
@@ -23,6 +23,11 @@ pub trait SystemClipboard {
     /// Does the clipboard hold one of `mimes`? Cheap enough to ask a few times a second.
     fn has(&mut self, mimes: &[&'static str]) -> bool;
 }
+
+/// Makes a second system-clipboard handle, to check off the UI thread whether Paste has something
+/// to take ([`Services::clipboard_probe`](crate::Services::clipboard_probe)). It is called on that
+/// thread and the handle lives and dies there, so the handle needn't be `Send`.
+pub type ClipboardProbeFactory = Box<dyn FnOnce() -> Box<dyn SystemClipboard> + Send>;
 
 /// The command (and its params) that loads `f` into the internal clipboard, centred on `center`.
 pub(crate) fn import_command(f: &Flavour, center: Option<[f64; 2]>) -> (&'static str, Value) {
@@ -85,6 +90,8 @@ impl VectorcraftApp {
                     return Ok(());
                 }
                 let Some(f) = cb.read(&PASTE_ORDER) else { return Ok(()) };
+                // Text that is only an address goes with a browser's copied picture: the picture.
+                let f = if f.mime == TEXT && is_address(&String::from_utf8_lossy(&f.data)) { cb.read(&[BITMAP]).unwrap_or(f) } else { f };
                 import_command(&f, center)
             }
             // Text only: SVG markup is art, other text is left alone.

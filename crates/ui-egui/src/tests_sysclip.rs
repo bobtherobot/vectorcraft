@@ -66,7 +66,7 @@ pub(super) fn run(app: &mut VectorcraftApp, id: &str, p: Value) -> Value {
     app.run(id, p).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-fn copy_rect(app: &mut VectorcraftApp) {
+pub(super) fn copy_rect(app: &mut VectorcraftApp) {
     let id = run(app, "shape.rectangle", json!({"x": 10, "y": 10, "width": 40, "height": 20}))["id"].clone();
     run(app, "paint.setFill", json!({"color": "#ff0000"}));
     run(app, "select.set", json!({"ids": [id]}));
@@ -165,6 +165,22 @@ fn text_from_another_app_pastes_as_point_text_and_svg_text_as_art() {
     assert!(app.run("edit.paste", json!({})).is_err());
     assert!(app.ui.status.starts_with("Couldn't paste"), "{}", app.ui.status);
     assert_eq!(count(&app), before);
+}
+
+/// A browser's Copy Image: the picture with its address as text (and HTML, which Paste doesn't
+/// read). The picture is pasted; an address alone pastes as text, nothing is fetched (#597).
+#[test]
+fn an_image_copied_in_a_browser_pastes_as_the_picture_not_its_address() {
+    let (mut app, board) = app();
+    let url = b"https://example.com/images/cat.png".to_vec();
+    copy_elsewhere(&board, vec![(TEXT, url.clone()), ("text/html", b"<img src=\"https://example.com/images/cat.png\">".to_vec()), (PNG, blue_png())]);
+    run(&mut app, "edit.paste", json!({}));
+    let NodeKind::Image(im) = &pasted(&app)[0].kind else { panic!("not an image: {:?}", pasted(&app)[0].kind) };
+    assert!(im.link.is_none() && (im.width, im.height) == (4, 2));
+    copy_elsewhere(&board, vec![(TEXT, url)]);
+    run(&mut app, "edit.paste", json!({}));
+    let NodeKind::Text(t) = &pasted(&app)[0].kind else { panic!("not type") };
+    assert_eq!(t.plain_text(), "https://example.com/images/cat.png");
 }
 
 #[test]

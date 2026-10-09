@@ -168,9 +168,11 @@ Japanese fonts come from [storytold/craft-fonts](https://github.com/storytold/cr
 build input (releases always use it): `CRAFT_FONTS_DIR="$PWD/../craft-fonts" cargo run --release -p vectorcraft` (an absolute path).
 Without it, Japanese text uses the installed system fonts. See [`docs/development.md`](docs/development.md#fonts-craft-fonts-optional-build-input).
 
-On laptops with two graphics processors, VectorCraft uses the power-saving (integrated) one by default.
-To use the discrete one, choose **Preferences › Performance › Graphics Processor › High Performance**
-and restart, or start the app with `WGPU_POWER_PREF=high` (see [`docs/development.md`](docs/development.md#desktop-graphics-processor)).
+On machines with two graphics processors, VectorCraft renders on the power-saving (integrated) one by default on
+Windows and macOS, and on the one the desktop runs on under Linux. To choose, use **Preferences › Performance ›
+Graphics Processor** and restart. If a graphics processor can't show the window, VectorCraft starts again on the
+next one. To pick one when starting the app, set `WGPU_POWER_PREF=high` (or `low`), or `WGPU_ADAPTER_NAME` to part of
+its name, such as `WGPU_ADAPTER_NAME=nvidia` (see [`docs/development.md`](docs/development.md#desktop-graphics-processor)).
 
 On Linux under KDE Plasma 6.3 or later with Wayland, a drawing tablet's pen moves the cursor but VectorCraft doesn't
 respond to it yet (#491). Start the app under XWayland instead: `WAYLAND_DISPLAY= vectorcraft` (see
@@ -197,7 +199,7 @@ milestones, and honest time-to-parity estimates.
 "a power user can't tell the difference". Everyday vector illustration is close to usable: drawing and path tools,
 Pathfinder and Shape Builder, paint, gradients, appearance and transparency, type with styles, threading and Hebrew/Arabic bidirectional layout, and
 files (SVG, PDF and PDF-compatible `.ai` with PDF/X, EPS, DXF, EMF/WMF, raster formats and PSD, Print, Package). The interface
-speaks English, Japanese, Traditional and Simplified Chinese and Spanish (and Czech and Brazilian Portuguese in the menus).
+speaks English, Japanese, Traditional and Simplified Chinese, Spanish, French, Italian and Russian (and Czech and Brazilian Portuguese in the menus).
 The scores are
 self-assessed, so the [honest assessment](ROADMAP.md#honest-assessment-2026-10-05) explains how far to trust them.
 

@@ -153,6 +153,8 @@ pub struct DocState {
     pub recovery: Option<cmd::recovery::RecoveryCopy>,
     /// View → Show Print Tiling, per document (view state: not saved, not undoable).
     pub print_tiling: bool,
+    /// The rows open in the Layers panel (view state: not undoable; native files keep it).
+    pub layers_open: OpenRows,
     /// Transform Again after a perspective move or scale (Perspective Selection tool): the
     /// `perspective.transform` params it repeats. `None` once an ordinary transform follows.
     pub last_perspective: Option<Value>,
@@ -160,11 +162,61 @@ pub struct DocState {
 
 static NEXT_DOC_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// The rows open in the Layers panel: the layers, sublayers and groups that show what they hold.
+/// A document opens with the ones it was saved with ([`Document::layers_open`]), else with only
+/// its top-level layers open.
+#[derive(Clone, Debug, Default)]
+pub struct OpenRows {
+    ids: std::collections::HashSet<NodeId>,
+    /// Counts the changes, so views can keep what they work out from the open rows.
+    generation: u64,
+}
+
+impl OpenRows {
+    /// The rows `saved` in a file, else `doc`'s top-level layers.
+    fn new(doc: &Document, saved: Option<Vec<NodeId>>) -> Self {
+        let ids = match saved {
+            Some(ids) => ids.into_iter().collect(),
+            None => doc.layers.iter().map(|l| l.id).collect(),
+        };
+        Self { ids, generation: 0 }
+    }
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.ids.contains(&id)
+    }
+    /// Open or close row `id`.
+    pub fn set(&mut self, id: NodeId, open: bool) {
+        let changed = if open { self.ids.insert(id) } else { self.ids.remove(&id) };
+        self.generation += u64::from(changed);
+    }
+    /// Changes so far: the same number means the same open rows.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// What a native file keeps of the open rows: those of `doc` that hold others, in id order;
+    /// `None` when they are the default (only the top-level layers).
+    pub fn saved(&self, doc: &Document) -> Option<Vec<NodeId>> {
+        let mut ids = vec![];
+        doc.walk(|n| {
+            if n.children().is_some() && self.ids.contains(&n.id) {
+                ids.push(n.id);
+            }
+        });
+        ids.sort_unstable();
+        let mut layers: Vec<NodeId> = doc.layers.iter().map(|l| l.id).collect();
+        layers.sort_unstable();
+        (ids != layers).then_some(ids)
+    }
+}
+
 impl DocState {
     pub fn new(mut doc: Document, path: Option<String>) -> Self {
         let active_layer = doc.default_layer();
-        // The saved view lives here while the document is open (saves write it back).
+        // The saved view and open Layers rows live here while the document is open (saves write
+        // them back).
         let view = doc.last_view.take();
+        let saved_open = doc.layers_open.take();
+        let layers_open = OpenRows::new(&doc, saved_open);
         let doc = Arc::new(doc);
         Self {
             saved_doc: doc.clone(),
@@ -190,6 +242,7 @@ impl DocState {
             recovered: false,
             recovery: None,
             print_tiling: false,
+            layers_open,
             last_perspective: None,
         }
     }
@@ -446,10 +499,13 @@ pub struct Prefs {
     pub gpu_performance: bool,
     pub animated_zoom: bool,
     /// Which graphics processor the desktop app asks for at startup (it takes effect after a
-    /// restart): `powerSaving` (the integrated GPU on hybrid-graphics laptops) or `highPerformance`
-    /// (the discrete one). The canvas is rasterized on the CPU and only composited on the GPU, so
-    /// the integrated GPU is plenty; presenting from the discrete GPU through the integrated one
-    /// made some hybrid laptops flicker (#306). Single-GPU machines are unaffected.
+    /// restart): `automatic`, `lowPower` (the integrated GPU on hybrid-graphics machines) or
+    /// `highPerformance` (the discrete one). The canvas is rasterized on the CPU and only
+    /// composited on the GPU, so the integrated GPU is plenty; presenting from the discrete GPU
+    /// through the integrated one made some hybrid laptops flicker (#306). Automatic is power
+    /// saving on Windows and macOS and the system's default GPU elsewhere, the one the desktop
+    /// runs on: a Wayland compositor may not show frames from another GPU (#502). Single-GPU
+    /// machines are unaffected.
     pub gpu_preference: String,
     pub history_states: u32,
     pub real_time_drawing: bool,
@@ -631,7 +687,7 @@ impl Default for Prefs {
             object_highlighting: true,
             transform_tools_guides: true,
             construction_guides: true,
-            construction_angles: s("90° & 45° Angles"),
+            construction_angles: s(vectorcraft_tools::guides::DEFAULT_CONSTRUCTION_ANGLES),
             anchor_path_labels: true,
             measurement_labels: true,
             spacing_guides: true,
@@ -653,7 +709,7 @@ impl Default for Prefs {
             interface_language: s("auto"),
             gpu_performance: true,
             animated_zoom: true,
-            gpu_preference: s("powerSaving"),
+            gpu_preference: s("automatic"),
             history_states: 500,
             real_time_drawing: true,
             render_threads: -1,
@@ -718,6 +774,12 @@ pub struct Session {
     /// Executed commands (for actions and debugging).
     pub journal: Vec<(String, Value)>,
     pub(crate) tool: Box<dyn Tool>,
+    /// While Cmd lends `tool` (a selection tool) for a drag: the tool it was lent to, which comes
+    /// back as it was at the release ([`Session::pointer`]).
+    pub(crate) lender: Option<Box<dyn Tool>>,
+    /// The selection tool chosen last (Selection, Direct Selection or Group Selection): the one Cmd
+    /// lends the other tools. None until one is chosen.
+    pub(crate) last_selection_tool: Option<&'static str>,
     pub(crate) last_view: ViewInfo,
     depth: u32,
     /// Set when the active tool panicked (see [`guard`]); reported by the next tool event.
@@ -754,6 +816,10 @@ pub struct Session {
     pub style_libraries: cmd::stylelib::Libraries,
     /// URLs recently given in the Attributes panel (`attributes.set {url}`), newest first; not saved.
     pub recent_urls: Vec<String>,
+    /// The language the UI is drawn in (a language code, never `auto`), set by the UI each frame;
+    /// `None` without one (headless), where an explicit `interfaceLanguage` preference counts.
+    /// Japanese gives new type the Japanese defaults ([`Session::japanese_interface`]).
+    pub ui_language: Option<String>,
     /// Parameters the running top-level command resolved from the preferences or the clock, added
     /// to its journal entry so a replay does the same ([`Session::note_journal`]).
     journal_note: serde_json::Map<String, Value>,
@@ -788,6 +854,9 @@ impl Default for Session {
 
 impl Session {
     pub fn new() -> Self {
+        // Placed documents are read by the native format's loader.
+        vectorcraft_doc::placed_document::set_loader(cmd::place::document::read_document);
+        vectorcraft_doc::placed_document::set_file_reader(cmd::place::document::read_file_again);
         Self {
             docs: vec![],
             active: None,
@@ -797,6 +866,8 @@ impl Session {
             clipboard: Clipboard::default(),
             journal: vec![],
             tool: vectorcraft_tools::create("selection"),
+            lender: None,
+            last_selection_tool: None,
             last_view: ViewInfo::default(),
             depth: 0,
             tool_panic: None,
@@ -814,6 +885,7 @@ impl Session {
             freeform_point: None,
             style_libraries: Default::default(),
             recent_urls: vec![],
+            ui_language: None,
             journal_note: Default::default(),
             note_depth: 1,
             batch_stash: None,
@@ -855,6 +927,8 @@ impl Session {
             return;
         }
         let view = self.last_view;
+        // The switch goes on whatever the lent tool's last actions did, as for the deactivation.
+        let _ = self.give_back_tool(view);
         let acts = self.with_tool_cx(view, |t, cx| t.deactivate(cx));
         let _ = self.apply_actions(acts);
         // A batch leaves its interaction open in the document it leaves, to keep or roll back with
@@ -887,6 +961,8 @@ impl Session {
     /// Text layout bounds are a cache (not saved): compute them for a document just read, or
     /// selection boxes and hit testing would use the rough estimate until each text is edited.
     fn refresh_text_bounds(doc: &mut Document) {
+        // Inline graphics in text take their size from their symbols' art (not saved either).
+        doc.resolve_inline_art();
         let mut texts = vec![];
         doc.walk(|n| {
             if matches!(n.kind, NodeKind::Text(_)) {
@@ -933,6 +1009,7 @@ impl Session {
         st.save_options = old.save_options.clone();
         st.converted = old.converted;
         st.view = old.view.clone();
+        st.layers_open = old.layers_open.clone();
         let old = std::mem::replace(&mut self.docs[index], st);
         if let Some(stash) = &mut self.batch_stash {
             stash.push(old);
@@ -981,6 +1058,12 @@ impl Session {
             self.after_command();
         }
         Ok(r)
+    }
+
+    /// Is the interface in Japanese? Then new type starts with em box top-to-top leading and em
+    /// box centre character alignment (#432).
+    pub fn japanese_interface(&self) -> bool {
+        self.ui_language.as_deref().unwrap_or(&self.prefs.interface_language).eq_ignore_ascii_case("ja")
     }
 
     /// Record `key: value` in the running top-level command's journal entry (or its interaction's
@@ -1073,27 +1156,32 @@ impl Session {
         let before_sel = st.selection.clone();
         let doc = Arc::make_mut(&mut st.doc);
         let result = match f(doc, &mut st.selection) {
-            Ok(v) => {
-                // Text Wrap: area type follows its wrap objects; then threads re-flow.
-                cmd::textwrap::refresh(Arc::make_mut(&mut st.doc));
-                // Opacity-mask editing: the mask follows its art on the editing layer.
-                if st.doc.mask_edit.is_some() {
-                    cmd::maskedit::sync(Arc::make_mut(&mut st.doc));
+            Ok(v) => match cmd::shaper::refresh(&before, Arc::make_mut(&mut st.doc)) {
+                Err(e) => Err(e),
+                Ok(()) => {
+                    // Inline graphics in text follow their symbols.
+                    cmd::inline::refresh(&before, Arc::make_mut(&mut st.doc));
+                    // Text Wrap: area type follows its wrap objects; then threads re-flow.
+                    cmd::textwrap::refresh(Arc::make_mut(&mut st.doc));
+                    // Opacity-mask editing: the mask follows its art on the editing layer.
+                    if st.doc.mask_edit.is_some() {
+                        cmd::maskedit::sync(Arc::make_mut(&mut st.doc));
+                    }
+                    // Threaded text re-flows when any of its frames changed.
+                    if !st.doc.text_threads.is_empty() {
+                        cmd::threads::reflow(&before, Arc::make_mut(&mut st.doc));
+                    }
+                    // Asset Export: assets let go of deleted art.
+                    if !st.doc.assets.is_empty() {
+                        Arc::make_mut(&mut st.doc).prune_assets();
+                    }
+                    if doc_sane(&st.doc, &st.selection) {
+                        Ok(v)
+                    } else {
+                        Err(EngineError::Other("result would exceed the canvas (coordinates out of range)".into()))
+                    }
                 }
-                // Threaded text re-flows when any of its frames changed.
-                if !st.doc.text_threads.is_empty() {
-                    cmd::threads::reflow(&before, Arc::make_mut(&mut st.doc));
-                }
-                // Asset Export: assets let go of deleted art.
-                if !st.doc.assets.is_empty() {
-                    Arc::make_mut(&mut st.doc).prune_assets();
-                }
-                if doc_sane(&st.doc, &st.selection) {
-                    Ok(v)
-                } else {
-                    Err(EngineError::Other("result would exceed the canvas (coordinates out of range)".into()))
-                }
-            }
+            },
             Err(e) => Err(e),
         };
         match result {
@@ -1266,6 +1354,8 @@ mod tests_adjust;
 #[cfg(test)]
 mod tests_appearance;
 #[cfg(test)]
+mod tests_areafit;
+#[cfg(test)]
 mod tests_assets;
 #[cfg(test)]
 mod tests_attributes;
@@ -1356,6 +1446,8 @@ mod tests_gradpanel;
 #[cfg(test)]
 mod tests_halftone;
 #[cfg(test)]
+mod tests_inline;
+#[cfg(test)]
 mod tests_journal;
 #[cfg(test)]
 mod tests_knockout;
@@ -1402,6 +1494,8 @@ mod tests_paintproxy;
 #[cfg(test)]
 mod tests_panelcmds;
 #[cfg(test)]
+mod tests_paragraphs;
+#[cfg(test)]
 mod tests_pathops;
 #[cfg(test)]
 mod tests_pathtype;
@@ -1425,6 +1519,8 @@ mod tests_persp_text;
 mod tests_perspgrid;
 #[cfg(test)]
 mod tests_place;
+#[cfg(test)]
+mod tests_placed_document;
 #[cfg(test)]
 mod tests_plugins;
 #[cfg(test)]
@@ -1462,7 +1558,11 @@ mod tests_saveoptions;
 #[cfg(test)]
 mod tests_scalestrokes;
 #[cfg(test)]
+mod tests_shaper;
+#[cfg(test)]
 mod tests_slices;
+#[cfg(test)]
+mod tests_smartguides;
 #[cfg(test)]
 mod tests_strokegeom;
 #[cfg(test)]
@@ -1485,6 +1585,8 @@ mod tests_swatches;
 mod tests_swatchlib;
 #[cfg(test)]
 mod tests_targeting;
+#[cfg(test)]
+mod tests_textcombos;
 #[cfg(test)]
 mod tests_textedit;
 #[cfg(test)]
