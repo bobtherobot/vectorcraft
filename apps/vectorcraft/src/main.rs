@@ -16,6 +16,7 @@ compile_error!("the win7 target requires --no-default-features --features window
 
 mod clipboard;
 mod control_server;
+mod dev_build;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -361,9 +362,13 @@ fn main() -> eframe::Result {
     let gpu_pref = saved.as_ref().and_then(|ui| ui.engine_prefs.get("gpuPreference")).and_then(serde_json::Value::as_str);
     #[cfg(feature = "wgpu")]
     let power = power_preference(gpu_pref, eframe::wgpu::PowerPreference::from_env());
+    let dev_build = dev_build::detect();
+    if let Some(b) = &dev_build {
+        log::info!("development build from {} ({:?} {:?}, changes: {})", b.checkout, b.branch, b.commit, b.changes);
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("VectorCraft")
+            .with_title(if dev_build.is_some() { "VectorCraft (dev)" } else { "VectorCraft" })
             .with_inner_size(window::DEFAULT_SIZE)
             .with_min_inner_size(window::MIN_SIZE)
             .with_drag_and_drop(true)
@@ -427,6 +432,7 @@ fn main() -> eframe::Result {
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.custom_titlebar = CUSTOM_TITLEBAR;
+            app.dev_build = dev_build;
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);

@@ -38,6 +38,8 @@ After that, open **VectorCraft (dev)** from your desktop or applications menu.
 2. This only makes optimized builds of your code. It has nothing to do with publishing a release:
    the real installers (`.deb`, `.dmg`, `.msi`, …) are made by [`packaging/`](../packaging) in CI.
 3. The launcher runs whatever is checked out, including uncommitted edits and the current branch.
+   Your build shows a **DEV** tag next to the logo in the app's top bar: hover it to see the
+   branch, the commit and when it was built.
 4. No [Rust](https://rustup.rs), or too old a version to build the app? The launcher tells you, and
    runs the latest release instead.
 5. The app's output goes to `~/.local/share/vectorcraft/dev-app.log`.
