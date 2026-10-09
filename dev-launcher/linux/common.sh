@@ -2,12 +2,12 @@
 # downloading it first, and starts it.
 #
 # Which app:
-#   - with Rust installed, this checkout's release build (target/release/vectorcraft), brought up
-#     to date first: cargo rebuilds what changed since the last build, and does nothing when
-#     nothing did (no signing warnings on any OS);
-#   - else this checkout's release build, when there is one;
-#   - otherwise the AppImage from the latest GitHub Release, downloaded and sha256-checked into
-#     ~/.local/share/vectorcraft/ (again only when a newer release is out).
+#   - with Rust installed (at least the workspace's rust-version), this checkout's release build
+#     (target/release/vectorcraft), brought up to date first: cargo rebuilds what changed since
+#     the last build, and does nothing when nothing did (no signing warnings on any OS);
+#   - otherwise (no Rust, or too old a Rust, which is said) the AppImage from the latest GitHub
+#     Release, downloaded and sha256-checked into ~/.local/share/vectorcraft/ (again only when a
+#     newer release is out). --local or --no-build run the local build as it is instead.
 
 APP_ID=ai.storyteller.vectorcraft
 DEV_ID=$APP_ID.dev
@@ -138,18 +138,48 @@ download_appimage() {
   echo "$name" > "$APPIMAGE_NAME"
 }
 
+# The installed Rust version (e.g. 1.98.1), and the oldest one the workspace builds with
+# (`rust-version` in Cargo.toml, e.g. 1.95).
+rust_version() { cargo --version 2>/dev/null | awk '{ print $2 }'; }
+rust_needed() { sed -nE 's/^rust-version *= *"([0-9.]+)".*/\1/p' "$ROOT/Cargo.toml" | head -n 1; }
+rust_is_new_enough() {
+  local have need
+  have="$(rust_version)"; need="$(rust_needed)"
+  [ -n "$need" ] || return 0 # no minimum to check against
+  [ -n "$have" ] || return 1
+  [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n 1)" = "$need" ]
+}
+
 # Sets APP (and ENVS) to the app to launch, building or downloading it first.
 prepare_app() {
   # With Rust installed, a local build is brought up to date rather than launched stale (or
   # downloaded). A release download needs no build. A launcher started from the desktop may not
   # have ~/.cargo/bin on its PATH (the shell profile adds it), so look there too.
   command -v cargo >/dev/null || [ ! -f "$HOME/.cargo/env" ] || . "$HOME/.cargo/env"
+  local rust_problem=""
+  if ! command -v cargo >/dev/null; then
+    rust_problem="Rust isn't installed (https://rustup.rs)"
+  elif ! rust_is_new_enough; then
+    rust_problem="your Rust is $(rust_version), but VectorCraft needs $(rust_needed) or newer (update it with \`rustup update\`)"
+  fi
   if [ "$BUILD" = auto ]; then
     BUILD=0
-    if [ "$MODE" != download ] && command -v cargo >/dev/null; then BUILD=1; fi
+    if [ "$MODE" != download ]; then
+      if [ -z "$rust_problem" ]; then
+        BUILD=1
+      elif [ "$MODE" = auto ]; then
+        # A local build can't be brought up to date, so it may be stale: the release is current.
+        echo "==> Can't build: $rust_problem."
+        echo "    Launching the latest release instead."
+        MODE=download
+      else
+        echo "==> Can't build: $rust_problem."
+        echo "    Launching the existing build as it is."
+      fi
+    fi
   fi
   if [ "$BUILD" = 1 ]; then
-    command -v cargo >/dev/null || die "--build needs Rust (https://rustup.rs)"
+    [ -z "$rust_problem" ] || die "can't build: $rust_problem"
     if [ -x "$LOCAL_BIN" ]; then
       echo "==> Updating the release build (only what changed is rebuilt)"
     else
@@ -162,13 +192,7 @@ prepare_app() {
   case "$MODE" in
     local) [ -x "$LOCAL_BIN" ] || die "no local build at $LOCAL_BIN (add --build)"; APP="$LOCAL_BIN" ;;
     download) download_appimage; APP="$APPIMAGE" ;;
-    auto)
-      if [ -x "$LOCAL_BIN" ]; then
-        APP="$LOCAL_BIN"
-        [ "$BUILD" = 1 ] || echo "==> Rust isn't installed: launching the existing build as it is"
-      else
-        download_appimage; APP="$APPIMAGE"
-      fi ;;
+    auto) if [ -x "$LOCAL_BIN" ]; then APP="$LOCAL_BIN"; else download_appimage; APP="$APPIMAGE"; fi ;;
   esac
 
   # An AppImage normally mounts itself with FUSE; without libfuse2 it can unpack itself instead.

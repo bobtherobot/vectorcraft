@@ -6,15 +6,14 @@
 # No root needed; run it again to update, uninstall.sh to remove.
 #
 # The app it launches (see common.sh):
-#   - with Rust installed, this checkout's release build (target/release/vectorcraft), rebuilt
-#     first when the sources changed;
-#   - else this checkout's release build, when there is one;
+#   - with Rust installed (new enough to build it), this checkout's release build
+#     (target/release/vectorcraft), rebuilt first when the sources changed;
 #   - otherwise the AppImage from the latest GitHub Release, downloaded and sha256-checked into
 #     ~/.local/share/vectorcraft/.
 #
 # Usage: dev-launcher/linux/install.sh [--local | --download] [--build | --no-build]
 #                                   [--no-desktop-icon] [--no-launch] [--repo OWNER/NAME]
-#   --local            use this checkout's build (fails if there is none and Rust isn't installed)
+#   --local            use this checkout's build (as it is, without usable Rust)
 #   --download         use the latest release's AppImage, even with a local build or Rust
 #   --build            build the release binary (the default with Rust; fails without it)
 #   --no-build         use the local build as it is, even when the sources are newer
