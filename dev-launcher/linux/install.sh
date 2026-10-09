@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the VectorCraft dev launcher for the current user: "VectorCraft (dev)" on the desktop and
-# in the applications menu, with the app icon marked by a red "dev" bar. Opening it runs launch.sh
+# in the applications menu, with the app icon marked by a black "dev" bar. Opening it runs launch.sh
 # in a terminal, which rebuilds the app when the code changed and starts it. This script builds
 # (or downloads) the app first, writes the launchers, then starts the app.
 # No root needed; run it again to update, uninstall.sh to remove.
@@ -57,8 +57,8 @@ for old in "$APPS_DIR/$APP_ID.desktop" "$DESKTOP/VectorCraft.desktop"; do
   fi
 done
 
-# --- The dev icon: the app icon with a red "dev" bar along the bottom -------------------------
-# Drawn over the app icon's 512×512 tile (rounded, rx=112), in a deeper red than its field.
+# --- The dev icon: the app icon with a black "dev" bar along the bottom -----------------------
+# Drawn over the app icon's 512×512 tile (rounded, rx=112), in the icon's ink black, 40% of its height.
 make_dev_icon() {
   local src="$ROOT/assets/app-icon/hicolor/scalable/apps/$APP_ID.svg"
   local dir="$ICONS_DIR/hicolor/scalable/apps"
@@ -69,7 +69,7 @@ make_dev_icon() {
   {
     printf '%s' "${svg%</svg>*}"
     cat <<'SVG'
-<clipPath id="dev-tile"><rect width="512" height="512" rx="112"/></clipPath><g clip-path="url(#dev-tile)"><rect y="400" width="512" height="112" fill="#b3001b"/><rect y="400" width="512" height="8" fill="#efe9dc"/></g><text x="256" y="488" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, Helvetica, sans-serif" font-weight="bold" font-size="84" letter-spacing="2" fill="#ffffff">dev</text></svg>
+<clipPath id="dev-tile"><rect width="512" height="512" rx="112"/></clipPath><g clip-path="url(#dev-tile)"><rect y="307" width="512" height="205" fill="#0b0b0c"/><rect y="307" width="512" height="8" fill="#efe9dc"/></g><text x="256" y="466" text-anchor="middle" font-family="DejaVu Sans, Liberation Sans, Arial, Helvetica, sans-serif" font-weight="bold" font-size="150" letter-spacing="3" fill="#ffffff">dev</text></svg>
 SVG
   } > "$dir/$DEV_ID.svg"
   # Sized PNGs too where we can render them; icon themes fall back to the SVG otherwise.

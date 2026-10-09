@@ -1,7 +1,7 @@
 # Dev launcher
 
 A **VectorCraft (dev)** icon on your desktop and in your applications menu that opens **your own
-build**, with whatever changes you're working on. Its icon is the app icon with a red **dev** bar
+build**, with whatever changes you're working on. Its icon is the app icon with a black **dev** bar
 along the bottom, so it can't be mistaken for an installed VectorCraft, which keeps its own entry.
 
 ```
