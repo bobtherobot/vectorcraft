@@ -1,4 +1,4 @@
 [alias]
 xtask = "run --package xtask --"
-# Rebuild the optimized app that the dev launcher (dev-launcher/) runs: edit, `cargo devapp`, double-click.
+# Rebuild the optimized app that the dev launcher (dev-launcher/) runs; opening the launcher does it too.
 devapp = "build --release -p vectorcraft"

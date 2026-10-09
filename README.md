@@ -148,8 +148,8 @@ exposes to agents, and exported by VectorCraft's own renderer. The source files 
 ## Quick start
 
 Just want to use it? Download an installer from the [Releases](../../releases) page. On Linux,
-`dev-launcher/linux/install.sh` adds a desktop icon and menu entry for your own build (refresh it
-with `cargo devapp` after changing the code) or the latest release. See
+`dev-launcher/linux/install.sh` adds a "VectorCraft (dev)" desktop icon and menu entry that
+rebuilds your checkout when the code changed and then opens it (or opens the latest release). See
 [`dev-launcher/`](dev-launcher/README.md).
 
 ```sh
