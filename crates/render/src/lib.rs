@@ -17,7 +17,7 @@ mod paint;
 mod pattern;
 pub mod proof;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use vectorcraft_doc::{AppearanceItem, Document, Node, NodeId, NodeKind, StrokeAlign, StrokeLayer, TextObject};
@@ -361,8 +361,6 @@ struct Frame<'a> {
     /// Size of one output pixel in document units.
     px: f64,
     opts: &'a RenderOptions,
-    /// `opts.hidden` as a set: a drag can hide thousands of objects (see [`RenderOptions::hidden`]).
-    hidden: &'a HashSet<NodeId>,
     /// What colours paint as: screen colours, or one ink plane of a CMYK document (see [`ink`]).
     ink: Ink,
 }
@@ -438,8 +436,7 @@ impl Renderer {
         let inv = view.inverse();
         let visible = inv.transform_rect_bbox(Rect::new(0.0, 0.0, w as f64, h as f64));
         let px = 1.0 / view.determinant().abs().sqrt().max(1e-12);
-        let hidden: HashSet<NodeId> = opts.hidden.iter().copied().collect();
-        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, hidden: &hidden, ink: Ink::Display };
+        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, ink: Ink::Display };
         self.stamp += 1;
         // View Opacity Mask: the mask's coverage in greyscale instead of the artwork.
         if let Some(m) = opts.mask_view.and_then(|id| doc.node(id)).and_then(|n| n.mask.as_deref()) {
@@ -595,16 +592,7 @@ impl Renderer {
             ctx.set_paint(peniko::Color::from_rgba8(bg[0], bg[1], bg[2], bg[3]));
             ctx.fill_rect(&kurbo::Rect::new(0.0, 0.0, w as f64, w as f64));
         }
-        let frame = Frame {
-            mt: false,
-            doc,
-            view,
-            visible: b.inflate(1.0, 1.0),
-            px: 1.0 / s,
-            opts: &RenderOptions::default(),
-            hidden: &HashSet::new(),
-            ink: Ink::Display,
-        };
+        let frame = Frame { mt: false, doc, view, visible: b.inflate(1.0, 1.0), px: 1.0 / s, opts: &RenderOptions::default(), ink: Ink::Display };
         (self.knockout, self.nested, self.backdrop) = (false, 0, None);
         self.clip_paths.clear();
         self.draw_node(&mut ctx, &frame, n, true);
@@ -692,7 +680,7 @@ impl Renderer {
     /// Whether `a` is left out of this frame: hidden, a skipped template, or culled.
     fn skipped(&mut self, f: &Frame, a: &Arc<Node>) -> bool {
         let skipped_template = f.opts.skip_templates && matches!(a.kind, NodeKind::Layer { template: true, .. });
-        if !a.visible || skipped_template || f.hidden.contains(&a.id) {
+        if !a.visible || skipped_template || f.opts.hidden.contains(&a.id) {
             return true;
         }
         match self.bounds_of(a) {
@@ -799,7 +787,7 @@ impl Renderer {
     }
 
     fn draw_node(&mut self, ctx: &mut RenderContext, f: &Frame, n: &Node, force: bool) {
-        if !force && (!n.visible || f.hidden.contains(&n.id)) {
+        if !force && (!n.visible || f.opts.hidden.contains(&n.id)) {
             return;
         }
         if force {

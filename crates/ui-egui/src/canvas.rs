@@ -260,32 +260,53 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         app.perf.render_ms = done.ms;
         app.canvas.last_ms = done.ms;
     }
-    let view = Affine::translate((w as f64 / 2.0, h as f64 / 2.0))
-        * Affine::rotate(v.rotation.to_radians())
-        * Affine::scale(v.zoom * ppp as f64)
-        * Affine::translate(-v.center.to_vec2());
-    let opts = vectorcraft_render::RenderOptions { outline: app.ui.view.outline, background: None, artboards: false, ..Default::default() };
-    let opts = vectorcraft_render::RenderOptions {
-        proof: vectorcraft_render::proof::active_proof(),
-        overprint_preview: vectorcraft_render::proof::overprint_preview_on(),
-        trim: app.ui.view.trim_view,
-        tile_edge: vectorcraft_color::Color::from_hex(&app.session.prefs.pattern_tile_edge_color).map_or(opts.tile_edge, |c| {
-            let [r, g, b, _] = c.to_rgba8(1.0);
-            [r, g, b]
-        }),
-        mask_view,
-        highlight_substitutions: true,
-        // General › Anti-aliased Artwork: off, edges are hard on screen (raster effects and
-        // pattern tiles stay smooth), as in Illustrator.
-        anti_alias: if app.session.prefs.anti_aliased_artwork { vectorcraft_render::AntiAlias::Art } else { vectorcraft_render::AntiAlias::None },
-        ..opts
-    };
-    // A drag redraws only what moves (see `drag_layers`).
-    let t0 = now_ms();
-    if mask_view.is_none() && crate::drag_layers::show(app, ui.ctx(), &painter, rect, &key, view, &opts) {
-        app.perf.render_ms = now_ms() - t0;
-    } else {
-        whole_canvas(app, ui, &painter, &xf, &doc, &key, view, opts);
+    if app.canvas.key.as_ref() != Some(&key) || app.canvas.texture.is_none() {
+        let view = Affine::translate((w as f64 / 2.0, h as f64 / 2.0))
+            * Affine::rotate(v.rotation.to_radians())
+            * Affine::scale(v.zoom * ppp as f64)
+            * Affine::translate(-v.center.to_vec2());
+        let opts = vectorcraft_render::RenderOptions { outline: app.ui.view.outline, background: None, artboards: false, ..Default::default() };
+        let opts = vectorcraft_render::RenderOptions {
+            proof: vectorcraft_render::proof::active_proof(),
+            overprint_preview: vectorcraft_render::proof::overprint_preview_on(),
+            trim: app.ui.view.trim_view,
+            tile_edge: vectorcraft_color::Color::from_hex(&app.session.prefs.pattern_tile_edge_color).map_or(opts.tile_edge, |c| {
+                let [r, g, b, _] = c.to_rgba8(1.0);
+                [r, g, b]
+            }),
+            mask_view,
+            highlight_substitutions: true,
+            // General › Anti-aliased Artwork: off, edges are hard on screen (raster effects and
+            // pattern tiles stay smooth), as in Illustrator.
+            anti_alias: if app.session.prefs.anti_aliased_artwork { vectorcraft_render::AntiAlias::Art } else { vectorcraft_render::AntiAlias::None },
+            ..opts
+        };
+        // Light documents render synchronously (no lag vs overlays); heavy ones go to the worker.
+        // A document switch renders synchronously so another document's frame is never shown.
+        let same_doc = app.canvas.key.as_ref().is_some_and(|k| k.doc == key.doc);
+        let heavy = app.canvas.last_ms > 8.0 && app.canvas.texture.is_some() && same_doc;
+        match (&mut app.canvas.worker, heavy) {
+            (Some(worker), true) => worker.submit(crate::render_worker::Job { key: key.clone(), doc: doc.clone(), w, h, view, opts }),
+            _ => {
+                let t0 = now_ms();
+                let img = app.canvas.renderer.render(&doc, w, h, view, &opts);
+                upload(app, ui.ctx(), &img);
+                app.canvas.key = Some(key.clone());
+                app.perf.render_ms = now_ms() - t0;
+                app.canvas.last_ms = app.perf.render_ms;
+            }
+        }
+    }
+    if let (Some(tex), Some(k)) = (&app.canvas.texture, &app.canvas.key)
+        && k.doc == key.doc
+        && (k.rot - v.rotation).abs() < 1e-9
+    {
+        // Reproject the last frame if it was rendered for a different view.
+        let old = Xf { rect, zoom: k.zoom, center: Point::new(k.cx, k.cy), rot: xf.rot };
+        let _ = k.rot;
+        let a = xf.to_screen(old.to_doc(rect.min));
+        let b = xf.to_screen(old.to_doc(rect.max));
+        painter.image(tex.id(), egui::Rect::from_min_max(a, b), egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     if let Some(look) = grid_look.filter(|_| !grids_in_back) {
         grid(&painter, &xf, doc.grid.spacing, doc.grid.subdivisions, look);
@@ -1607,57 +1628,6 @@ fn home(app: &mut VectorcraftApp, ui: &mut Ui, rect: egui::Rect) {
 
 fn kurbo_flatten(p: &BezPath, tol: f64, f: &mut impl FnMut(PathEl)) {
     vectorcraft_geom::kurbo::flatten(p.elements().iter().copied(), tol, f);
-}
-
-/// The artwork as one whole-canvas render (`key`, through `view`): rendered now, or by the worker
-/// for heavy documents while the last render, reprojected, stands in.
-#[allow(clippy::too_many_arguments)]
-fn whole_canvas(
-    app: &mut VectorcraftApp,
-    ui: &Ui,
-    painter: &egui::Painter,
-    xf: &Xf,
-    doc: &std::sync::Arc<vectorcraft_doc::Document>,
-    key: &CacheKey,
-    view: Affine,
-    opts: vectorcraft_render::RenderOptions,
-) {
-    if app.canvas.key.as_ref() != Some(key) || app.canvas.texture.is_none() {
-        // Light documents render synchronously (no lag vs overlays); heavy ones go to the worker.
-        // A document switch renders synchronously so another document's frame is never shown.
-        let same_doc = app.canvas.key.as_ref().is_some_and(|k| k.doc == key.doc);
-        let heavy = app.canvas.last_ms > 8.0 && app.canvas.texture.is_some() && same_doc;
-        match (&mut app.canvas.worker, heavy) {
-            (Some(worker), true) => worker.submit(crate::render_worker::Job { key: key.clone(), doc: doc.clone(), w: key.w, h: key.h, view, opts }),
-            _ => {
-                let t0 = now_ms();
-                let img = app.canvas.renderer.render(doc, key.w, key.h, view, &opts);
-                upload(app, ui.ctx(), &img);
-                app.canvas.key = Some(key.clone());
-                app.perf.render_ms = now_ms() - t0;
-                app.canvas.last_ms = app.perf.render_ms;
-            }
-        }
-    }
-    // Just after a drag, until this render of its art arrives, its last layers show it.
-    let current = app.canvas.key.as_ref().is_some_and(|k| k.revision == key.revision && k.doc == key.doc);
-    if !current && crate::drag_layers::show_last(app, painter, xf.rect, doc, key) {
-        return;
-    }
-    if current && !app.session.in_interaction() {
-        app.canvas.drag = None;
-    }
-    if let (Some(tex), Some(k)) = (&app.canvas.texture, &app.canvas.key)
-        && k.doc == key.doc
-        && (k.rot - key.rot).abs() < 1e-9
-    {
-        // Reproject the last frame if it was rendered for a different view.
-        let old = Xf { rect: xf.rect, zoom: k.zoom, center: Point::new(k.cx, k.cy), rot: xf.rot };
-        let _ = k.rot;
-        let a = xf.to_screen(old.to_doc(xf.rect.min));
-        let b = xf.to_screen(old.to_doc(xf.rect.max));
-        painter.image(tex.id(), egui::Rect::from_min_max(a, b), egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-    }
 }
 
 fn upload(app: &mut VectorcraftApp, ctx: &egui::Context, img: &vectorcraft_render::Rendered) {
