@@ -1,8 +1,8 @@
 //! Is this a development build? One running from a cargo target directory (`…/release/`,
-//! `…/debug/` or another profile's) of a checkout that is still there: the dev launcher, `cargo devapp` and `cargo run`.
+//! `…/debug/` or another profile's) of a checkout that is still there, as `cargo run` makes.
 //! Installed apps never run from there (`/usr/bin`, an AppImage, `VectorCraft.app`, Program Files).
 //! `VECTORCRAFT_DEV=1` / `=0` forces it either way. A development build shows a DEV tag in the app
-//! bar ([`vectorcraft_ui_egui::dev_build`]) and calls its window "VectorCraft (dev)".
+//! bar ([`vectorcraft_ui_egui::dev_build`]) and "VectorCraft (dev)" in its window title.
 
 use std::path::Path;
 use std::process::Command;
@@ -135,7 +135,7 @@ mod tests {
     fn git_status_gives_branch_commit_and_changes() {
         let clean = "# branch.oid 44db1c9e0f1a2b3c\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n";
         assert_eq!(parse_git_status(clean), (Some("main".into()), Some("44db1c9".into()), false));
-        let dirty = format!("{clean}1 .M N... 100644 100644 100644 aaa bbb dev-launcher/README.md\n? scratch.txt\n");
+        let dirty = format!("{clean}1 .M N... 100644 100644 100644 aaa bbb README.md\n? scratch.txt\n");
         assert_eq!(parse_git_status(&dirty), (Some("main".into()), Some("44db1c9".into()), true));
         let detached = "# branch.oid 44db1c9e0f1a2b3c\n# branch.head (detached)\n";
         assert_eq!(parse_git_status(detached), (None, Some("44db1c9".into()), false));

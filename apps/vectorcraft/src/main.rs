@@ -520,10 +520,7 @@ fn main() -> std::process::ExitCode {
         log::info!("development build from {} ({:?} {:?}, changes: {})", b.checkout, b.branch, b.commit, b.changes);
     }
     let custom_titlebar = custom_titlebar(saved.as_ref());
-    let mut options = native_options(custom_titlebar);
-    if dev_build.is_some() {
-        options.viewport.title = Some("VectorCraft (dev)".into());
-    }
+    let options = native_options(custom_titlebar);
     #[cfg(feature = "wgpu")]
     let options = {
         let mut options = options;

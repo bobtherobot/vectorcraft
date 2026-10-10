@@ -119,12 +119,10 @@ pub fn system_title_bar(app: &VectorcraftApp) -> bool {
 
 /// The OS window title: the active document's name suffixed with the app name (a `*` prefix
 /// marks unsaved changes, like the `*` in the document tabs), or just the app name with no
-/// document open.
+/// document open. A development build's app name is "VectorCraft (dev)".
 pub fn window_title(app: &VectorcraftApp) -> String {
-    app.session
-        .active()
-        .map(|d| format!("{}{} \u{2014} VectorCraft", if d.is_dirty() { "*" } else { "" }, d.title()))
-        .unwrap_or_else(|| "VectorCraft".into())
+    let name = if app.dev_build.is_some() { "VectorCraft (dev)" } else { "VectorCraft" };
+    app.session.active().map(|d| format!("{}{} \u{2014} {name}", if d.is_dirty() { "*" } else { "" }, d.title())).unwrap_or_else(|| name.into())
 }
 
 /// Keep the OS window title (and the taskbar / Alt-Tab entry) on the active file. Sends
@@ -1007,6 +1005,16 @@ mod tests {
         // The preference that makes the shell launch without its own title bar.
         app.run("prefs.set", json!({"key": "systemTitleBar", "value": !custom_titlebar})).unwrap();
         app
+    }
+
+    #[test]
+    fn a_development_build_says_so_in_the_window_title() {
+        let mut app = title_test_app(true);
+        app.dev_build = Some(crate::dev_build::DevBuild { checkout: "/src/vectorcraft".into(), ..Default::default() });
+        assert_eq!(super::window_title(&app), "VectorCraft (dev)");
+        app.run("file.new", json!({})).unwrap();
+        let name = app.session.active().unwrap().title();
+        assert_eq!(super::window_title(&app), format!("{name} \u{2014} VectorCraft (dev)"));
     }
 
     #[test]

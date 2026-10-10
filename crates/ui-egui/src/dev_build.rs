@@ -1,7 +1,7 @@
-//! The DEV tag: a development build (one run from a cargo target directory, as the dev launcher,
-//! `cargo devapp` and `cargo run` do) marks itself in the app bar, so it can't be mistaken for an
-//! installed VectorCraft. Hovering the tag says what is running. The host fills in
-//! [`DevBuild`] (`VectorcraftApp::dev_build`); installed apps and the web app leave it `None`.
+//! The DEV tag: a development build (one run from a cargo target directory, as `cargo run`
+//! makes) marks itself in the app bar, so it can't be mistaken for an installed VectorCraft.
+//! Hovering the tag says what is running. The host fills in [`DevBuild`]
+//! (`VectorcraftApp::dev_build`); installed apps and the web app leave it `None`.
 //! The tag is for developers, so it isn't translated.
 
 use egui::{CornerRadius, Sense, Ui, vec2};

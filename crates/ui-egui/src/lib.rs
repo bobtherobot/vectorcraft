@@ -360,8 +360,9 @@ pub struct VectorcraftApp {
     /// The graphics adapter the window renders with ("name (backend)"), as the host reports it:
     /// shown in Help › About and `ui.inspect` for GPU bug reports. `None` when unknown.
     pub graphics_adapter: Option<String>,
-    /// A development build (run from a cargo target directory) shows a DEV tag in the app bar;
-    /// the host fills this in. `None` for installed apps and the web app.
+    /// A development build (run from a cargo target directory) shows a DEV tag in the app bar
+    /// and "VectorCraft (dev)" in its window title; the host fills this in. `None` for installed
+    /// apps and the web app.
     pub dev_build: Option<dev_build::DevBuild>,
     /// File → Place: picked files, the place cursor's thumbnails, the Control bar's image details.
     pub place: place::PlaceState,
