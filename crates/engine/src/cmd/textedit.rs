@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Character",
             [],
             None,
-            "{id, start?: byte, end?: byte (default: all text), font?, style?, size?: pt, leading?: pt|\"auto\", tracking?, kerning?: 1/1000 em|\"auto\", baselineShift?: pt, hScale?: %, vScale?: %, rotation?: deg, fill?: colour|\"none\", stroke?: colour|\"none\", strokeWidth?: pt, strokeOptions?: {weight?, cap?, join?, miterLimit?, dash?, dashOffset?, alignDashes?} (as stroke.set: the character stroke), underline?, strikethrough?, allCaps?: bool, smallCaps?: bool, position?: \"normal\"|\"superscript\"|\"subscript\" (sizes from Document Setup), features?: [\"dlig\", \"-liga\", …], charAlign?: \"romanBaseline\"|\"emBoxTop\"|\"emBoxCenter\"|\"emBoxBottom\"|\"icfTop\"|\"icfBottom\"} style a character range (runs are split at the range ends) → {id, runs}",
+            "{id? (default: the one selected type object), start?: byte, end?: byte (default: all text), font?, style?, size?: pt, leading?: pt|\"auto\", tracking?, kerning?: 1/1000 em|\"auto\", baselineShift?: pt, hScale?: %, vScale?: %, rotation?: deg, fill?: colour|\"none\", stroke?: colour|\"none\", strokeWidth?: pt, strokeOptions?: {weight?, cap?, join?, miterLimit?, dash?, dashOffset?, alignDashes?} (as stroke.set: the character stroke), underline?, strikethrough?, allCaps?: bool, smallCaps?: bool, position?: \"normal\"|\"superscript\"|\"subscript\" (sizes from Document Setup), features?: [\"dlig\", \"-liga\", …], charAlign?: \"romanBaseline\"|\"emBoxTop\"|\"emBoxCenter\"|\"emBoxBottom\"|\"icfTop\"|\"icfBottom\"} style a character range (runs are split at the range ends) → {id, runs}",
             has_doc,
             set_range_style
         ),
@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Area / Path Type",
             [],
             None,
-            "{path: id, mode: \"area\"|\"onPath\", text?: \"\", vertical?: bool = false, at?: [x, y] (on-path start: nearest point), size?, font?, fit?: none|autoHeight|shrinkText, fitMinPercent? (area: as text.areaOptions; default autoHeight when the autoSizeAreaType preference is on), placeholder?: bool (placeholder text instead, as text.create), leadingModel?, charAlign? (as text.create)} turn a path into an area-type frame or a type-on-a-path baseline (the path's paint is dropped) → {id}",
+            "{path: id, mode: \"area\"|\"onPath\", text?: \"\", vertical?: bool = false, at?: [x, y] (on-path start: nearest point), size?, font?, style?, color? (as text.create), fit?: none|autoHeight|shrinkText, fitMinPercent? (area: as text.areaOptions; default autoHeight when the autoSizeAreaType preference is on), placeholder?: bool (placeholder text instead, as text.create), leadingModel?, charAlign? (as text.create)} turn a path into an area-type frame or a type-on-a-path baseline (the path's paint is dropped) → {id}",
             has_doc,
             create_in_path
         ),
@@ -110,6 +110,23 @@ fn text_ref(s: &Session, id: NodeId) -> Result<TextObject> {
         Some(_) => Err(EngineError::Other(format!("node {} is not text", id.0))),
         None => Err(EngineError::NoNode(id)),
     }
+}
+
+/// Replace a type object's whole content: the new text takes the replaced text's
+/// style and paragraph styles follow, exactly as `text.editRange` over the full
+/// range does. Dataset apply and friends share this so Variables edits behave
+/// like Type tool edits.
+pub(crate) fn set_plain_text(d: &mut vectorcraft_doc::Document, id: NodeId, text: &str) -> Result<()> {
+    let len = match d.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Text(t)) => edit::runs_len(&t.runs),
+        Some(_) => return Err(EngineError::Other(format!("node {} is not text", id.0))),
+        None => return Err(EngineError::NoNode(id)),
+    };
+    let t = text_mut(d, id).ok_or(EngineError::NoNode(id))?;
+    t.splice_paras(0, len, text);
+    edit::replace_range(&mut t.runs, 0, len, text);
+    refresh_bounds(t);
+    Ok(())
 }
 
 fn byte_param(p: &Value, k: &str) -> Option<usize> {
@@ -316,6 +333,10 @@ impl CharChange {
         if let Some(v) = &self.style {
             st.font_style = v.clone();
         }
+        // Another font: none of the old one's versions.
+        if self.font.is_some() || self.style.is_some() {
+            st.font_version = None;
+        }
         if let Some(v) = self.size {
             st.size = v.clamp(0.1, 1296.0);
         }
@@ -388,7 +409,9 @@ pub(crate) fn protect_missing_glyphs(before: &[TextRun], runs: &mut Vec<TextRun>
     let db = vectorcraft_text::FontDb::global();
     let mut faces = std::collections::HashMap::new();
     let mut covers = |st: &CharStyle, c: char| {
-        let face = faces.entry((st.font_family.clone(), st.font_style.clone())).or_insert_with(|| db.face(&st.font_family, &st.font_style));
+        let face = faces
+            .entry((st.font_family.clone(), st.font_style.clone(), st.font_version.clone()))
+            .or_insert_with(|| db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()));
         face.as_ref().map(|f| f.covers(c))
     };
     // Byte ranges that keep a font (family, style).
@@ -414,7 +437,14 @@ pub(crate) fn protect_missing_glyphs(before: &[TextRun], runs: &mut Vec<TextRun>
 
 fn set_range_style(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "text.setRangeStyle";
-    let id = id_param(p, "id").ok_or_else(|| bad(C, "missing `id`"))?;
+    // The type object given, else the one selected (#785).
+    let id = match p.get("id").filter(|v| !v.is_null()) {
+        Some(v) => v.as_u64().map(NodeId).ok_or_else(|| bad(C, format!("`id` must be an object id, not {v}")))?,
+        None => match super::typecmd::text_targets(s, &json!({}), C)?.as_slice() {
+            [one] => *one,
+            _ => return Err(bad(C, "missing `id`: give one, or select one type object")),
+        },
+    };
     let change = CharChange::parse(p, C, &s.doc()?.doc.setup)?;
     if change.is_empty() {
         return Err(bad(C, "nothing to change"));
@@ -455,16 +485,7 @@ fn create_in_path(s: &mut Session, p: &Value) -> Result<Value> {
     if !on_path && !path.is_closed() && path.bounds().is_none_or(|b| b.width() < 1.0 || b.height() < 1.0) {
         return Err(bad(C, "area type needs a path that encloses an area"));
     }
-    let mut style = CharStyle::default();
-    if let Some(v) = p.get("size").and_then(Value::as_f64) {
-        style.size = v.clamp(0.1, 1296.0);
-    }
-    if let Some(f) = str_param(p, "font") {
-        style.font_family = f.to_string();
-    }
-    if !s.paint.fill.is_none() && s.paint.fill != Paint::solid(vectorcraft_color::Color::WHITE) {
-        style.fill = s.paint.fill.clone();
-    }
+    let style = super::create::new_type_style(s, p);
     let text = str_param(p, "text").unwrap_or("").to_string();
     let start = match point_param(p, "at") {
         Some(at) if on_path => vectorcraft_geom::ArcPath::new(path).fraction_at(at).unwrap_or(0.0),

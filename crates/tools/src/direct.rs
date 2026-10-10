@@ -32,7 +32,7 @@ use vectorcraft_geom::{Anchor, PathData, Point, Rect};
 
 use crate::bbox::move_delta;
 use crate::corners::{self, CornerDrag, over_widget};
-use crate::guides::{HandleSnap, PointSnap, Targets};
+use crate::guides::{HandleSnap, Leave, PointSnap, Targets};
 use crate::meshedit::MeshEdit;
 use crate::pathtype::{self, BracketDrag, over_bracket};
 use crate::rulerguide::GuideEdit;
@@ -428,12 +428,12 @@ impl Tool for DirectSelectionTool {
                     self.anchor_snap = Some(PointSnap::new(cx, || Targets::for_anchor_drag(cx.doc, cx.selection)));
                 }
                 let mut d = move_delta(start, p, ev.mods.shift);
-                // The grabbed anchor snaps and the others follow it; Shift keeps the angle instead.
+                // The grabbed anchor snaps and the others follow it. Shift keeps the move at its
+                // angle, and the anchor slides along it onto what Smart Guides find there (#886).
                 self.guides.clear();
-                if !ev.mods.shift
-                    && let Some(snap) = &self.anchor_snap
-                {
-                    let (q, guides) = snap.snap(cx, grab + d);
+                if let Some(snap) = &self.anchor_snap {
+                    let shift = ev.mods.shift.then(|| Leave::segment(cx, grab, true));
+                    let (q, guides) = snap.snap_from(cx, grab + (p - start), shift.as_ref());
                     (d, self.guides) = (q - grab, guides);
                 }
                 out.push(Action::Preview("path.moveAnchors".into(), json!({"dx": d.x, "dy": d.y})));
@@ -574,6 +574,14 @@ impl Tool for DirectSelectionTool {
                         }
                     }
                 });
+                // Objects without anchors to pick (type, images, symbols…) are selected whole when
+                // the marquee touches them, as with the Selection tool (#927).
+                for id in vectorcraft_doc::hit::marquee(cx.doc, r, cx.isolation, true) {
+                    let whole = cx.doc.node(id).is_some_and(|n| !matches!(n.kind, NodeKind::Path { .. } | NodeKind::Compound { .. }));
+                    if whole && !sel.iter().any(|(s, _)| *s == id) {
+                        sel.push((id, vec![]));
+                    }
+                }
                 sel.retain(|(id, _)| cx.doc.is_editable(*id));
                 let items: Vec<Value> = sel.iter().map(|(id, v)| json!({"id": id.0, "anchors": anchors_json(v)})).collect();
                 vec![Action::Exec("select.anchorsMany".into(), json!({"items": items, "mode": if toggle { "toggle" } else { "set" }}))]
@@ -838,6 +846,28 @@ mod tests {
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 250.0, 150.0));
         assert_eq!(a, vec![Action::Exec("select.anchorsMany".into(), json!({"items": [{"id": id.0, "anchors": [[0, 1]]}], "mode": "set"}))]);
     }
+    /// #927: a marquee across type selects the type object whole, beside the anchors it holds.
+    #[test]
+    fn marquee_selects_type_it_touches() {
+        // The rectangle at (100, 100)–(200, 200) and area type at (300, 300).
+        let (d, text) = doc_with_area_type();
+        let rect = d.layers[0].children().and_then(|c| c.first()).map(|n| n.id).unwrap();
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = DirectSelectionTool::new(false);
+        // From empty canvas across the type to inside the rectangle (its bottom-right corner).
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 450.0, 450.0));
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 150.0));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 150.0, 150.0));
+        let items = json!([{"id": rect.0, "anchors": [[0, 2]]}, {"id": text.0, "anchors": []}]);
+        assert_eq!(a, vec![Action::Exec("select.anchorsMany".into(), json!({"items": items, "mode": "set"}))]);
+        // Away from the type, only anchors.
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 50.0));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 250.0, 150.0));
+        assert_eq!(a, vec![Action::Exec("select.anchorsMany".into(), json!({"items": [{"id": rect.0, "anchors": [[0, 1]]}], "mode": "set"}))]);
+    }
+
     /// Shift-drag a marquee: the anchors inside toggle (#483), with Group Selection too.
     #[test]
     fn shift_marquee_toggles_anchors() {
@@ -1022,10 +1052,16 @@ mod tests {
         // In line with B's own bottom-left corner, which stays put.
         let (v, labels) = drag(&mut t, &c, (300.0, 300.0), (303.0, 330.0), none);
         assert_eq!((v, labels), (json!({"dx": 0.0, "dy": 30.0}), vec!["align".to_string()]));
-        // Shift keeps the move at 45° steps, unsnapped.
-        let (v, labels) = drag(&mut t, &c, (300.0, 300.0), (203.0, 199.0), Mods { shift: true, ..none });
-        let s = move_delta(Point::new(300.0, 300.0), Point::new(203.0, 199.0), true);
-        assert_eq!((v, labels), (json!({"dx": s.x, "dy": s.y}), vec![]));
+        // Shift keeps the move at 45° steps and still snaps along that line (#886): on the
+        // diagonal from B's corner, onto A's bottom-right corner…
+        let shift = Mods { shift: true, ..none };
+        let (v, labels) = drag(&mut t, &c, (300.0, 300.0), (203.0, 199.0), shift);
+        let near = |v: &serde_json::Value, (x, y): (f64, f64)| (v["dx"].as_f64().unwrap() - x).hypot(v["dy"].as_f64().unwrap() - y) < 1e-9;
+        assert!(near(&v, (-100.0, -100.0)) && labels == ["anchor"], "{v} {labels:?}");
+        // …and with nothing in reach, at the pointer's distance along its angle.
+        let (v, labels) = drag(&mut t, &c, (300.0, 300.0), (380.0, 302.0), shift);
+        let s = move_delta(Point::new(300.0, 300.0), Point::new(380.0, 302.0), true);
+        assert!(near(&v, (s.x, s.y)) && labels.is_empty(), "{v} {labels:?}");
         // Two anchors: the one pressed on (B's top-right) lands on A's corner.
         let two = anchors_of(b, &[(0, 0), (0, 1)]);
         let c = cx(&d, &two, &p);

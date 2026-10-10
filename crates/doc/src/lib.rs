@@ -41,6 +41,7 @@ pub mod style_libs;
 pub mod swatches;
 pub mod text;
 pub mod trace;
+pub mod variables;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -60,12 +61,12 @@ pub(crate) mod skip {
 
 pub use appearance::StrokeGradientMode;
 pub use appearance::{
-    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, ProfilePreset, SavedProfile, StrokeAlign,
-    StrokeLayer, WidthProfile,
+    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, PressureProfile, ProfilePreset, SavedProfile,
+    StrokeAlign, StrokeLayer, WidthProfile,
 };
 pub use assets::ExportAsset;
 pub use corners::LiveCorners;
-pub use graph::{GraphKind, GraphSpec};
+pub use graph::{GraphKind, GraphSpec, MAX_GRAPH_CATEGORIES, MAX_GRAPH_SERIES, SeriesPaint, TickLength, ValueAxisSide};
 pub use hit::{Hit, HitKind};
 pub use links::{LinkInfo, PlacementOptions};
 pub use live::{BlendOrientation, BlendSpacing, BlendSpec, EnvelopeKind, GradientMesh, MeshPoint};
@@ -86,17 +87,18 @@ pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
 pub use text::{
-    AreaFit, AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, Composer, FirstBaseline, InlineArt, Justify, LeadingModel, Mojikumi,
-    ParaDirection, ParaStyle, PathAlign, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap,
-    VerticalAlign, WrapShape,
+    AreaFit, AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, Composer, FirstBaseline, InlineArt, Justify, Kinsoku, LeadingModel,
+    Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef,
+    TextWrap, VerticalAlign, WrapShape,
 };
 pub use trace::TraceView;
+pub use variables::{DataSet, DataValue, Variable, VariableKind, Variables};
 pub use vectorcraft_color as color;
 pub use vectorcraft_geom as geom;
 
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Swatch, SwatchGroup};
-use vectorcraft_geom::{Point, Rect, Vec2};
+use vectorcraft_geom::{Affine, Point, Rect, Vec2};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DocError {
@@ -561,6 +563,9 @@ pub struct Document {
     /// Select → Save Selection… (at most [`SavedSelection::MAX`]); saved with the document.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub saved_selections: Vec<SavedSelection>,
+    /// Variables (data merge): named values bound to objects, applied per dataset.
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    pub variables: Variables,
     #[serde(default)]
     pub grid: GridPrefs,
     #[serde(default = "ppi72")]
@@ -693,6 +698,7 @@ impl Document {
             guides: vec![],
             views: vec![],
             saved_selections: vec![],
+            variables: Variables::default(),
             grid: GridPrefs::default(),
             raster_effects_ppi: 72.0,
             images: BTreeMap::new(),
@@ -741,7 +747,8 @@ impl Document {
         }
         max = self.slices.iter().fold(max, |m, s| m.max(s.id.0));
         max = self.assets.iter().fold(max, |m, a| m.max(a.id));
-        self.next_id = self.next_id.max(max + 1);
+        // An id of u64::MAX (a damaged file) can't overflow: ids after it are reused at worst.
+        self.next_id = self.next_id.max(max.saturating_add(1));
     }
 
     /// Find a node anywhere in the tree.
@@ -959,8 +966,12 @@ impl Document {
                 if c.is_layer() {
                     collect(c, rect, all, out);
                 } else if let Some(b) = c.geometric_bounds()
-                    && rect.contains(Point::new(b.x0, b.y0))
-                    && rect.contains(Point::new(b.x1, b.y1))
+                    // Inside it, edges included: art flush with the right or bottom edge is on it too
+                    // (`Rect::contains` leaves those out, #890).
+                    && b.x0 >= rect.x0
+                    && b.y0 >= rect.y0
+                    && b.x1 <= rect.x1
+                    && b.y1 <= rect.y1
                 {
                     out.push(c.id);
                 }
@@ -1004,6 +1015,13 @@ impl Document {
     pub fn move_artboard_guides(&mut self, id: u32, d: Vec2) {
         for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
             *g = g.moved(d);
+        }
+    }
+    /// Map the guides of artboard `id` through `xf`, an axis-aligned scale and move (Scale Artwork
+    /// with Artboard).
+    pub fn map_artboard_guides(&mut self, id: u32, xf: Affine) {
+        for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
+            g.pos = if g.vertical { (xf * Point::new(g.pos, 0.0)).x } else { (xf * Point::new(0.0, g.pos)).y };
         }
     }
     /// Copy the guides of artboard `from` onto artboard `to`, `d` away (with a copy of their
@@ -1166,6 +1184,10 @@ mod tests {
         let wide = Rect::new(-1.0, -1.0, 40.0, 15.0);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0), false), vec![a]);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0), false), vec![a], "b only half inside");
+        // Flush with the artboard's edges counts as inside: the right and bottom ones too (#890).
+        for board in [Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(-5.0, 0.0, 10.0, 15.0), Rect::new(0.0, -5.0, 15.0, 10.0)] {
+            assert_eq!(d.art_on_artboard(board, false), vec![a], "{board:?}");
+        }
         d.node_mut(a).unwrap().locked = true;
         assert_eq!(d.art_on_artboard(wide, false), vec![b]);
         // Move Locked and Hidden Artwork with Artboard (#394): hidden art stays too, unless on.

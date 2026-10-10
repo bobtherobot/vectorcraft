@@ -9,11 +9,11 @@
 # back to English. Left in English on purpose (`MENU_KEEP_AS_IS` in the tests): the product name,
 # language names, OpenType, the built-in workspace names and the bracketed perspective grid preset
 # names.
+	Glowing Edges…	Zářící okraje…
 	About VectorCraft	O aplikaci VectorCraft
 	Align to Path	Zarovnat k cestě
 	Cut Path at Selected Anchor Points	Rozdělit cestu ve vybraných kotevních bodech
 	Join Our Discord	Připojit se k našemu Discordu
-	Settings…	Nastavení…
 	Language	Jazyk
 	UI Brightness	Jas rozhraní
 	Dark	Tmavý
@@ -285,6 +285,8 @@
 	Fill with Placeholder Text	Vyplnit zástupným textem
 	Insert Inline Symbol	Vložit symbol do textu
 	Show Hidden Characters	Zobrazit skryté znaky
+	Bold	Tučné
+	Italic	Kurzíva
 	Hide Hidden Characters	Skrýt skryté znaky
 	Type Orientation	Orientace textu
 	Horizontal	Vodorovně
@@ -513,6 +515,9 @@
 	Layers	Vrstvy
 	Libraries	Knihovny
 	Links	Propojení
+	{count} linked image(s) changed on disk. Show the new versions?	Na disku se změnilo {count} propojených obrázků. Zobrazit nové verze?
+	Update Changed Links	Aktualizovat změněná propojení
+@msg	Updated {_1} linked file(s) changed on disk	Aktualizováno propojených souborů změněných na disku: {_1}
 	Magic Wand	Kouzelná hůlka
 	Navigator	Navigátor
 	Pattern Options	Možnosti vzorku
@@ -529,6 +534,20 @@
 	Paragraph Styles	Styly odstavců
 	Tabs	Tabulátory
 	Variables	Proměnné
+	New Variable…	Nová proměnná…
+	Unbind Variable	Zrušit přiřazení proměnné
+	Delete Variable	Odstranit proměnnou
+	New Data Set…	Nová sada dat…
+	Edit Data Set…	Upravit sadu dat…
+	Delete Data Set	Odstranit sadu dat
+	Next Data Set	Další sada dat
+	Previous Data Set	Předchozí sada dat
+	Make Text Dynamic	Nastavit text jako dynamický
+	Make Visibility Dynamic	Nastavit viditelnost jako dynamickou
+	Capture Data Set	Pořídit sadu dat
+	Update Data Set	Aktualizovat sadu dat
+	Rename Data Set…	Přejmenovat sadu dat…
+	Variable Options…	Možnosti proměnné…
 	Brush Libraries	Knihovny štětců
 	Built-in Libraries	Vestavěné knihovny
 	User Defined	Uživatelské
@@ -643,3 +662,72 @@
 	Constrain	Omezit
 	Free Transform	Volná transformace
 	Perspective Distort	Perspektivní deformace
+
+# Photoshop-style raster effects (Effect menu, their dialogs).
+	Radial Blur…	Radiální rozostření…
+	Smart Blur…	Chytré rozostření…
+	Sharpen	Zostření
+	Unsharp Mask…	Maska rozostření…
+	Pixelate	Pixelizace
+	Color Halftone…	Barevný polotón…
+	Crystallize…	Krystalizace…
+	Mezzotint…	Mezzotinta…
+	Pointillize…	Pointilismus…
+	Video	Video
+	De-Interlace…	Odstranit prokládání…
+	NTSC Colors	Barvy NTSC
+	RGB:	RGB:
+	CMYK:	CMYK:
+	CMYK	CMYK
+	Texture	Textura
+	Craquelure…	Krakelování…
+	Grain…	Zrno…
+	Mosaic Tiles…	Mozaikové dlaždice…
+	Patchwork…	Patchwork…
+	Stained Glass…	Vitráž…
+	Texturizer…	Texturovač…
+	System Title Bar	Systémové záhlaví okna
+	Exit	Ukončit
+	Distort	Zkreslení
+	Diffuse Glow…	Rozptýlená záře…
+	Glass…	Sklo…
+	Ocean Ripple…	Vlnky na hladině…
+	Rename Data Set	Přejmenovat sadu dat
+	Rename Variable	Přejmenovat proměnnou
+
+# Interactive Revolve controls.
+	Lighting	Osvětlení
+	Revolve angle	Úhel otočení
+	Axis side	Strana osy
+	Rotation X	Otočení X
+	Rotation Y	Otočení Y
+	Rotation Z	Otočení Z
+	Shading	Stínování
+	Direction	Směr
+	Elevation	Výška světla
+	Intensity	Intenzita
+	Ambient	Okolní osvětlení
+	Segments	Segmenty
+	Show axis	Zobrazit osu
+	Reset all	Obnovit vše
+	Reset to default	Obnovit výchozí hodnotu
+	Reset all Revolve settings to their defaults.	Obnovit výchozí hodnoty všech nastavení rotačního tělesa.
+	Drag values or labels. Double-click a value to type.	Upravte hodnoty přetažením čísel nebo popisků. Dvojím kliknutím na hodnotu ji zadáte.
+	Drag rings to rotate. Shift snaps to 15°.	Otáčejte přetažením prstenců. Shift nastaví kroky po 15°.
+	Drag the light, or its rings. Shift snaps to 15°.	Přetáhněte světlo nebo jeho prstence. Shift nastaví kroky po 15°.
+lighting	Light	Světlo
+	Keep visible surfaces only when expanding	Při rozšíření ponechat pouze viditelné povrchy
+	Trim covered geometry on Expand Appearance. Live preview keeps the full surface. Transparent paints and surfaces exceeding visibility limits retain all faces.	Při rozšíření vzhledu oříznout zakrytou geometrii. Živý náhled zachová celý povrch. Průhledné výplně a povrchy překračující limity výpočtu viditelnosti zachovají všechny plochy.
+	Left	Vlevo
+	Right	Vpravo
+	Offset	Odsazení
+	Rotation	Otočení
+	Cancel	Zrušit
+	Accented Edges…	Zdůrazněné okraje…
+	Angled Strokes…	Šikmé tahy…
+	Crosshatch…	Křížové šrafování…
+	Dark Strokes…	Tmavé tahy…
+	Ink Outlines…	Obrysy tuší…
+	Spatter…	Rozstřik…
+	Sprayed Strokes…	Stříkané tahy…
+	Sumi-e…	Sumi-e…

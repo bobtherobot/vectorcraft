@@ -5,14 +5,16 @@ use std::ops::Range;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use unicode_bidi::{BidiInfo, Level};
 use vectorcraft_doc::{
-    Burasagari, CharStyle, InlineArt, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, TextKind, TextObject,
+    Burasagari, CharStyle, InlineArt, Justify, Kinsoku, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, TextKind, TextObject,
 };
 use vectorcraft_geom::{ArcPath, PathData};
 
 use crate::composer::{Breakpoint, Params, compose};
 use crate::fontdb::FontDb;
 use crate::hyphen::hyphen_points;
-use crate::shape::{Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, no_line_end, no_line_start, punct, shape_range, style_metrics};
+use crate::shape::{
+    Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, no_line_end, no_line_start, punct, shape_range, soft_line_start, style_metrics,
+};
 use crate::{Composer, FirstBaseline, InlineGlyph, LayoutOptions, LineInfo, OtFeatures, PositionedGlyph, TextLayout, VerticalAlign};
 
 const EPS: f64 = 1e-6;
@@ -144,6 +146,46 @@ pub fn layout(db: &FontDb, t: &TextObject) -> TextLayout {
     layout_with(db, t, &opts)
 }
 
+/// The underline and strikethrough bars of `t` laid out as `layout` (#847): per run and line, a
+/// bar from the stretch's first glyph to its last one's advance, placed and sized by the font's
+/// own underline and strikeout metrics through the glyph's transform (so the size, baseline shift
+/// and scaling follow) → (run, bar in text space). Type on a path and vertical type have none yet.
+pub fn decorations(layout: &TextLayout, db: &FontDb, t: &TextObject) -> Vec<(usize, BezPath)> {
+    let mut out = vec![];
+    if layout.on_path || layout.vertical {
+        return out;
+    }
+    let glyphs = &layout.glyphs;
+    let mut i = 0;
+    while let Some(g) = glyphs.get(i) {
+        // The stretch: the glyphs of this run on this line, in a row.
+        let end = glyphs.iter().skip(i).position(|h| h.run != g.run || h.line != g.line).map_or(glyphs.len(), |n| i + n);
+        let stretch = glyphs.get(i..end).unwrap_or_default();
+        i = end.max(i + 1);
+        let Some(style) = t.runs.get(g.run).map(|r| &r.style) else { continue };
+        if !(style.underline || style.strikethrough) {
+            continue;
+        }
+        let Some(face) = db.face_by_id(g.font_id) else { continue };
+        let (x0, x1) = stretch.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), h| {
+            let (s, e) = (h.origin.x, h.origin.x + h.advance);
+            (a.min(s).min(e), b.max(s).max(e))
+        });
+        for (on, (offset, thickness)) in [(style.underline, face.underline), (style.strikethrough, face.strikeout)] {
+            if !on {
+                continue;
+            }
+            // Font units run y down in the glyph's transform: the bar's top is at -offset.
+            let (top, bottom) = ((g.xf * Point::new(0.0, -offset)).y, (g.xf * Point::new(0.0, -offset + thickness)).y);
+            let bar = Rect::new(x0, top.min(bottom), x1, top.max(bottom));
+            if bar.width() > 0.0 && bar.height() > 0.0 && bar.width().is_finite() && bar.height().is_finite() {
+                out.push((g.run, bar.to_path(0.1)));
+            }
+        }
+    }
+    out
+}
+
 /// Most layout passes Shrink Text to Fit runs past the first (bisection plus the final pass).
 const SHRINK_PASSES: usize = 11;
 
@@ -261,7 +303,8 @@ fn layout_once(db: &FontDb, t: &TextObject, opts: &LayoutOptions) -> TextLayout 
         TextKind::OnPath { .. } => Affine::IDENTITY,
         TextKind::Point => {
             let first = cx.style_at(0);
-            let centre = db.face(&first.font_family, &first.font_style).map_or(EM_CENTER, |f| f.ideographic_centre());
+            let centre =
+                db.face_version(&first.font_family, &first.font_style, first.font_version.as_deref()).map_or(EM_CENTER, |f| f.ideographic_centre());
             Affine::translate((-centre * first.size, 0.0)) * QUARTER_TURN
         }
         _ => QUARTER_TURN,
@@ -999,7 +1042,7 @@ fn tab_advance(tabs: &[vectorcraft_doc::TabStop], origin: f64, x: f64, rest: &[S
 
 /// Greedy break: returns (end glyph index, hyphenated) for a line starting at `i` of `width`.
 /// With burasagari, a comma or full stop that doesn't fit ends the line, hanging outside it.
-fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, burasagari: Burasagari) -> (usize, bool) {
+fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, burasagari: Burasagari, kinsoku: Kinsoku) -> (usize, bool) {
     if !width.is_finite() {
         return (g.len(), false);
     }
@@ -1015,7 +1058,7 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, b
         let cluster_width: f64 = g[j..cluster_end].iter().map(|glyph| glyph.adv).sum();
         if j > i && !gl.is_space() && x + cluster_width > width + EPS {
             // It ends the line with the spaces after it.
-            if burasagari != Burasagari::None && hangs(gl) && kinsoku_allows(g, cluster_end - 1) {
+            if burasagari != Burasagari::None && hangs(gl) && kinsoku_allows(g, cluster_end - 1, kinsoku) {
                 let mut end = cluster_end;
                 while g.get(end).is_some_and(SGlyph::is_space) {
                     end += 1;
@@ -1026,7 +1069,7 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, b
         }
         x += cluster_width;
         let last = &g[cluster_end - 1];
-        if last.break_after() && kinsoku_allows(g, cluster_end - 1) {
+        if last.break_after() && kinsoku_allows(g, cluster_end - 1, kinsoku) {
             if last.is_soft_hyphen() {
                 if x + hyphen_glyph(last).adv <= width + EPS {
                     last_break = Some((cluster_end, true));
@@ -1048,7 +1091,7 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, b
             we += 1;
         }
         let x_ws: f64 = g[i..word_start].iter().map(|g| g.adv).sum();
-        let pts: Vec<usize> = hyphen_breaks(text, g, word_start, we).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1)).collect();
+        let pts: Vec<usize> = hyphen_breaks(text, g, word_start, we).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)).collect();
         for &k in pts.iter().rev() {
             if k <= j && k > i {
                 let w = x_ws + g[word_start..k].iter().map(|g| g.adv).sum::<f64>() + hyphen_glyph(&g[k - 1]).adv;
@@ -1077,13 +1120,19 @@ fn hangs(g: &SGlyph) -> bool {
 /// Does kinsoku allow a line break after glyph `j`? Not after an opening bracket, nor before a
 /// closing one, a comma, a full stop, a small kana… (the character is pushed to the next line
 /// with the one before it).
-fn kinsoku_allows(g: &[SGlyph], j: usize) -> bool {
-    g.get(j).is_some_and(|gl| kinsoku_between(gl.ch, g.get(j + 1).map(|n| n.ch)))
+fn kinsoku_allows(g: &[SGlyph], j: usize, kinsoku: Kinsoku) -> bool {
+    g.get(j).is_some_and(|gl| kinsoku_between(gl.ch, g.get(j + 1).map(|n| n.ch), kinsoku))
 }
 
-/// Kinsoku for a break between `before` and `after` (none: the end of the paragraph).
-fn kinsoku_between(before: char, after: Option<char>) -> bool {
-    !no_line_end(before) && after.is_none_or(|c| !no_line_start(c))
+/// Kinsoku for a break between `before` and `after` (none: the end of the paragraph): Hard keeps
+/// every character of the set off the line start and end, Soft lets 々, ー and small kana start a
+/// line, None allows the break.
+fn kinsoku_between(before: char, after: Option<char>, kinsoku: Kinsoku) -> bool {
+    match kinsoku {
+        Kinsoku::None => true,
+        Kinsoku::Hard => !no_line_end(before) && after.is_none_or(|c| !no_line_start(c)),
+        Kinsoku::Soft => !no_line_end(before) && after.is_none_or(|c| !no_line_start(c) || soft_line_start(c)),
+    }
 }
 
 #[cfg(test)]
@@ -1137,7 +1186,7 @@ mod wrapping_tests {
         let text = "بَت";
         let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'ب'), (0, 4, 2.0, 'ب'), (4, 2, 1.0, 'ت')]);
 
-        let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None);
+        let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None, Kinsoku::Hard);
 
         assert!(!hyphenated);
         assert_eq!(end, 2, "oversized base-plus-mark cluster must stay together");
@@ -1150,11 +1199,11 @@ mod wrapping_tests {
         let text = "بَتَث";
         let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'ب'), (4, 4, 2.0, 'ت'), (4, 4, 2.0, 'ت'), (8, 2, 1.0, 'ث')]);
 
-        let (first_end, _) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None);
+        let (first_end, _) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None, Kinsoku::Hard);
         assert_eq!(first_end, 1);
         assert_eq!(source_range(&glyphs, 0, first_end), 0..4);
 
-        let (second_end, hyphenated) = break_line(text, &glyphs, first_end, 3.0, false, Burasagari::None);
+        let (second_end, hyphenated) = break_line(text, &glyphs, first_end, 3.0, false, Burasagari::None, Kinsoku::Hard);
 
         assert!(!hyphenated);
         assert_eq!(second_end, 3, "oversized cluster at the next line start must stay together");
@@ -1220,12 +1269,27 @@ fn japanese_letters_for_the_latin_space_are_kana_kanji_and_marks_not_hangul_or_p
 #[test]
 fn kinsoku_keeps_closing_marks_off_line_starts_and_opening_ones_off_line_ends() {
     for (a, b) in [('字', '。'), ('弧', '」'), ('」', '、'), ('ャ', 'ー'), ('カ', 'ッ'), ('「', 'か'), ('（', '雅')] {
-        assert!(!kinsoku_between(a, Some(b)), "{a}{b}");
+        assert!(!kinsoku_between(a, Some(b), Kinsoku::Hard), "{a}{b}");
     }
     for (a, b) in [('。', '雅'), ('」', 'は'), ('字', '「'), ('の', '演')] {
-        assert!(kinsoku_between(a, Some(b)), "{a}{b}");
+        assert!(kinsoku_between(a, Some(b), Kinsoku::Hard), "{a}{b}");
     }
-    assert!(kinsoku_between('。', None));
+    assert!(kinsoku_between('。', None, Kinsoku::Hard));
+}
+
+/// Soft kinsoku lets 々, ー and small kana (JLREQ cl-09's 々, cl-10, cl-11) start a line and keeps
+/// the rest of the set (half-width forms aren't in those classes); None allows any break.
+#[cfg(test)]
+#[test]
+fn soft_kinsoku_lets_small_kana_and_the_prolonged_sound_mark_start_a_line() {
+    for (a, b) in [('ャ', 'ー'), ('カ', 'ッ'), ('時', '々'), ('ト', 'ㇰ'), ('か', 'ゃ')] {
+        assert!(!kinsoku_between(a, Some(b), Kinsoku::Hard), "{a}{b}");
+        assert!(kinsoku_between(a, Some(b), Kinsoku::Soft), "{a}{b}");
+    }
+    for (a, b) in [('字', '。'), ('弧', '」'), ('「', 'か'), ('ｶ', 'ｯ'), ('ｶ', 'ｰ'), ('字', 'ゝ')] {
+        assert!(!kinsoku_between(a, Some(b), Kinsoku::Soft), "{a}{b}");
+        assert!(kinsoku_between(a, Some(b), Kinsoku::None), "{a}{b}");
+    }
 }
 
 /// Glyph indices inside `g[ws..we]` (a word) where a hyphenated break may go.
@@ -1255,26 +1319,26 @@ fn hyphen_breaks(text: &str, g: &[SGlyph], ws: usize, we: usize) -> Vec<usize> {
 }
 
 /// Break candidates for the every-line composer.
-fn candidates(text: &str, g: &[SGlyph], hyphenate: bool) -> Vec<Breakpoint> {
+fn candidates(text: &str, g: &[SGlyph], hyphenate: bool, kinsoku: Kinsoku) -> Vec<Breakpoint> {
     let mut v = vec![];
     let mut ws = 0;
     for (j, gl) in g.iter().enumerate() {
         let end_of_word = gl.is_space() || gl.break_after();
         if end_of_word {
             if hyphenate && j > ws {
-                for k in hyphen_breaks(text, g, ws, j).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1)) {
+                for k in hyphen_breaks(text, g, ws, j).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
                     v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv });
                 }
             }
             let hy = if gl.is_soft_hyphen() { hyphen_glyph(gl).adv } else { 0.0 };
-            if j + 1 < g.len() && g[j + 1].byte != gl.byte && kinsoku_allows(g, j) {
+            if j + 1 < g.len() && g[j + 1].byte != gl.byte && kinsoku_allows(g, j, kinsoku) {
                 v.push(Breakpoint { end: j + 1, hyphen: hy });
             }
             ws = j + 1;
         }
     }
     if hyphenate && g.len() > ws {
-        for k in hyphen_breaks(text, g, ws, g.len()).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1)) {
+        for k in hyphen_breaks(text, g, ws, g.len()).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
             v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv });
         }
     }
@@ -1323,7 +1387,7 @@ fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>, rt
     let width = |k: usize| widths.get(k).copied().unwrap_or(last);
     // Lines from `uniform_from` on are interchangeable (same width).
     let uniform_from = widths.iter().rposition(|&w| (w - last).abs() > EPS).map_or(0, |k| k + 1);
-    let cands = candidates(cx.text, sg, para.hyphenate);
+    let cands = candidates(cx.text, sg, para.hyphenate, para.kinsoku);
     let justify_last = para.justify == Justify::JustifyAll;
     let params = |tolerance| Params { justify_last, ragged, tolerance, uniform_from };
     // Ragged: first look for breaks that leave at most one rag zone (a sixth of the width) on
@@ -1369,7 +1433,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             let (asc, desc, lead) = style_metrics(cx.db, cx.style_at(pr.start));
             let st = cx.style_at(pr.start);
             let (cap, xh) = cap_x_heights(cx.db, st);
-            let centre = cx.db.face(&st.font_family, &st.font_style).map_or(EM_CENTER, |f| f.ideographic_centre());
+            let centre =
+                cx.db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()).map_or(EM_CENTER, |f| f.ideographic_centre());
             Metrics { asc, desc, lead, cap, xh, top: (centre + 0.5) * st.size * st.v_scale / 100.0 }
         };
         if pi > 0 {
@@ -1383,10 +1448,10 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             let est = if i < n { Metrics::of(&sg[i]) } else { pm };
             let first_line = li_para == 0;
             let ind_l = para.left_indent + if first_line { para.first_line_indent } else { 0.0 };
-            // Mojikumi: an opening bracket starting a wrapped line is set flush with the line's
-            // start (the space before it goes), and the line has that much more room.
-            if !first_line
-                && !rtl
+            // Mojikumi: an opening bracket starting a line is set flush with the line's start (the
+            // space before it goes), and the line has that much more room. At a paragraph's start
+            // that is the first-line indent: JIS X 4051's principle (JLREQ 3.1.5, Figure 71 ①).
+            if !rtl
                 && para.mojikumi == Mojikumi::LineEndHalf
                 && let Some(g) = sg.get_mut(i)
                 && g.lead <= 0.0
@@ -1406,7 +1471,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 let width = x1 - x0 - ind_l - para.right_indent;
                 let (end, hyph) = match composed.as_ref().and_then(|c| c.get(li_para)) {
                     Some(&(e, h)) if e > i => (e, h),
-                    _ if i < n => break_line(cx.text, &sg, i, width, para.hyphenate, para.burasagari),
+                    _ if i < n => break_line(cx.text, &sg, i, width, para.hyphenate, para.burasagari, para.kinsoku),
                     _ => (n, false),
                 };
                 let m = Metrics::max(&sg[i..end]).unwrap_or(pm);

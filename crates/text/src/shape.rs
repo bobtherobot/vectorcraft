@@ -133,6 +133,41 @@ pub(crate) fn no_line_start(c: char) -> bool {
         | '！' | '）' | '，' | '．' | '：' | '；' | '？' | '］' | '｝' | '～' | '｡' | '｣' | '､' | '･' | 'ｰ' | 'ｧ'..='ｯ')
 }
 
+/// Soft kinsoku: a character of [`no_line_start`] that may start a line all the same: 々, the
+/// prolonged sound mark ー (JLREQ cl-10) and small kana (cl-11), as JLREQ's level 3 rules allow
+/// (Appendix C.3, https://www.w3.org/TR/jlreq/#addendum_a3).
+pub(crate) fn soft_line_start(c: char) -> bool {
+    matches!(
+        c,
+        '々' | 'ー'
+            | '\u{3041}'
+            | '\u{3043}'
+            | '\u{3045}'
+            | '\u{3047}'
+            | '\u{3049}'
+            | '\u{3063}'
+            | '\u{3083}'
+            | '\u{3085}'
+            | '\u{3087}'
+            | '\u{308E}'
+            | '\u{3095}'
+            | '\u{3096}'
+            | '\u{30A1}'
+            | '\u{30A3}'
+            | '\u{30A5}'
+            | '\u{30A7}'
+            | '\u{30A9}'
+            | '\u{30C3}'
+            | '\u{30E3}'
+            | '\u{30E5}'
+            | '\u{30E7}'
+            | '\u{30EE}'
+            | '\u{30F5}'
+            | '\u{30F6}'
+            | '\u{31F0}'..='\u{31FF}'
+    )
+}
+
 /// Kinsoku: a character that can't end a line (opening brackets).
 pub(crate) fn no_line_end(c: char) -> bool {
     matches!(
@@ -186,7 +221,9 @@ pub(crate) fn is_cjk(c: char) -> bool {
 /// Vertical metrics (points) of a style's resolved face: (ascent, descent, leading).
 pub(crate) fn style_metrics(db: &FontDb, st: &CharStyle) -> (f64, f64, f64) {
     let vs = st.v_scale / 100.0;
-    let Some(face) = db.face(&st.font_family, &st.font_style) else { return (st.size * 0.8 * vs, st.size * 0.2 * vs, st.effective_leading()) };
+    let Some(face) = db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()) else {
+        return (st.size * 0.8 * vs, st.size * 0.2 * vs, st.effective_leading());
+    };
     let k = st.size / face.upem;
     (face.ascent * k * vs, face.descent * k * vs, st.effective_leading())
 }
@@ -194,7 +231,9 @@ pub(crate) fn style_metrics(db: &FontDb, st: &CharStyle) -> (f64, f64, f64) {
 /// Cap height and x height (points) of a style's resolved face.
 pub(crate) fn cap_x_heights(db: &FontDb, st: &CharStyle) -> (f64, f64) {
     let vs = st.v_scale / 100.0;
-    let Some(face) = db.face(&st.font_family, &st.font_style) else { return (st.size * 0.7 * vs, st.size * 0.5 * vs) };
+    let Some(face) = db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()) else {
+        return (st.size * 0.7 * vs, st.size * 0.5 * vs);
+    };
     let k = st.size / face.upem * vs;
     (face.cap_height * k, face.x_height * k)
 }
@@ -256,12 +295,12 @@ pub(crate) fn shape_range(
         let a = bytes.start;
         let b = bytes.end;
         if let Some(art) = art {
-            if let Some(face) = db.face(&st.font_family, &st.font_style).or_else(|| db.face_covering('a')) {
+            if let Some(face) = db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()).or_else(|| db.face_covering('a')) {
                 out.push(inline_glyph(&face, st, art, source_runs.start, a..b, text, level_at(a)));
             }
             continue;
         }
-        let Some(primary) = db.face(&st.font_family, &st.font_style) else { continue };
+        let Some(primary) = db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()) else { continue };
         let pmap = primary.skrifa().map(|f| f.charmap());
         // Synthesized Small Caps shape lowercase letters separately (as smaller capitals).
         let small_caps = st.small_caps.is_some() && !st.all_caps;

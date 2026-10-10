@@ -138,9 +138,14 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     (crate::panels::links::ID, "Links", "link"),
     (crate::panels::asset_export::ID, "Asset Export", "share-2"),
     (crate::panels::css_properties::ID, "CSS Properties", "globe"),
+    (crate::panels::variables::ID, "Variables", "chart-column"),
 ];
 
 /// Groups of icon panels separated by dividers in the collapsed column.
+///
+/// This, not [`ICON_PANELS`], is what the collapsed column draws: a panel listed there but in
+/// no group can be opened from the Window menu and `window.panel`, but never appears as an
+/// icon. A panel that belongs in the column needs a row here as well as its entry above.
 pub const ICON_PANEL_GROUPS: &[&[&str]] = &[
     &["color", "colorGuide"],
     &["swatches", "brushes", "symbols", "patternOptions"],
@@ -150,6 +155,7 @@ pub const ICON_PANEL_GROUPS: &[&[&str]] = &[
     &["transform", "align", "pathfinder"],
     &["character", "paragraph", "glyphs"],
     &["history", "actions", "info", "navigator"],
+    &["variables"],
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -347,6 +353,18 @@ pub struct UiState {
     /// dialog is open.
     #[serde(skip)]
     pub dialog_file: Option<std::sync::Arc<crate::dialogs::import_pdf::DialogFile>>,
+    /// The documents (uids) whose Missing Fonts dialog waits until no dialog is open, the next one to
+    /// show first ([`crate::dialogs::settle`]).
+    #[serde(skip)]
+    pub pending_fonts: Vec<u64>,
+    /// The document (uid) whose Missing Fonts dialog is on show. When another dialog takes its
+    /// place, [`crate::dialogs::settle`] puts the document back at the front of `pending_fonts`.
+    #[serde(skip)]
+    pub fonts_dialog: Option<u64>,
+    /// The search the Missing Fonts dialog started (`text.findFontFiles`'s `id`), stopped once the
+    /// dialog is gone.
+    #[serde(skip)]
+    pub dialog_search: Option<u64>,
     /// The DXF Options chosen last (`document.exportDxf` options; null: never used).
     #[serde(default)]
     pub dxf_options: Value,
@@ -425,6 +443,9 @@ pub struct FloatingPanels {
     pub active: usize,
     /// Top-left corner in screen points.
     pub pos: [f32; 2],
+    /// A width the group was given (the Tabs panel sized over its text), else its panels' own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
 }
 
 impl FloatingPanels {
@@ -516,6 +537,9 @@ impl Default for UiState {
             svg_options: Value::Null,
             place_link: true,
             dialog_file: None,
+            pending_fonts: vec![],
+            fonts_dialog: None,
+            dialog_search: None,
             dxf_options: Value::Null,
             eps_options: Value::Null,
             dxf_import: Value::Null,

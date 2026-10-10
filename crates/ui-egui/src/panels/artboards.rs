@@ -12,6 +12,29 @@ use crate::theme::Tokens;
 use crate::widgets::{self, menu_item};
 use crate::{VectorcraftApp, icons};
 
+/// The Artboard tool's Move Artwork with Artboard and Scale Artwork with Artboard options (#602) as
+/// check boxes: the Control bar and Properties show them while the tool is in use.
+pub(crate) fn art_options(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let opts = app.session.tool_options();
+    for (key, label, default) in [("moveArt", tl!("Move Artwork with Artboard"), true), ("scaleArt", tl!("Scale Artwork with Artboard"), false)] {
+        let on = opts[key].as_bool().unwrap_or(default);
+        if widgets::check(ui, label, on, true) {
+            app.run("tool.setOption", json!({ "key": key, "value": !on })).ok();
+        }
+    }
+}
+
+/// Whether artboards resized while the Artboard tool is in use take their art along (its Scale
+/// Artwork with Artboard option): the panels' sizes pass it to `artboard.setProps` as `scaleArt`.
+pub(crate) fn scale_art(app: &VectorcraftApp) -> bool {
+    app.session.tool_id() == "artboard" && app.session.tool_options()["scaleArt"].as_bool().unwrap_or(false)
+}
+
+/// Whether position edits take their art along, matching the Artboard tool's move option.
+pub(crate) fn move_art(app: &VectorcraftApp) -> bool {
+    app.session.tool_id() == "artboard" && app.session.tool_options()["moveArt"].as_bool().unwrap_or(true)
+}
+
 /// The active artboard (of `n`).
 pub(crate) fn selected(app: &VectorcraftApp, n: usize) -> usize {
     app.view().map_or(0, |v| v.artboard).min(n.saturating_sub(1))
@@ -113,7 +136,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
     let n = abs.len();
     widgets::bottom_bar(ui, |ui| {
-        widgets::icon_button_enabled(ui, "dc-rearrange", tl!("Rearrange All Artboards (on the roadmap)"), false, false, 24.0);
+        if widgets::icon_button_enabled(ui, "dc-rearrange", tl!("Rearrange All Artboards"), false, n > 1, 24.0).clicked() {
+            open_rearrange(app);
+        }
         ui.add_space((ui.available_width() - 4.0 * 28.0).max(0.0));
         if widgets::icon_button_enabled(ui, "dc-arrow-up", tl!("Move Up"), false, sel > 0, 24.0).clicked()
             && app.run("artboard.reorder", json!({"index": sel, "to": sel - 1})).is_ok()
@@ -140,6 +165,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
 }
 
+/// Open Rearrange All Artboards (#681).
+pub(crate) fn open_rearrange(app: &mut VectorcraftApp) {
+    app.run("ui.menuDialog", json!({ "command": "artboard.rearrange" })).ok();
+}
+
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     let n = app.session.active().map(|d| d.doc.artboards.len()).unwrap_or(0);
     let sel = selected(app, n);
@@ -161,7 +191,9 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     if menu_item(ui, tl!("Artboard Options…"), n > 0, false) {
         app.select_tool("artboard");
     }
-    menu_item(ui, tl!("Rearrange All Artboards…"), false, false);
+    if menu_item(ui, tl!("Rearrange All Artboards…"), n > 1, false) {
+        open_rearrange(app);
+    }
     ui.separator();
     if menu_item(ui, tl!("Fit to Artwork Bounds"), n > 0, false) {
         app.run("artboard.fitToArt", json!({"index": sel})).ok();
@@ -202,6 +234,26 @@ mod tests {
         // The navigator moves it on; the panel follows.
         crate::menus::invoke(&mut app, "view.goToArtboard", json!({"index": "previous"}));
         assert_eq!(selected(&app, 2), 0, "and the panel follows the navigator");
+    }
+
+    /// #1006: Select › All on Active Artboard selects the art of the artboard made active here,
+    /// and an explicit artboard still wins.
+    #[test]
+    fn all_on_active_artboard_takes_the_active_artboard() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 100, "height": 100, "units": "Points", "artboards": 2})).unwrap();
+        let mut rect = |x| app.session.execute("shape.rectangle", &json!({"x": x, "y": 10, "width": 20, "height": 20})).unwrap()["id"].clone();
+        let (a, b) = (rect(10), rect(130));
+        let picked = |app: &mut VectorcraftApp, params| {
+            crate::menus::invoke(app, "select.allOnArtboard", params);
+            let ids: Vec<u64> = app.session.active().unwrap().selection.objects.iter().map(|n| n.0).collect();
+            json!(ids)
+        };
+        select(&mut app, 1);
+        assert_eq!(picked(&mut app, json!({})), json!([b]));
+        select(&mut app, 0);
+        assert_eq!(picked(&mut app, json!({})), json!([a]));
+        assert_eq!(picked(&mut app, json!({"artboard": 1})), json!([b]));
     }
     /// Double-clicking a row's number goes to its artboard and its name renames it; a row's
     /// Options button edits that artboard with the Artboard tool, and the tool's artboard is the

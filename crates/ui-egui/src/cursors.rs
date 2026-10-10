@@ -91,6 +91,12 @@ fn pen(p: &mut Ink, o: Pos2, badge: &str) {
             p.add(Shape::line(arc.clone(), Stroke::new(3.0, HALO)));
             p.add(Shape::line(arc, Stroke::new(1.2, INK)));
         }
+        // Join: a segment running into a square end point.
+        "j" => {
+            line(p, b + vec2(0.0, 6.0), b + vec2(3.5, 2.5));
+            let sq = [(3.0, -1.0), (7.0, -1.0), (7.0, 3.0), (3.0, 3.0)].map(|(x, y)| b + vec2(x, y));
+            poly(p, sq.to_vec(), INK, INK);
+        }
         "^" => {
             line(p, b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
             line(p, b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
@@ -131,17 +137,21 @@ fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
     }
 }
 
+/// A curved double arrow over the hotspot: an arc with an arrowhead at each end, pointing on along
+/// the arc (#701).
 fn rotate(p: &mut Ink, o: Pos2) {
-    let pts: Vec<Pos2> = (0..=10)
-        .map(|i| {
-            let a = std::f32::consts::PI * (0.15 + 0.7 * i as f32 / 10.0);
-            o + vec2(a.cos() * 9.0, -a.sin() * 9.0)
-        })
-        .collect();
-    p.add(Shape::line(pts.clone(), Stroke::new(3.0, HALO)));
-    p.add(Shape::line(pts.clone(), Stroke::new(1.2, INK)));
-    for end in [pts[0], pts[pts.len() - 1]] {
-        poly(p, vec![end + vec2(-3.0, -1.0), end + vec2(3.0, -1.0), end + vec2(0.0, 4.0)], INK, INK);
+    const R: f32 = 8.0;
+    let (a0, a1) = (std::f32::consts::PI * 0.12, std::f32::consts::PI * 0.88);
+    let at = |a: f32| o + vec2(a.cos() * R, -a.sin() * R);
+    let pts: Vec<Pos2> = (0..=12).map(|i| at(a0 + (a1 - a0) * i as f32 / 12.0)).collect();
+    p.add(Shape::line(pts.clone(), Stroke::new(3.2, HALO)));
+    p.add(Shape::line(pts, Stroke::new(1.3, INK)));
+    // Each head points away from the arc, along its tangent there.
+    for (a, away) in [(a0, -1.0f32), (a1, 1.0)] {
+        let t = vec2(-a.sin(), -a.cos()) * away;
+        let n = vec2(-t.y, t.x);
+        let (end, tip) = (at(a) - t * 1.5, at(a) + t * 4.5);
+        poly(p, vec![tip, end + n * 1.8, end - n * 1.8], INK, INK);
     }
 }
 
@@ -293,6 +303,7 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenContinue => pen(ink, p, "/"),
         Cursor::AnchorPoint => anchor_point(ink, p),
         Cursor::Curvature => pen(ink, p, "~"),
+        Cursor::PenJoin => pen(ink, p, "j"),
         Cursor::PenConvert => pen(ink, p, "^"),
         Cursor::Text => ibeam(ink, p),
         Cursor::AddStop => stop_badge(ink, p, true),
@@ -448,7 +459,7 @@ mod tests {
     use crate::VectorcraftApp;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 34] = [
+    const GLYPHS: [Cursor; 35] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -464,6 +475,7 @@ mod tests {
         Cursor::PenDelete,
         Cursor::PenClose,
         Cursor::PenContinue,
+        Cursor::PenJoin,
         Cursor::PenConvert,
         Cursor::AnchorPoint,
         Cursor::Curvature,

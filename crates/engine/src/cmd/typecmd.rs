@@ -251,6 +251,13 @@ fn create_outlines(s: &mut Session, _: &Value) -> Result<Value> {
                 node.appearance = st.appearance();
                 children.push(Arc::new(node));
             }
+            // Underline and strikethrough bars become paths of their run's paint too (#847).
+            for (run, bar) in vectorcraft_text::decorations(&lay, vectorcraft_text::FontDb::global(), t) {
+                let st = t.runs.get(run).map(|r| r.style.clone()).unwrap_or_else(|| t.first_style());
+                let mut node = shape_node(d, PathData::from_bezpath(&bar).transformed(t.xf), None);
+                node.appearance = st.appearance();
+                children.push(Arc::new(node));
+            }
             let (par, idx, _) = d.position(tid).ok_or(EngineError::NoNode(tid))?;
             d.remove(tid)?;
             if children.is_empty() {
@@ -415,6 +422,10 @@ fn set_style(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 if let Some(f) = &style {
                     st.font_style = f.clone();
+                }
+                // Another font: none of the old one's versions.
+                if font.is_some() || style.is_some() {
+                    st.font_version = None;
                 }
                 if let Some(v) = size {
                     st.size = v.clamp(0.1, 1296.0);
@@ -617,7 +628,7 @@ fn area_options(s: &mut Session, p: &Value) -> Result<Value> {
 fn reshape_area(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "text.reshapeArea";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let mut refs = super::select::parse_refs(p.get("anchors"));
+    let mut refs = super::select::checked_refs(p.get("anchors"), C)?;
     refs.sort_unstable();
     refs.dedup();
     if refs.is_empty() {
@@ -641,6 +652,36 @@ fn reshape_area(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod area_tests {
     use super::*;
+
+    #[test]
+    fn kinsoku_set_is_set_per_paragraph_and_saved_only_when_not_hard() {
+        use vectorcraft_doc::Kinsoku;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+        let id = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "あカッ", "area": {"width": 40, "height": 100}})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let para = |s: &Session| match &s.doc().unwrap().doc.node(NodeId(id)).unwrap().kind {
+            NodeKind::Text(t) => t.para.clone(),
+            _ => panic!("text"),
+        };
+        // New type: Hard, today's set.
+        assert_eq!(para(&s).kinsoku, Kinsoku::Hard);
+        assert!(serde_json::to_value(para(&s)).unwrap().get("kinsoku").is_none());
+        s.execute("select.set", &json!({"ids": [id]})).unwrap();
+        assert!(s.execute("text.setFormat", &json!({"kinsoku": "strict"})).is_err());
+        s.execute("text.setFormat", &json!({"kinsoku": "soft"})).unwrap();
+        assert_eq!(para(&s).kinsoku, Kinsoku::Soft);
+        assert_eq!(serde_json::to_value(para(&s)).unwrap()["kinsoku"], "soft");
+        s.execute("text.setFormat", &json!({"kinsoku": "none"})).unwrap();
+        assert_eq!(para(&s).kinsoku, Kinsoku::None);
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(para(&s).kinsoku, Kinsoku::Hard);
+        // Documents from before it read as Hard.
+        let old: vectorcraft_doc::ParaStyle = serde_json::from_value(json!({"justify": "Left"})).unwrap();
+        assert_eq!(old.kinsoku, Kinsoku::Hard);
+    }
 
     #[test]
     fn burasagari_is_set_per_paragraph_and_saved_only_when_on() {
@@ -744,7 +785,8 @@ mod area_tests {
         use vectorcraft_doc::LeadingModel;
         let mut s = Session::new();
         s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
-        let id = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "一\n二", "area": {"width": 200, "height": 100}})).unwrap()["id"]
+        // Exercise ink bounds with bundled glyphs; Japanese outlines require optional craft-fonts.
+        let id = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "A\nB", "area": {"width": 200, "height": 100}})).unwrap()["id"]
             .as_u64()
             .unwrap();
         let text = |s: &Session| match &s.doc().unwrap().doc.node(NodeId(id)).unwrap().kind {

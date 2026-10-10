@@ -27,6 +27,11 @@ pub struct CharStyle {
     pub font_family: String,
     #[serde(default = "regular")]
     pub font_style: String,
+    /// Which installed version of the font (its version string) when several versions of the
+    /// family and style are installed and the text was set in one the family and style alone
+    /// wouldn't pick (an imported file's type matched to it); None = the one they pick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_version: Option<String>,
     /// Size in points.
     pub size: f64,
     /// Leading in points; None = Auto (120% of size).
@@ -175,6 +180,7 @@ impl Default for CharStyle {
         Self {
             font_family: "Source Sans 3".into(),
             font_style: "Regular".into(),
+            font_version: None,
             size: 12.0,
             leading: None,
             tracking: 0.0,
@@ -341,6 +347,9 @@ pub struct ParaStyle {
     /// may stand outside the frame. New type takes [`Burasagari::Standard`]; documents from before
     /// it and imported text keep [`Burasagari::None`].
     pub burasagari: Burasagari,
+    /// Kinsoku (Paragraph panel › Kinsoku Set): which Japanese characters may not start or end a
+    /// line.
+    pub kinsoku: Kinsoku,
 }
 
 /// [`ParaStyle`] as saved. [`Justify::Auto`] is written as the alignment it has in the paragraph
@@ -378,6 +387,8 @@ struct ParaStyleFile {
     leading_model: LeadingModel,
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     burasagari: Burasagari,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    kinsoku: Kinsoku,
 }
 
 impl From<ParaStyle> for ParaStyleFile {
@@ -402,6 +413,7 @@ impl From<ParaStyle> for ParaStyleFile {
             direction,
             leading_model,
             burasagari,
+            kinsoku,
             ..
         } = p;
         Self {
@@ -420,6 +432,7 @@ impl From<ParaStyle> for ParaStyleFile {
             direction,
             leading_model,
             burasagari,
+            kinsoku,
         }
     }
 }
@@ -441,6 +454,7 @@ impl From<ParaStyleFile> for ParaStyle {
             direction,
             leading_model,
             burasagari,
+            kinsoku,
             ..
         } = f;
         Self {
@@ -458,6 +472,7 @@ impl From<ParaStyleFile> for ParaStyle {
             direction,
             leading_model,
             burasagari,
+            kinsoku,
         }
     }
 }
@@ -502,6 +517,21 @@ impl Mojikumi {
     pub fn is_none(&self) -> bool {
         *self == Mojikumi::None
     }
+}
+
+/// Which Japanese characters may not start or end a line (kinsoku shori).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Kinsoku {
+    /// No kinsoku: a line may break between any two characters that allow a break.
+    None,
+    /// Closing brackets, commas, full stops, iteration marks, the prolonged sound mark, small
+    /// kana and the like don't start a line; opening brackets don't end one.
+    #[default]
+    Hard,
+    /// As Hard, except that 々, the prolonged sound mark ー and small kana may start a line
+    /// (JLREQ's level 3 line-breaking rules, Appendix C.3).
+    Soft,
 }
 
 /// Hanging punctuation (burasagari): an East Asian comma or full stop ending a line (、。，．､｡)

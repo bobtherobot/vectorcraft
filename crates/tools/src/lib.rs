@@ -11,6 +11,7 @@ pub mod bbox;
 pub mod builder;
 pub mod catalog;
 pub mod corners;
+pub mod cropimage;
 pub mod cut;
 pub mod direct;
 pub mod distort;
@@ -435,6 +436,8 @@ pub enum Cursor {
     AnchorPoint,
     /// The Curvature tool: the pen nib with a curve badge.
     Curvature,
+    /// While drawing, over an end of another open path (a click joins the two).
+    PenJoin,
     /// Over the last anchor of the path being drawn (a click retracts its outgoing handle), or with
     /// Alt held over a selected path's handle or anchor (the Anchor Point tool's gesture).
     PenConvert,
@@ -486,6 +489,7 @@ impl Cursor {
             | Cursor::PenDelete
             | Cursor::PenClose
             | Cursor::PenContinue
+            | Cursor::PenJoin
             | Cursor::PenConvert
             | Cursor::Eyedropper
             | Cursor::Slice
@@ -519,6 +523,11 @@ pub trait Tool: Send {
     fn set_option(&mut self, _key: &str, _value: &Value) {}
     /// Is an interaction in progress (drag, open pen path)?
     fn busy(&self) -> bool {
+        false
+    }
+    /// Is a drag moving, scaling or rotating the selection (the canvas then hides the bounding box,
+    /// so only the art is seen going with the pointer)?
+    fn transforming(&self) -> bool {
         false
     }
     /// Does the tool take `key` now, ahead of the command shortcuts bound to it (the Gradient tool
@@ -590,6 +599,7 @@ pub fn create(id: &str) -> Box<dyn Tool> {
             .or_else(|| extra::create(other))
             .or_else(|| slice::create(other))
             .or_else(|| printtiling::create(other))
+            .or_else(|| cropimage::create(other))
             .or_else(|| cut::create(other))
             .unwrap_or_else(|| Box::new(NoopTool(tool_info(other).map(|t| t.id).unwrap_or("selection")))),
     }

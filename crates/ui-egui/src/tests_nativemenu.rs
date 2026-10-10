@@ -25,7 +25,7 @@ fn app(doc: bool) -> VectorcraftApp {
 }
 
 fn bar(app: &VectorcraftApp) -> MenuBar {
-    native_menu::mac_layout(&native_menu::from_tree(app, &menus::menu_tree()), Lang::EN).bar
+    native_menu::mac_layout(app, &native_menu::from_tree(app, &menus::menu_tree()), Lang::EN).bar
 }
 
 /// A level's nodes as short names: an item's command (`---` a separator, `[label]` a submenu,
@@ -182,8 +182,10 @@ fn every_in_window_item_is_in_the_mac_menu_bar_once() {
         assert_eq!(m, want, "{key:?} is listed {m} times on the Mac, {n} in the window");
     }
     let system = [native_menu::HIDE, native_menu::HIDE_OTHERS, native_menu::MINIMIZE];
+    // Language and Appearance have no in-window menu (synthesized in the App menu, as in PhotoCraft).
+    let synthesized = ["app.language", "window.brightness"];
     for key in b.keys() {
-        assert!(a.contains_key(key) || system.contains(&key.0.as_str()), "{key:?} isn't an in-window item");
+        assert!(a.contains_key(key) || system.contains(&key.0.as_str()) || synthesized.contains(&key.0.as_str()), "{key:?} isn't an in-window item");
     }
     let help = ids(menu(&mac, "Help"));
     assert!(help.contains(&"help.discord".to_string()) && !help.contains(&"help.about".to_string()), "{help:?}");
@@ -211,7 +213,7 @@ fn a_command_keeps_a_system_key_it_is_bound_to() {
     let mut app = app(true);
     app.ui.shortcut_overrides.insert("view.grid".into(), "Ctrl+Cmd+H".into());
     crate::shortcut_editor::sync(&app.ui);
-    let layout = native_menu::mac_layout(&native_menu::from_tree(&app, &menus::menu_tree()), Lang::EN);
+    let layout = native_menu::mac_layout(&app, &native_menu::from_tree(&app, &menus::menu_tree()), Lang::EN);
     app.ui.shortcut_overrides.clear();
     crate::shortcut_editor::sync(&app.ui);
     assert_eq!(find(&layout.bar, native_menu::HIDE).shortcut, None);
@@ -348,11 +350,18 @@ fn key_equivalents_run_through_the_normal_shortcut_path_once() {
     let before = undo(&m);
     m.key_equivalent("Cmd+Z");
     assert_eq!(undo(&m), before - 1, "⌘Z undid one step");
-    let synced = m.fake.synced();
-    assert!(synced >= 1, "the menus were built");
-    m.frame(vec![]);
-    m.frame(vec![]);
-    assert_eq!(m.fake.synced(), synced, "nothing changed: the menus weren't read again");
+    assert!(m.fake.synced() >= 1, "the menus were built");
+    // Idle frames don't read the menus again. The shortcut and plug-in generations are
+    // process-wide, and tests running alongside with other shortcuts bump them (rightly reading
+    // the menus again), so judge two idle frames in which they held still.
+    let globals = || (crate::shortcut_editor::GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::menus::plugin_revision());
+    let quiet = (0..50).any(|_| {
+        let (before, synced) = (globals(), m.fake.synced());
+        m.frame(vec![]);
+        m.frame(vec![]);
+        globals() == before && m.fake.synced() == synced
+    });
+    assert!(quiet, "nothing changed: the menus weren't read again");
     assert_eq!(crate::control::inspect(&m.app, &m.ctx)["nativeMenuBar"], json!(true));
 }
 

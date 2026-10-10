@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use vectorcraft_color::{BlendMode, Color, GradientPaint, Paint};
 use vectorcraft_doc::{Appearance, CharStyle, Document, Node, NodeId, NodeKind};
 
-use super::appearance::{ItemTarget, appearance_targets, edit_items, item_target};
+use super::appearance::{ItemTarget, appearance_targets, edit_items, edit_items_then, item_target};
 use super::gradient::{item_paint_bounds, place_paint, place_run_paint, run_paint_mut, run_stroke_weight, unplaced};
 use super::*;
 use crate::{DocState, EngineError};
@@ -375,7 +375,48 @@ fn apply_to_proxy(s: &mut Session, p: &Value, paint: Paint) -> Result<Value> {
 /// remember the paint.
 fn apply_paint(s: &mut Session, p: &Value, paint: Paint, fill: bool) -> Result<Value> {
     let cmd = if fill { "paint.setFill" } else { "paint.setStroke" };
-    // New art gets the paint fitted to itself, not placed where this one is.
+    // Resolve the requested targets before mutating defaults or the active proxy.
+    let item = item_target(s, p, cmd)?.of_kind(s, fill);
+    let selected = item.targets(s, p)?;
+    let ids = super::graph::paint_targets(&s.doc()?.doc, &selected);
+    let label = if fill { "Fill Color" } else { "Stroke Color" };
+    edit_items_then(
+        s,
+        &ids,
+        item,
+        cmd,
+        label,
+        fill,
+        |n, index| {
+            if index.is_none()
+                && let NodeKind::Text(t) = &mut n.kind
+            {
+                let (xf, lb) = (t.xf, t.local_bounds());
+                for r in &mut t.runs {
+                    if !fill && !paint.is_none() {
+                        run_stroke_weight(&mut r.style);
+                    }
+                    let (cur, b) = run_paint_mut(r, !fill, lb);
+                    *cur = place_run_paint(&paint, p, xf, b);
+                }
+                return Ok(());
+            }
+            // A missing top fill or stroke is created first: a new stroke's weight sizes the box its
+            // gradient fits.
+            if n.appearance.paint_at(index, fill).is_none() {
+                n.appearance.set_paint_at(index, fill, Paint::None);
+            }
+            let placed = place_paint(&paint, p, item_paint_bounds(n, index, fill));
+            n.appearance.set_paint_at(index, fill, placed);
+            Ok(())
+        },
+        |d, changed| {
+            super::graph::capture_series_paints(d, changed, fill);
+            Ok(())
+        },
+    )?;
+    // Rejected edits leave the next shape's appearance and active proxy untouched.
+    // New art takes an unplaced gradient so that it fits the new object's own bounds.
     if fill {
         s.paint.fill = unplaced(&paint);
     } else {
@@ -384,31 +425,6 @@ fn apply_paint(s: &mut Session, p: &Value, paint: Paint, fill: bool) -> Result<V
     if bool_or(p, "focus", true) {
         s.fill_active = fill;
     }
-    let item = item_target(s, p, cmd)?.of_kind(s, fill);
-    let ids = item.targets(s, p)?;
-    edit_items(s, &ids, item, cmd, if fill { "Fill Color" } else { "Stroke Color" }, fill, |n, index| {
-        if index.is_none()
-            && let NodeKind::Text(t) = &mut n.kind
-        {
-            let (xf, lb) = (t.xf, t.local_bounds());
-            for r in &mut t.runs {
-                if !fill && !paint.is_none() {
-                    run_stroke_weight(&mut r.style);
-                }
-                let (cur, b) = run_paint_mut(r, !fill, lb);
-                *cur = place_run_paint(&paint, p, xf, b);
-            }
-            return Ok(());
-        }
-        // A missing top fill or stroke is created first: a new stroke's weight sizes the box its
-        // gradient fits.
-        if n.appearance.paint_at(index, fill).is_none() {
-            n.appearance.set_paint_at(index, fill, Paint::None);
-        }
-        let placed = place_paint(&paint, p, item_paint_bounds(n, index, fill));
-        n.appearance.set_paint_at(index, fill, placed);
-        Ok(())
-    })?;
     s.remember_paint(&paint);
     ok()
 }
@@ -422,7 +438,6 @@ fn set_run_stroke(style: &mut CharStyle, paint: Paint) {
 }
 
 fn swap(s: &mut Session, p: &Value) -> Result<Value> {
-    std::mem::swap(&mut s.paint.fill, &mut s.paint.stroke);
     let ids = paint_targets(s, p)?;
     if !ids.is_empty() {
         s.edit("Swap Fill and Stroke", |d, _| {
@@ -444,11 +459,11 @@ fn swap(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(())
         })?;
     }
+    std::mem::swap(&mut s.paint.fill, &mut s.paint.stroke);
     ok()
 }
 
 fn default_paint(s: &mut Session, p: &Value) -> Result<Value> {
-    super::newart::reset(s);
     let ids = paint_targets(s, p)?;
     if !ids.is_empty() {
         s.edit("Default Fill and Stroke", |d, _| {
@@ -467,6 +482,7 @@ fn default_paint(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(())
         })?;
     }
+    super::newart::reset(s);
     ok()
 }
 

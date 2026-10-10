@@ -7,8 +7,11 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod file_access;
 pub mod guard;
 pub mod inspect;
+pub mod link_watch;
+pub mod steps;
 mod tooling;
 pub mod units;
 
@@ -83,6 +86,7 @@ pub struct Interaction {
     /// isolation).
     pub active_layer: Option<NodeId>,
     pub layer_rows: Vec<NodeId>,
+    pub variables_highlight: Option<String>,
     pub isolation: Option<NodeId>,
     /// The perspective transform the previews make (`perspective.transform` params): Transform
     /// Again repeats it once the drag is committed.
@@ -118,6 +122,10 @@ pub struct DocState {
     /// Panel state, not art selection: not saved, not undoable (`layer.setCurrent`,
     /// `layer.highlight`).
     pub layer_rows: Vec<NodeId>,
+    /// The variable highlighted in the Variables panel: what its Delete, Options… and Select
+    /// Bound Object act on. Panel state, not art selection: not saved, not undoable
+    /// (`variable.highlight`). A name, so renaming a variable moves the highlight with it.
+    pub variables_highlight: Option<String>,
     /// Isolation mode container.
     pub isolation: Option<NodeId>,
     pub interaction: Option<Interaction>,
@@ -125,8 +133,9 @@ pub struct DocState {
     pub undo_group: Option<UndoGroup>,
     /// For Object → Transform → Transform Again (⌘D).
     pub last_transform: Option<(Affine, bool)>,
-    /// Selection saved by Select → Reselect.
-    pub last_selection_cmd: Option<(String, Value)>,
+    /// What Select → Reselect repeats: the last selection command, its params and the objects
+    /// selected when it ran (a Same command's reference objects).
+    pub last_selection_cmd: Option<(String, Value, Vec<NodeId>)>,
     /// Process-unique id of this open document (tab indices shift when tabs close).
     pub uid: u64,
     /// View Opacity Mask (Alt-click the mask thumbnail): the masked object whose mask the canvas
@@ -155,6 +164,11 @@ pub struct DocState {
     pub print_tiling: bool,
     /// The rows open in the Layers panel (view state: not undoable; native files keep it).
     pub layers_open: OpenRows,
+    /// The file this document was read from, and what reading it left out (hidden text, art or
+    /// layers it could not read): writing the document over that file would lose those for good,
+    /// so an export or save to it asks first ([`cmd::fileio::check_not_lossy_overwrite`]). Not saved.
+    pub imported_from: Option<String>,
+    pub import_losses: Vec<String>,
     /// Transform Again after a perspective move or scale (Perspective Selection tool): the
     /// `perspective.transform` params it repeats. `None` once an ordinary transform follows.
     pub last_perspective: Option<Value>,
@@ -227,6 +241,7 @@ impl DocState {
             revision: 1,
             active_layer,
             layer_rows: vec![],
+            variables_highlight: None,
             isolation: None,
             interaction: None,
             undo_group: None,
@@ -243,6 +258,8 @@ impl DocState {
             recovery: None,
             print_tiling: false,
             layers_open,
+            imported_from: None,
+            import_losses: vec![],
             last_perspective: None,
         }
     }
@@ -289,6 +306,7 @@ impl DocState {
             self.selection = it.selection;
             self.active_layer = it.active_layer;
             self.layer_rows = it.layer_rows;
+            self.variables_highlight = it.variables_highlight;
             self.isolation = it.isolation;
             self.revision += 1;
         }
@@ -327,6 +345,14 @@ impl DocState {
         }
         // A sublayer takes new art only while it and the layers around it are shown and unlocked.
         self.active_layer.filter(|l| self.doc.node(*l).is_some_and(|n| n.is_layer()) && self.doc.is_editable(*l)).or_else(|| self.doc.default_layer())
+    }
+    /// [`Self::insertion_parent`] for new art, which a locked or hidden layer never takes: an error
+    /// when no layer is shown and unlocked, so the art is refused rather than hidden or locked away.
+    pub fn target_parent(&self) -> Result<Option<NodeId>> {
+        match self.insertion_parent() {
+            Some(p) if !self.doc.is_editable(p) => Err(EngineError::Other("the target layer is locked or hidden".into())),
+            parent => Ok(parent),
+        }
     }
     /// The highlighted Layers panel rows that still exist (ids are reused after undo, so a
     /// remembered row must still be in the document).
@@ -480,6 +506,9 @@ pub struct Prefs {
     // Hyphenation
     pub hyphenation_language: String,
     pub hyphenation_exceptions: String,
+    /// Type › Options › Additional Fonts Folder: a folder (read with its subfolders) whose fonts
+    /// are listed and used as if installed (#683); empty for none.
+    pub fonts_folder: String,
     // Performance & Storage (Plug-ins & Scratch Disks)
     pub plugins_folder: String,
     pub scratch_primary: String,
@@ -488,6 +517,9 @@ pub struct Prefs {
     pub ui_brightness: String,
     pub canvas_color: String,
     pub auto_collapse_icon_panels: bool,
+    /// User Interface › Show Tool Group Labels: the toolbar's group names (Select, Shapes, Draw…);
+    /// off, a faint dash separates the groups instead (#663).
+    pub tool_group_labels: bool,
     pub open_documents_as_tabs: bool,
     pub large_tabs: bool,
     pub ui_scaling: f64,
@@ -495,6 +527,10 @@ pub struct Prefs {
     /// UI language: `auto` (follow the system locale) or a language code such as `en`, `zh-hant`.
     /// The list of languages belongs to the shell (`ui-egui` i18n); an unknown code reads as `auto`.
     pub interface_language: String,
+    /// Windows and Linux: use the system's title bar and window buttons instead of the app bar
+    /// acting as the title bar (tiling window managers, desktops that draw their own decorations).
+    /// Read when the app starts. macOS always uses the system's.
+    pub system_title_bar: bool,
     // Performance
     pub gpu_performance: bool,
     pub animated_zoom: bool,
@@ -696,17 +732,20 @@ impl Default for Prefs {
             slice_line_color: s("#ff3f3f"),
             hyphenation_language: s("English: USA"),
             hyphenation_exceptions: String::new(),
+            fonts_folder: String::new(),
             plugins_folder: String::new(),
             scratch_primary: s("Startup"),
             scratch_secondary: s("None"),
             ui_brightness: s("mediumDark"),
             canvas_color: s("matchUi"),
             auto_collapse_icon_panels: false,
+            tool_group_labels: true,
             open_documents_as_tabs: true,
             large_tabs: false,
             ui_scaling: 1.0,
             scale_cursor_with_ui: false,
             interface_language: s("auto"),
+            system_title_bar: false,
             gpu_performance: true,
             animated_zoom: true,
             gpu_preference: s("automatic"),
@@ -814,6 +853,8 @@ pub struct Session {
     pub(crate) freeform_point: Option<(usize, cmd::gradient::StopOwner)>,
     /// User Defined and loaded graphic style libraries (Window → Graphic Style Libraries); not saved.
     pub style_libraries: cmd::stylelib::Libraries,
+    /// The Libraries panel's libraries of graphics, colours and text styles (`library.*`).
+    pub libraries: cmd::library::Libraries,
     /// URLs recently given in the Attributes panel (`attributes.set {url}`), newest first; not saved.
     pub recent_urls: Vec<String>,
     /// The language the UI is drawn in (a language code, never `auto`), set by the UI each frame;
@@ -844,6 +885,20 @@ pub struct Session {
     pub(crate) plane_widget_press: bool,
     /// A guide being dragged out of a ruler ([`Session::ruler_guide`]).
     pub(crate) ruler_guide: Option<vectorcraft_tools::rulerguide::NewGuide>,
+    /// The last search for the files of missing fonts (`text.findFontFiles`), until another
+    /// starts; dropping it stops it.
+    pub(crate) font_search: Option<cmd::fontfiles::FontSearch>,
+    /// Where folder searches may go; `None`: this computer's rules ([`cmd::findfiles::Rules`]).
+    /// Tests set it.
+    pub search_rules: Option<cmd::findfiles::Rules>,
+    /// The walker threads a folder search starts; `None`: [`cmd::findfiles::threads`]. Tests set
+    /// it.
+    pub search_threads: Option<usize>,
+    /// Each open document's linked files' size and modification time when last seen (linked
+    /// files changing while the document is open, [`link_watch`]).
+    pub link_stamps: std::collections::HashMap<(u64, String), link_watch::Stamp>,
+    /// The stamps being taken on a worker thread ([`Session::start_link_scan`]).
+    pub link_scan: Option<link_watch::LinkScan>,
 }
 
 impl Default for Session {
@@ -884,6 +939,7 @@ impl Session {
             swatch_libraries: Default::default(),
             freeform_point: None,
             style_libraries: Default::default(),
+            libraries: Default::default(),
             recent_urls: vec![],
             ui_language: None,
             journal_note: Default::default(),
@@ -895,6 +951,11 @@ impl Session {
             liquify_stroke: None,
             plane_widget_press: false,
             ruler_guide: None,
+            font_search: None,
+            search_rules: None,
+            search_threads: None,
+            link_stamps: Default::default(),
+            link_scan: None,
         }
     }
 
@@ -1008,6 +1069,8 @@ impl Session {
         st.format = old.format;
         st.save_options = old.save_options.clone();
         st.converted = old.converted;
+        st.imported_from = old.imported_from.clone();
+        st.import_losses = old.import_losses.clone();
         st.view = old.view.clone();
         st.layers_open = old.layers_open.clone();
         let old = std::mem::replace(&mut self.docs[index], st);
@@ -1035,7 +1098,10 @@ impl Session {
     /// Execute a command by id. This is THE entry point for every frontend.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
-        if let Err(why) = (spec.enabled)(self) {
+        // Clear's menu needs a selection; an agent supplying explicit targets only needs a
+        // document. The command validates those targets before making any edit.
+        let enabled = if id == "edit.clear" && params.get("ids").is_some() { cmd::has_doc(self) } else { (spec.enabled)(self) };
+        if let Err(why) = enabled {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
         // Only top-level commands are journaled (commands that call other commands would otherwise
@@ -1175,6 +1241,10 @@ impl Session {
                     if !st.doc.assets.is_empty() {
                         Arc::make_mut(&mut st.doc).prune_assets();
                     }
+                    // Variables: bindings let go of deleted art.
+                    if !st.doc.variables.bindings.is_empty() {
+                        Arc::make_mut(&mut st.doc).prune_variable_bindings();
+                    }
                     if doc_sane(&st.doc, &st.selection) {
                         Ok(v)
                     } else {
@@ -1239,6 +1309,7 @@ impl Session {
             preview: None,
             active_layer: st.active_layer,
             layer_rows: st.layer_rows.clone(),
+            variables_highlight: st.variables_highlight.clone(),
             isolation: st.isolation,
             perspective_again: None,
         });
@@ -1436,6 +1507,8 @@ mod tests_flatten;
 #[cfg(test)]
 mod tests_focal;
 #[cfg(test)]
+mod tests_fontfiles;
+#[cfg(test)]
 mod tests_fontlist;
 #[cfg(test)]
 mod tests_freeform;
@@ -1458,11 +1531,15 @@ mod tests_layerclip;
 #[cfg(test)]
 mod tests_layers;
 #[cfg(test)]
+mod tests_library;
+#[cfg(test)]
 mod tests_linked_stops;
 #[cfg(test)]
 mod tests_links;
 #[cfg(test)]
 mod tests_linkspanel;
+#[cfg(test)]
+mod tests_linkwatch;
 #[cfg(test)]
 mod tests_liquify;
 #[cfg(test)]
@@ -1544,6 +1621,8 @@ mod tests_proxyitems;
 #[cfg(test)]
 mod tests_puppetwarp;
 #[cfg(test)]
+mod tests_rasterfilters;
+#[cfg(test)]
 mod tests_rastersettings;
 #[cfg(test)]
 mod tests_recolor;
@@ -1603,6 +1682,8 @@ mod tests_transparencygrid;
 mod tests_typearea;
 #[cfg(test)]
 mod tests_units;
+#[cfg(test)]
+mod tests_variables;
 #[cfg(test)]
 mod tests_webexport;
 #[cfg(test)]

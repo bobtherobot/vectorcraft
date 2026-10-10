@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use vectorcraft_color::Color;
 
-use super::{DialogSpec, form};
+use super::{DialogSpec, form, transform_each};
 use crate::panels::c32;
 use crate::state::Dialog;
 use crate::theme::Tokens;
@@ -127,15 +127,26 @@ fn confirm_exists(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String>
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let (id, relative) = (d.str("__effect"), d.bool("relative"));
+    if id == vectorcraft_effects::REVOLVE {
+        super::revolve::body(app, ui, d);
+        let (cmd, params) = command(d);
+        form::preview(app, ui, d, &d.str("__label"), cmd, params);
+        return false;
+    }
     // Plug-in effects get fields from their parameter schema; colour adjustments their sliders.
     let changed = match vectorcraft_plugins::effect::installed(&id) {
         Some(plugin) => form::schema_fields(ui, d, &plugin.manifest().params),
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
-        None => form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|_| None, app.session.general_unit()),
+        None if id == TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
+        None => {
+            let doc = vectorcraft_effects::effect_info(&id).map(|e| e.params).unwrap_or_default();
+            let unit = app.session.general_unit();
+            form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|k| choices(&id, k), &|k| doc_rank(doc, k), unit)
+        }
     };
     ui.add_space(6.0);
-    let mut pv = d.bool("preview");
-    let pv_changed = ui.checkbox(&mut pv, tl!("Preview")).changed();
+    let pv_changed = widgets::check(ui, tl!("Preview"), d.bool("preview"), true);
+    let pv = d.bool("preview") != pv_changed;
     d.fields.insert("preview".into(), json!(pv));
     if pv && (changed || pv_changed || !app.session.in_interaction()) {
         let label = d.str("__label");
@@ -146,6 +157,37 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         let _ = app.session.cancel_interaction();
     }
     false
+}
+
+/// The parameters of the effect dialogs that pick one of some values, as (label, value).
+fn choices(effect: &str, key: &str) -> Option<form::Choices> {
+    match (effect, key) {
+        ("blur.radial", "method") => Some(&[("Spin", "spin"), ("Zoom", "zoom")]),
+        ("blur.radial", "quality") => Some(&[("Draft", "draft"), ("Good", "good"), ("Best", "best")]),
+        ("blur.smart", "quality") => Some(&[("Low", "low"), ("Medium", "medium"), ("High", "high")]),
+        ("brushStrokes.sprayedStrokes", "strokeDirection") => Some(&vectorcraft_effects::pixel::STROKE_DIRECTIONS),
+        ("distort.glass", "texture") => Some(&vectorcraft_effects::pixel::GLASS_TEXTURES),
+        ("pixelate.mezzotint", "type") => Some(&vectorcraft_effects::pixel::MEZZOTINT_TYPES),
+        ("texture.grain", "grainType") => Some(&vectorcraft_effects::pixel::GRAIN_TYPES),
+        ("texture.texturizer", "texture") => Some(&vectorcraft_effects::pixel::TEXTURES),
+        ("texture.texturizer", "lightDirection") => Some(&vectorcraft_effects::pixel::LIGHT_DIRECTIONS),
+        ("video.deinterlace", "eliminate") => Some(&[("Odd Fields", "odd"), ("Even Fields", "even")]),
+        ("video.deinterlace", "create") => Some(&[("Duplication", "duplication"), ("Interpolation", "interpolation")]),
+        ("stylize.innerGlow", "source") => Some(&[("Center", "center"), ("Edge", "edge")]),
+        ("path.offsetPath", "joins") => Some(&[("Miter", "miter"), ("Round", "round"), ("Bevel", "bevel")]),
+        ("distort.roughen" | "distort.zigZag", "points") => Some(&[("Smooth", "smooth"), ("Corner", "corner")]),
+        _ => None,
+    }
+}
+
+/// Where parameter `key` comes in the effect's parameter documentation `doc` (`{radius: …,
+/// threshold: …}`), which lists them in its dialog's order; the end when it isn't there.
+pub(super) fn doc_rank(doc: &str, key: &str) -> usize {
+    let starts = |at: usize| doc.get(..at).and_then(|s| s.chars().last()).is_some_and(|c| c == '{' || c == ' ');
+    doc.match_indices(key)
+        .map(|(at, _)| at)
+        .find(|at| starts(*at) && doc.get(at + key.len()..).is_some_and(|rest| rest.starts_with(':') || rest.starts_with("?:")))
+        .unwrap_or(usize::MAX)
 }
 
 /// A slider of a colour adjustment dialog: (effect, field, label, range, rail colour at 0..1).
@@ -235,10 +277,40 @@ fn adjust_fields(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             form::check(ui, d, key, label);
         }
     }
+    values_changed(d)
+}
+
+/// Do the dialog's values differ from those last previewed? (Remembers them for the next frame.)
+fn values_changed(d: &mut Dialog) -> bool {
     let params = form::params(d);
     let changed = d.fields.get(form::PREVIEWED) != Some(&params);
     d.fields.insert(form::PREVIEWED.into(), params);
     changed
+}
+
+/// The Transform effect (Effect › Distort & Transform › Transform…).
+const TRANSFORM: &str = "distort.transform";
+
+/// The Transform effect's dialog: Transform Each's Scale and Move sliders and Rotate dial, then
+/// Copies, the reflections, the reference point and Random. Returns whether the values differ from
+/// those last previewed.
+fn transform_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit) -> bool {
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| transform_each::sections(ui, d, unit));
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            widgets::subheader(ui, tl!("Options"));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                widgets::dim_label(ui, tl!("Copies:"));
+                if let Some(n) = widgets::range_field(ui, "fx-copies", d.f64("copies", 0.0), 0.0..=1000.0, "", 0, 50.0) {
+                    d.fields.insert("copies".into(), json!(n));
+                }
+            });
+            transform_each::reflect_options(ui, d);
+        });
+    });
+    values_changed(d)
 }
 
 /// Curves' graph of its `points` (input across, output up, 0..255): drag a point to move it
@@ -346,4 +418,22 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
     }
     app.ui.dialog = None;
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fields_that_pick_a_value_are_dropdowns_of_its_values() {
+        // The values come from the effect's parameter documentation (`joins: "miter"|"round"|…`).
+        for (effect, key) in
+            [("path.offsetPath", "joins"), ("distort.zigZag", "points"), ("distort.roughen", "points"), ("stylize.innerGlow", "source")]
+        {
+            let doc = vectorcraft_effects::effect_info(effect).unwrap().params;
+            let listed = doc.split(&format!("{key}: ")).nth(1).unwrap().split([',', '}', ' ']).next().unwrap().to_string();
+            let values: Vec<String> = choices(effect, key).unwrap().iter().map(|(_, v)| format!("\"{v}\"")).collect();
+            assert_eq!(values.join("|"), listed, "{effect} {key}");
+        }
+    }
 }

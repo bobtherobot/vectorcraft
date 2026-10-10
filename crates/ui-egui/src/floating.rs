@@ -129,7 +129,7 @@ pub fn float(ui: &mut UiState, ids: &[&str], active: &str, pos: Pos2) {
     }
     let panels: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
     let active = panels.iter().position(|p| p == active).unwrap_or(0);
-    ui.floating_panels.push(FloatingPanels { panels, active, pos: [pos.x, pos.y] });
+    ui.floating_panels.push(FloatingPanels { panels, active, pos: [pos.x, pos.y], width: None });
     // The tabbed group shows another of its tabs when the one it showed floats.
     if let Some(tab) = shown_tab(ui) {
         ui.dock_tab = tab;
@@ -312,6 +312,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         let ids = ids_of(g);
         let Some(&first) = ids.first() else { continue };
         let active = ids.get(g.active).copied().unwrap_or(first);
+        let given = g.width.map(|w| w.min(screen.width() - 16.0));
         let area = area_id(first);
         let size = ctx.memory(|m| m.area_rect(area)).map_or(vec2(dock::panel_width(active), 200.0), |r| r.size());
         let pos = clamp(g.pos, size, screen);
@@ -333,7 +334,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     })
                     .collect();
                 let tabs_width: f32 = tabs.iter().map(|g| g.size().x + 24.0).sum();
-                let width = ids.iter().map(|id| dock::panel_width(id)).fold(tabs_width + 32.0, f32::max);
+                let width = ids.iter().map(|id| dock::panel_width(id)).fold(tabs_width + 32.0, f32::max).max(given.unwrap_or(0.0));
                 ui.set_width(width);
                 // Title bar: a grip that moves the group, and the × that docks it.
                 let (bar, _) = ui.allocate_exact_size(vec2(width, TITLE), Sense::hover());
@@ -495,12 +496,13 @@ mod tests {
 
     const SCREEN: Vec2 = vec2(1400.0, 900.0);
 
-    /// Frames of the whole window, 1400 × 900, with pointer input one event a frame (as the
-    /// control channel's `ui.drag` sends it).
+    /// Frames of the whole window, with pointer input one event a frame (as the control
+    /// channel's `ui.drag` sends it).
     struct Harness {
         app: VectorcraftApp,
         ctx: egui::Context,
         time: f64,
+        screen: Vec2,
     }
 
     fn button(pos: Pos2, pressed: bool) -> Event {
@@ -509,16 +511,23 @@ mod tests {
 
     impl Harness {
         fn new() -> Self {
+            Self::on(SCREEN)
+        }
+
+        /// The same window at another size. The icon column scrolls when it is too short for
+        /// every icon, which hides the ones past the bottom — a test that counts them needs
+        /// a window tall enough to show them all.
+        fn on(screen: Vec2) -> Self {
             let mut app = VectorcraftApp::new(Session::new(), Default::default());
             app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
-            let mut h = Self { app, ctx: egui::Context::default(), time: 0.0 };
+            let mut h = Self { app, ctx: egui::Context::default(), time: 0.0, screen };
             h.settle();
             h
         }
 
         fn frame(&mut self, events: Vec<Event>) {
             self.time += 0.05;
-            let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
+            let screen = Rect::from_min_size(Pos2::ZERO, self.screen);
             let raw = egui::RawInput { time: Some(self.time), screen_rect: Some(screen), events, ..Default::default() };
             let app = &mut self.app;
             self.ctx
@@ -650,10 +659,13 @@ mod tests {
 
     #[test]
     fn icons_dragged_out_float_stack_onto_another_group_and_tear_out_of_it() {
-        let mut h = Harness::new();
+        // Tall enough that the icon column shows every icon, so counting them says what it
+        // means: one leaves the column, rather than one more scrolling into view.
+        let mut h = Harness::on(vec2(1400.0, 1600.0));
         // Color, Color Guide, Swatches… top to bottom.
         let icons = h.icons();
         let count = icons.len();
+        assert_eq!(count, crate::state::ICON_PANEL_GROUPS.iter().map(|g| g.len()).sum::<usize>(), "every group's icons are drawn");
         h.drag(icons[2].center(), pos2(500.0, 250.0));
         assert_eq!(h.groups(), [["swatches"]]);
         assert_eq!(h.icons().len(), count - 1, "its icon left the column");
@@ -763,7 +775,7 @@ mod tests {
         }))
         .unwrap();
         let edited = edited.sanitized();
-        assert_eq!(edited.floating_panels, [FloatingPanels { panels: vec!["layers".into()], active: 0, pos: [1.0, 2.0] }]);
+        assert_eq!(edited.floating_panels, [FloatingPanels { panels: vec!["layers".into()], active: 0, pos: [1.0, 2.0], width: None }]);
         h.settle();
         let g = h.group("layers");
         let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);

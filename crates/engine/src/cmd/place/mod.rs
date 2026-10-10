@@ -136,7 +136,8 @@ pub(crate) fn pt_per_px(ppi: Option<(f64, f64)>) -> (f64, f64) {
 fn load(p: &Value, cmd: &str, board: Option<Rect>) -> Result<Loaded> {
     let src = fileio::source(p, cmd)?;
     let name = fileio::file_name(src.name);
-    if fileio::TEXT_EXTS.contains(&fileio::extension(src.name).as_str()) {
+    // An Affinity file is recognised by its signature, whatever its name says.
+    if fileio::TEXT_EXTS.contains(&fileio::extension(src.name).as_str()) && !vectorcraft_affinity::is_affinity(&src.bytes) {
         let text = text::import(&src.bytes, text::TextOptions::parse(p, cmd)?, cmd)?;
         if text.trim().is_empty() {
             return Err(bad(cmd, format!("`{name}` has no text to place")));
@@ -196,6 +197,16 @@ fn load(p: &Value, cmd: &str, board: Option<Rect>) -> Result<Loaded> {
             // Of the open options, only a DXF drawing's apply (the colour mode stays the file's).
             let o = fileio::LoadOptions { dxf: opts.dxf, ..Default::default() };
             let mut l = fileio::load_with(src.name, &src.bytes, &o)?;
+            // An Affinity file whose native document couldn't be read is only its preview: it
+            // must never silently stand in for the art.
+            if l.preview_only {
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "{name}: only this Affinity file's embedded preview could be read; use File › Open to see it with its warning, or export SVG or PDF from Affinity before placing"
+                    ),
+                ));
+            }
             // Linked images show their files, found from its folder.
             super::links::resolve(&mut l.doc, src.path, false);
             (l.doc, l.warnings)
@@ -298,11 +309,20 @@ fn transformed(mut node: Node, m: Affine) -> Node {
 /// `[x, y, width, height]` with a positive size.
 fn rect_param(p: &Value) -> Result<Option<Rect>> {
     let Some(v) = p.get("rect") else { return Ok(None) };
-    let n: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
-    match n[..] {
-        [x, y, w, h] if w > 0.0 && h > 0.0 => Ok(Some(Rect::new(x, y, x + w, y + h))),
+    // All four or nothing: a malformed entry dropped would shift the others ([0, "bad", 10, 40, 50]).
+    match finite_numbers(v) {
+        Some([x, y, w, h]) if w > 0.0 && h > 0.0 => Ok(Some(Rect::new(x, y, x + w, y + h))),
         _ => Err(bad(PLACE, "rect must be [x, y, width, height] with a positive width and height")),
     }
+}
+
+/// `at`, the `[x, y]` the art is centred on (absent or null: none); anything else fails rather than
+/// placing the art as if no point were given.
+fn at_param(p: &Value) -> Result<Option<Point>> {
+    p.get("at")
+        .filter(|v| !v.is_null())
+        .map(|v| finite_numbers(v).map(|[x, y]| Point::new(x, y)).ok_or_else(|| bad(PLACE, "at must be [x, y]")))
+        .transpose()
 }
 
 /// The transform that puts new art with the natural box `natural` where `old` is: an image's scale
@@ -331,7 +351,7 @@ fn fit(natural: Rect, r: Rect) -> Affine {
 fn place(s: &mut Session, p: &Value) -> Result<Value> {
     let replace = bool_or(p, "replace", false);
     let template = bool_or(p, "template", false);
-    let at = point_param(p, "at");
+    let at = at_param(p)?;
     let rect = rect_param(p)?;
     if replace && (template || at.is_some() || rect.is_some()) {
         return Err(bad(PLACE, "replace keeps the replaced object's place and transform: drop template, at and rect"));

@@ -51,7 +51,7 @@ fn mods_schema() -> Value {
     })
 }
 fn obj(props: Value, required: &[&str]) -> Value {
-    let mut o = json!({"type": "object", "properties": props});
+    let mut o = json!({"type": "object", "properties": props, "additionalProperties": false});
     if !required.is_empty() {
         o["required"] = json!(required);
     }
@@ -64,12 +64,14 @@ fn save_extensions() -> Vec<&'static str> {
 }
 
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
+    let writes_file = matches!(name, "screenshot" | "save_file" | "export");
+    let read_only = read_only && !writes_file;
     json!({
         "name": name,
         "title": title,
         "description": desc,
         "inputSchema": schema,
-        "annotations": {"title": title, "readOnlyHint": read_only, "openWorldHint": false},
+        "annotations": {"title": title, "readOnlyHint": read_only, "destructiveHint": !read_only, "idempotentHint": read_only, "openWorldHint": false},
     })
 }
 
@@ -77,6 +79,52 @@ fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> 
 pub fn tool_definitions() -> Vec<Value> {
     let empty = || obj(json!({}), &[]);
     vec![
+        tool(
+            "command_list",
+            "List commands",
+            "Discover command ids, labels, parameter descriptions and enabled state. Returns an array.",
+            obj(json!({"filter": string("Case-insensitive id, label or menu substring"), "enabled_only": {"type":"boolean"}}), &[]),
+            true,
+        ),
+        tool(
+            "command_run",
+            "Run a command",
+            "Run an engine command by id with its JSON params. Command parameters follow the registry's descriptions.",
+            obj(json!({"id": string("Command id"), "params": {"type":"object"}}), &["id"]),
+            false,
+        ),
+        tool(
+            "command_batch",
+            "Run several commands",
+            "Run steps in order; each edit is its own undo step. A param string that is exactly \"$N.path\" (N: 0-based step index) or \"$last.path\" takes that value from an earlier step's result, e.g. {\"id\":\"$1.id\"}; \"$$\" starts a literal \"$\". Returns completed, failed and results. Stops on the first error by default.",
+            obj(
+                json!({"steps": {"type":"array", "items":obj(json!({"id":string("Command id"),"params":{"type":"object"}}), &["id"])}, "stop_on_error":{"type":"boolean", "default":true}}),
+                &["steps"],
+            ),
+            false,
+        ),
+        tool(
+            "doc_inspect",
+            "Inspect document",
+            "Summary of the active document, including artboards, layer tree, selection and history.",
+            obj(json!({"depth":{"type":"integer", "minimum":0},"childLimit":{"type":"integer", "minimum":0}}), &[]),
+            true,
+        ),
+        tool(
+            "render_preview",
+            "Render a preview",
+            "Render the first artboard as inline PNG without changing the document. max_side defaults to 1024, limited to 1..4096.",
+            obj(json!({"max_side":{"type":"integer","minimum":1,"maximum":4096}}), &[]),
+            true,
+        ),
+        tool("ui_inspect", "Inspect the interface", "Inspect the connected desktop interface; returns a tool error in headless mode.", empty(), true),
+        tool(
+            "ui_screenshot",
+            "Capture the interface",
+            "Capture the connected desktop window as inline PNG; requires a running desktop app.",
+            empty(),
+            true,
+        ),
         tool(
             "list_commands",
             "List commands",
@@ -371,7 +419,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "create_graph",
             "Create graph",
-            "Create a graph (graph tools) in the plot rectangle. Data as `csv` (first row: empty cell then series names; then one row per category: label, values…) or `series`/`categories`/`rows`. Edit later with run_command graph.setData / graph.setType.",
+            "Create a graph (graph tools) in the plot rectangle. Data as `csv` (first row: empty cell then series names; then one row per category: label, values…) or `series`/`categories`/`rows`. An empty CSV cell or a null in `rows` is a blank value (no column; lines break around it); a number in straight quotes is a label. Edit later with run_command graph.setData / graph.setType.",
             obj(
                 json!({
                     "type": {"type": "string", "enum": ["column", "stackedColumn", "bar", "stackedBar", "line", "area", "scatter", "pie", "radar"]},
@@ -382,7 +430,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "csv": {"type": "string"},
                     "series": {"type": "array", "items": {"type": "string"}},
                     "categories": {"type": "array", "items": {"type": "string"}},
-                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": ["number", "null"]}}},
                 }),
                 &["x", "y", "width", "height"],
             ),
@@ -526,7 +574,7 @@ fn select_ids(b: &mut dyn Backend, a: &Args) -> Result<(), String> {
 fn add_text(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
     let text = a.get("text").and_then(Value::as_str).ok_or("missing string argument `text`")?;
     let mut style = json!({});
-    for k in ["size", "font"] {
+    for k in ["size", "font", "color"] {
         if let Some(v) = a.get(k) {
             style[k] = v.clone();
         }
@@ -543,9 +591,6 @@ fn add_text(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
         let mut p = json!({"x": x, "y": y, "text": text});
         for (k, v) in style.as_object().into_iter().flatten() {
             p[k.as_str()] = v.clone();
-        }
-        if let Some(c) = a.get("color") {
-            p["color"] = c.clone();
         }
         if let (Some(w), Some(h)) = (a.get("width"), a.get("height")) {
             p["area"] = json!({"width": w, "height": h});
@@ -601,43 +646,50 @@ fn transform(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
 
 fn screenshot(b: &mut dyn Backend, a: &Args) -> Result<ToolResult, String> {
     let path = a.get("path").and_then(Value::as_str);
-    if a.get("window").and_then(Value::as_bool) == Some(true) {
-        need_ui(b, "screenshot {window:true}")?;
-        // The app writes the capture to disk (loopback: same machine), then we read it back.
-        let tmp;
-        let target = match path {
-            Some(p) => p,
-            None => {
-                tmp = std::env::temp_dir().join(format!("vectorcraft-window-{}.png", std::process::id())).to_string_lossy().to_string();
-                &tmp
-            }
-        };
-        let r = b.call("ui.screenshot", json!({"path": target}))?;
-        let png = std::fs::read(target).map_err(|e| format!("read {target}: {e}"))?;
-        if path.is_none() {
-            std::fs::remove_file(target).ok();
-        }
-        return Ok(image_result(&png, json!({"window": true, "width": r.get("width"), "height": r.get("height"), "path": path})));
-    }
-    let mut p = json!({});
-    for k in ["scale", "artboard"] {
-        if let Some(v) = a.get(k) {
-            p[k] = v.clone();
-        }
-    }
-    let r = b.call("ui.render", p)?;
-    let b64 = r.get("pngBase64").and_then(Value::as_str).ok_or("renderer returned no image")?;
+    let window = a.get("window").and_then(Value::as_bool) == Some(true);
+    // The backend writes the file, where its automation roots allow, and sends the image back too
+    // (`data`): this process writes nothing.
+    let mut p = json!({"data": true});
     if let Some(path) = path {
-        let png = vectorcraft_format::base64_decode(b64).ok_or("renderer returned bad base64")?;
-        std::fs::write(path, png).map_err(|e| format!("write {path}: {e}"))?;
+        p["path"] = json!(path);
     }
-    Ok(ToolResult {
-        content: vec![
-            json!({"type": "image", "data": b64, "mimeType": "image/png"}),
-            json!({"type": "text", "text": json!({"width": r.get("width"), "height": r.get("height"), "path": path}).to_string()}),
-        ],
-        is_error: false,
-    })
+    let r = if window {
+        need_ui(b, "screenshot {window:true}")?;
+        b.call("ui.screenshot", p)?
+    } else {
+        for k in ["scale", "artboard"] {
+            if let Some(v) = a.get(k) {
+                p[k] = v.clone();
+            }
+        }
+        b.call("ui.render", p)?
+    };
+    let png = match r.get("pngBase64").and_then(Value::as_str) {
+        Some(b64) => vectorcraft_format::base64_decode(b64).ok_or("the backend returned bad base64")?,
+        // An app from before `data` wrote the file without sending the image: read it back
+        // (loopback: the same machine).
+        None => match path {
+            Some(path) => std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?,
+            None if window => return old_window_capture(b),
+            None => return Err("the renderer returned no image".into()),
+        },
+    };
+    let info = if window {
+        json!({"window": true, "width": r.get("width"), "height": r.get("height"), "path": path})
+    } else {
+        json!({"width": r.get("width"), "height": r.get("height"), "path": path})
+    };
+    Ok(image_result(&png, info))
+}
+
+/// The window of an app from before `ui.screenshot {data}`, captured through a temporary file.
+fn old_window_capture(b: &mut dyn Backend) -> Result<ToolResult, String> {
+    let tmp = std::env::temp_dir().join(format!("vectorcraft-window-{}.png", std::process::id())).to_string_lossy().to_string();
+    let r = b.call("ui.screenshot", json!({"path": tmp}))?;
+    let png = std::fs::read(&tmp).map_err(|e| format!("read {tmp}: {e}"))?;
+    // Best effort: a temporary file left behind is harmless.
+    std::fs::remove_file(&tmp).ok();
+    Ok(image_result(&png, json!({"window": true, "width": r.get("width"), "height": r.get("height"), "path": Value::Null})))
 }
 
 fn image_result(png: &[u8], info: Value) -> ToolResult {
@@ -674,13 +726,24 @@ fn filter_commands(all: Value, a: &Args) -> Value {
 fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, String> {
     let j = |v: Value| Ok(ToolResult::json(&v));
     match name {
+        "command_list" => {
+            let all = b.call("engine.commands", json!({}))?;
+            let mut filters = a.clone();
+            if let Some(v) = filters.remove("enabled_only") {
+                filters.insert("enabledOnly".into(), v);
+            }
+            j(filter_commands(all, &filters))
+        }
+        "command_batch" => command_batch(b, a),
+        "render_preview" => render_preview(b, a),
+        "ui_screenshot" => screenshot(b, &Map::from_iter([("window".into(), json!(true))])),
         "list_commands" => {
             let all = b.call("engine.commands", json!({}))?;
             let list = filter_commands(all, a);
             j(json!({"count": list.as_array().map_or(0, Vec::len), "commands": list}))
         }
-        "run_command" | "invoke_menu" => {
-            let cmd = req_str(a, "command")?;
+        "command_run" | "run_command" | "invoke_menu" => {
+            let cmd = req_str(a, if name == "command_run" { "id" } else { "command" })?;
             let params = match a.get("params") {
                 None | Some(Value::Null) => json!({}),
                 Some(v @ Value::Object(_)) => v.clone(),
@@ -689,13 +752,13 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
             let method = if name == "invoke_menu" && b.has_ui() { "ui.menu.invoke" } else { "engine.execute" };
             j(b.call(method, json!({"command": cmd, "params": params}))?)
         }
-        "inspect_document" => {
+        "doc_inspect" | "inspect_document" => {
             // Only the slicing options reach the command, which validates them.
             let slice: Map<String, Value> =
                 a.iter().filter(|(k, _)| matches!(k.as_str(), "depth" | "childLimit")).map(|(k, v)| (k.clone(), v.clone())).collect();
             j(b.call("document.inspect", Value::Object(slice))?)
         }
-        "inspect_ui" => {
+        "ui_inspect" | "inspect_ui" => {
             need_ui(b, name)?;
             j(b.call("ui.inspect", json!({}))?)
         }
@@ -826,8 +889,82 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         Value::Null => &empty,
         _ => return ToolResult::error("tool arguments must be a JSON object"),
     };
-    match dispatch(b, name, a) {
-        Ok(r) => r,
-        Err(e) => ToolResult::error(format!("{name}: {e}")),
+    match vectorcraft_engine::guard::catch_panic(|| dispatch(b, name, a)) {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => ToolResult::error(format!("{name}: {e}")),
+        Err(e) => ToolResult::error(format!("internal error in `{name}`: {e} (please report this bug)")),
     }
+}
+
+fn command_batch(b: &mut dyn Backend, a: &Args) -> Result<ToolResult, String> {
+    let steps = a.get("steps").and_then(Value::as_array).ok_or("`steps` must be an array")?;
+    let stop = match a.get("stop_on_error") {
+        None => true,
+        Some(v) => v.as_bool().ok_or("`stop_on_error` must be a boolean")?,
+    };
+    let (mut completed, mut failed, mut results) = (0, 0, Vec::new());
+    // Each step's result (null for a failed one), for later steps' `"$N.path"` references.
+    let mut values: Vec<Value> = vec![];
+    for step in steps {
+        let result = vectorcraft_engine::guard::catch_panic(|| {
+            let args = step.as_object().ok_or("each step must be an object")?;
+            if args.keys().any(|k| k != "id" && k != "params") {
+                return Err("unknown step argument (expected id, params)".into());
+            }
+            let id = req_str(args, "id")?;
+            let params = match args.get("params") {
+                None | Some(Value::Null) => json!({}),
+                Some(v @ Value::Object(_)) => vectorcraft_engine::steps::resolve(v, &values)?,
+                Some(_) => return Err("`params` must be an object".into()),
+            };
+            b.call("engine.execute", json!({"command":id,"params":params}))
+        })
+        .unwrap_or_else(|e| Err(format!("internal error: {e}")));
+        match result {
+            Ok(v) => {
+                completed += 1;
+                values.push(v.clone());
+                results.push(json!({"ok":true,"result":v}));
+            }
+            Err(e) => {
+                failed += 1;
+                values.push(Value::Null);
+                results.push(json!({"ok":false,"error":e}));
+                if stop {
+                    break;
+                }
+            }
+        }
+    }
+    let mut r = ToolResult::json(&json!({"completed":completed,"failed":failed,"results":results}));
+    r.is_error = failed > 0;
+    Ok(r)
+}
+
+fn render_preview(b: &mut dyn Backend, a: &Args) -> Result<ToolResult, String> {
+    let max = match a.get("max_side") {
+        None => 1024,
+        Some(v) => v.as_u64().filter(|v| (1..=4096).contains(v)).ok_or("`max_side` must be an integer in 1..4096")?,
+    };
+    let doc = b.call("document.inspect", json!({"depth":0}))?;
+    let board = doc.get("artboards").and_then(Value::as_array).and_then(|v| v.first()).ok_or("no such artboard")?;
+    let width = board.get("width").and_then(Value::as_f64).ok_or("artboard has no width")?;
+    let height = board.get("height").and_then(Value::as_f64).ok_or("artboard has no height")?;
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("invalid artboard dimensions".into());
+    }
+    // The headless renderer clamps scale at 0.01. Bound its allocation even for
+    // a huge artboard, then downsize to the requested dimensions.
+    let scale = (max as f64 / width.max(height)).clamp(0.01, 1.0);
+    if width.max(height) * scale > 4096.0 {
+        return Err("artboard is too large for a bounded preview".into());
+    }
+    let r = b.call("ui.render", json!({"scale":scale}))?;
+    let encoded = r.get("pngBase64").and_then(Value::as_str).ok_or("renderer returned no image")?;
+    let png = vectorcraft_format::base64_decode(encoded).ok_or("renderer returned bad base64")?;
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| format!("read preview: {e}"))?;
+    let img = img.thumbnail(max as u32, max as u32);
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| format!("encode preview: {e}"))?;
+    Ok(image_result(out.get_ref(), json!({"width":img.width(),"height":img.height()})))
 }

@@ -157,7 +157,11 @@ fn open_exts_cover_every_readable_format() {
     }
     let filters: Vec<_> = open_filters().collect();
     assert_eq!(filters[0], ("All readable files", OPEN_EXTS));
-    assert_eq!(filters.len(), 6 + FORMATS.iter().filter(|f| f.read).count(), "and swatch libraries, flattener, PDF and print presets, plug-ins");
+    assert_eq!(
+        filters.len(),
+        7 + FORMATS.iter().filter(|f| f.read).count(),
+        "and swatch libraries, libraries, flattener, PDF and print presets, plug-ins"
+    );
     assert_eq!(filters.last(), Some(&("Plug-ins", crate::cmd::plugin::EXTS)), "File › Open installs plug-ins");
 }
 
@@ -395,4 +399,16 @@ fn oversized_raster_exports_are_refused() {
     let e = s.execute("document.export", &json!({"format": "webp", "scale": 10})).unwrap_err().to_string();
     assert!(e.contains("too large"), "{e}");
     assert!(s.execute("document.export", &json!({"format": "png", "scale": 40})).is_err(), "80000 px a side");
+}
+
+#[test]
+fn new_files_never_replace_a_file() {
+    let d = tmp_dir("new-file");
+    let path = d.join("Brand.ase").to_string_lossy().to_string();
+    let _ = std::fs::remove_file(&path);
+    write_new_file(&path, b"first").unwrap();
+    let e = write_new_file(&path, b"second").unwrap_err().to_string();
+    assert!(e.starts_with(&format!("{path}: ")), "{e}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"first");
+    let _ = std::fs::remove_dir_all(d);
 }

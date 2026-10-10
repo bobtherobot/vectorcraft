@@ -154,11 +154,18 @@ impl Clipboard {
             }
             vectorcraft_brush::store(&mut d, &lib);
         }
-        let mut layer = Node::layer(NodeId(u64::MAX), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
+        // The layer's id is above every copied object's, so the document saves and reopens as
+        // a native file.
+        let mut top = 0;
+        for n in &self.nodes {
+            n.walk(&mut |c| top = top.max(c.id.0));
+        }
+        let mut layer = Node::layer(NodeId(top.saturating_add(1)), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
         if let Some(ch) = layer.children_mut() {
             *ch = self.nodes.iter().cloned().map(Arc::new).collect();
         }
         d.layers = vec![Arc::new(layer)];
+        d.fix_next_id();
         d
     }
 }
@@ -170,8 +177,10 @@ impl Session {
             return None;
         }
         let d = self.clipboard.to_document();
+        // SVG has no filters for the Photoshop-style effects: their objects go in as images.
+        let flat = super::rasterfx::flatten_pixel_effects(&d);
         Some(vectorcraft_svg::export(
-            &d,
+            flat.as_ref().unwrap_or(&d),
             &vectorcraft_svg::ExportOptions { artboard: None, object_ids: vectorcraft_svg::ObjectIds::Minimal, ..Default::default() },
         ))
     }

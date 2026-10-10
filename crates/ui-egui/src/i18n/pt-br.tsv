@@ -14,6 +14,7 @@
 # Brazilian Portuguese computing vocabulary (arquivo, camada, caminho, preenchimento, traçado,
 # pincel, amostra, mesa de trabalho ...), following common desktop-software conventions (commands
 # in the infinitive, menus as nouns); no proprietary localisation resource, string table or product
+	Glowing Edges…	Bordas brilhantes…
 # UI was consulted or copied; add entries the same way. Product and technology names (VectorCraft,
 # ArtCraft, SVG, OpenType, CMYK, Lab ...) stay in Latin letters; the trailing "…" of dialog
 # commands is kept.
@@ -138,6 +139,7 @@
 	Add to Selection	Adicionar à Seleção
 	Add to Swatches	Adicionar às Amostras
 	Additional Plug-ins Folder	Pasta Adicional de Plug-ins
+	Additional Fonts Folder	Pasta Adicional de Fontes
 	Adjust Adjoining Width Points	Ajustar Pontos de Largura Adjacentes
 	Adjust Color Balance…	Ajustar Equilíbrio de Cores…
 	Adjust Colors	Ajustar Cores
@@ -251,6 +253,7 @@
 	Auto Size New Area Type	Dimensionar Automaticamente Novo Texto de Área
 	Auto Spell Check	Verificação Ortográfica Automática
 	Auto-Collapse Iconic Panels	Recolher Automaticamente Painéis Icônicos
+	Show Tool Group Labels	Mostrar Rótulos dos Grupos de Ferramentas
 	Auto-Rotate (turn the paper to each artboard)	Girar Automaticamente (gire o papel para cada mesa de trabalho)
 	Automatic	Automático
 	Automatic flatness	Achatamento automático
@@ -478,6 +481,7 @@
 	Copy Color Value (Hex)	Copiar Valor da Cor (Hex)
 	Copy Selected Style	Copiar Estilo Selecionado
 	Copy Width Point	Copiar Ponto de Largura
+	Copy to User Defined	Copiar para Definido pelo Usuário
 	Copyright	Direitos Autorais
 	Copyright Info URL:	URL de Informações de Direitos Autorais:
 	Copyright Notice:	Aviso de Direitos Autorais:
@@ -632,6 +636,7 @@
 	Divide Slices…	Dividir Fatias…
 	Divide Vertically Into	Dividir Verticalmente Em
 	Do you want to save the changes you made to “{name}”?	Deseja salvar as alterações feitas em “{name}”?
+	Can't open “{name}”.	Não é possível abrir “{name}”.
 	Document	Documento
 	Document Color Mode	Modo de Cor do Documento
 	Document Info	Informações do Documento
@@ -1261,6 +1266,9 @@
 	Marker…	Marcador…
 	Marks	Marcas
 	Match User Interface Brightness	Corresponder ao Brilho da Interface do Usuário
+	Light Gray	Cinza Claro
+	Medium Gray	Cinza Médio
+	Dark Gray	Cinza Escuro
 	Materials…	Materiais…
 	Matte:	Fosco:
 	Maximize	Maximizar
@@ -1306,6 +1314,8 @@
 	Monochrome images	Imagens monocromáticas
 	More	Mais
 	More Pathfinder options	Mais opções de Localizador de Caminhos
+	More Align options	Mais opções de alinhamento
+	More Paragraph options	Mais opções de parágrafo
 	More Settings	Mais Configurações
 	Move	Mover
 	Move Anchors	Mover Âncoras
@@ -1746,7 +1756,17 @@
 	Rating:	Avaliação:
 	Real World:	Mundo Real:
 	Real-time Drawing and Editing	Desenho e Edição em Tempo Real
-	Rearrange All Artboards (on the roadmap)	Reorganizar Todas as Mesas de Trabalho (no roadmap)
+	Rearrange All Artboards	Reorganizar Todas as Mesas de Trabalho
+	Rearrange All	Reorganizar Tudo
+	Layout Order:	Ordem do Layout:
+	Change to Left-to-Right Layout	Mudar para Layout da Esquerda para a Direita
+	Grid by Row	Grade por Linha
+	Grid by Column	Grade por Coluna
+	Arrange by Row	Organizar em Linha
+	Arrange by Column	Organizar em Coluna
+	Move Artwork with Artboard	Mover Arte com a Mesa de Trabalho
+	Scale Artwork with Artboard	Dimensionar Arte com a Mesa de Trabalho
+	Artboards: {n}	Mesas de Trabalho: {n}
 	Rearrange All Artboards…	Reorganizar Todas as Mesas de Trabalho…
 	Recall Selection	Relembrar Seleção
 	Recent Colors	Cores Recentes
@@ -1803,6 +1823,25 @@
 	Reflect…	Espelhar…
 	Refresh	Atualizar
 	Refresh Font List	Atualizar Lista de Fontes
+	Missing Fonts	Fontes Ausentes
+	Missing Fonts Dialog	Diálogo de Fontes Ausentes
+	These fonts aren't available. Their text shows in another font.	Estas fontes não estão disponíveis. O texto delas aparece em outra fonte.
+	Search Fonts Folder	Pesquisar na Pasta Fonts
+	Find in Folder…	Localizar em uma Pasta…
+	Find Fonts in Folder…	Localizar Fontes em uma Pasta…
+	Find Font Files	Localizar Arquivos de Fontes
+	Add Font Files	Adicionar Arquivos de Fontes
+	Add Fonts	Adicionar Fontes
+	Find Fonts	Localizar Fontes
+	Stop	Parar
+	Searching…	Pesquisando…
+	Not found	Não encontrado
+	{folders} folder(s) and {files} file(s) searched	{folders} pasta(s) e {files} arquivo(s) pesquisados
+	{count} folder(s) skipped, such as other apps' and the system's folders and hidden ones	{count} pasta(s) ignorada(s), como as de outros aplicativos e do sistema e as ocultas
+	{count} folder(s) or file(s) couldn't be read	{count} pasta(s) ou arquivo(s) não puderam ser lidos
+	The search stopped at its limit: search a smaller folder.	A pesquisa parou no limite: pesquise uma pasta menor.
+	Copy only fonts you own or are licensed to install.	Copie apenas fontes que sejam suas ou que você tenha licença para instalar.
+	VectorCraft copies the fonts to {folder}.	O VectorCraft copia as fontes para {folder}.
 	Registered Trademark Symbol	Símbolo de Marca Registrada
 	Registry name:	Nome do registro:
 	Release	Liberar
@@ -1890,6 +1929,8 @@
 	Reverse Spine	Inverter Coluna
 	Revert	Reverter
 	Revert to the saved version of “{name}”?	Reverter para a versão salva de “{name}”?
+	Replace “{name}”, the file this document was opened from?	Substituir “{name}”, o arquivo do qual este documento foi aberto?
+	Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Ao abri-lo, ficou de fora o que o VectorCraft ainda não consegue ler ({what}), então substituí-lo perde isso para sempre. Salve com outro nome para mantê-lo.
 	Revolve…	Revolver…
 	Right Grid:	Grade Direita:
 	Right Indent	Recuo Direito
@@ -2078,7 +2119,6 @@
 	Set Zoom	Definir Zoom
 	Set base color to the current color	Definir cor base para a cor atual
 	Set the selected color to the current color	Definir a cor selecionada para a cor atual
-	Settings…	Configurações…
 	Setup…	Configuração…
 	Shadows and Glows	Sombras e Brilhos
 	Shape	Forma
@@ -2118,6 +2158,8 @@
 	Show Grid (⌘')	Mostrar Grade (⌘')
 	Show Guides	Mostrar Guias
 	Show Hidden Characters	Mostrar Caracteres Ocultos
+	Bold	Negrito
+	Italic	Itálico
 	Show Images in Outline Mode	Mostrar Imagens no Modo de Contorno
 	Show Indic Options	Mostrar Opções do Índico
 	Show Link Info	Mostrar Informações do Link
@@ -2278,6 +2320,7 @@
 	Swatch Options	Opções de Amostra
 	Swatch Options…	Opções de Amostra…
 	Swatch Tiles	Blocos de Amostra
+	Swatch exchange files keep solid colors only.	Arquivos de intercâmbio de amostras mantêm apenas cores sólidas.
 	Swatches	Amostras
 	Switch workspace	Trocar espaço de trabalho
 	Symbol Instance	Instância de Símbolo
@@ -2439,6 +2482,9 @@
 	Unshift	Desfazer Mudança de Cor
 	Update Link	Atualizar Link
 	Update Links	Atualizar Links
+	Update Changed Links	Atualizar Links alterados
+	{count} linked image(s) changed on disk. Show the new versions?	{count} imagem(ns) vinculada(s) alterada(s) no disco. Mostrar as novas versões?
+@msg	Updated {_1} linked file(s) changed on disk	{_1} arquivo(s) vinculado(s) alterado(s) no disco atualizado(s)
 	Update Modified Links	Atualizar Links Modificados
 	Use 	Use 
 	Use Artboards	Usar Mesas de Trabalho
@@ -2484,6 +2530,20 @@
 	V:	V:
 	Variable Width Profile	Perfil de Largura Variável
 	Variables	Variáveis
+	New Variable…	Nova variável…
+	Unbind Variable	Desassociar variável
+	Delete Variable	Excluir variável
+	New Data Set…	Novo conjunto de dados…
+	Edit Data Set…	Editar conjunto de dados…
+	Delete Data Set	Excluir conjunto de dados
+	Next Data Set	Próximo conjunto de dados
+	Previous Data Set	Conjunto de dados anterior
+	Make Text Dynamic	Tornar texto dinâmico
+	Make Visibility Dynamic	Tornar visibilidade dinâmica
+	Capture Data Set	Capturar conjunto de dados
+	Update Data Set	Atualizar conjunto de dados
+	Rename Data Set…	Renomear conjunto de dados…
+	Variable Options…	Opções de variável…
 	Variation:	Variação:
 	Vector Effects	Efeitos Vetoriais
 	Vector Halftone	Meio-tom Vetorial
@@ -2571,6 +2631,7 @@
 	to	para
 	{count} file(s) in {folder}{note}. Show the package folder?	{count} arquivo(s) em {folder}{note}. Mostrar a pasta do pacote?
 	{count} linked file(s) not found	{count} arquivo(s) vinculado(s) não encontrado(s)
+	fonts not copied: {fonts}	fontes não copiadas: {fonts}
 	{count} linked image(s) changed since this document was saved. Show the new versions?	{count} imagem(ns) vinculada(s) alterada(s) desde que este documento foi salvo. Mostrar as novas versões?
 	{count} more rules: Export writes every one.	{count} regras a mais: a Exportação escreve cada uma.
 	{count} unnamed objects left out: name them, or turn on Unnamed Objects in the panel menu.	{count} objetos sem nome deixados de fora: nomeie-os, ou ative Objetos Sem Nome no menu do painel.
@@ -2662,3 +2723,69 @@
 	Constrain	Restringir
 	Free Transform	Transformação Livre
 	Perspective Distort	Distorção de Perspectiva
+
+# Photoshop-style raster effects (Effect menu, their dialogs).
+	Radial Blur…	Desfoque Radial…
+	Smart Blur…	Desfoque Inteligente…
+	Sharpen	Nitidez
+	Unsharp Mask…	Máscara de Nitidez…
+	Pixelate	Pixelizar
+	Color Halftone…	Meio-Tom Colorido…
+	Crystallize…	Cristalizar…
+	Mezzotint…	Meia-Tinta…
+	Pointillize…	Pontilhar…
+	Video	Vídeo
+	De-Interlace…	Desentrelaçar…
+	NTSC Colors	Cores NTSC
+	RGB:	RGB:
+	CMYK:	CMYK:
+	Texture	Textura
+	Craquelure…	Craquelê…
+	Grain…	Granulação…
+	Mosaic Tiles…	Ladrilhos de mosaico…
+	Patchwork…	Colcha de retalhos…
+	Stained Glass…	Vitral…
+	Texturizer…	Texturizador…
+	System Title Bar	Barra de título do sistema
+	Exit	Sair
+	Distort	Distorcer
+	Diffuse Glow…	Brilho difuso…
+	Glass…	Vidro…
+	Ocean Ripple…	Ondulação oceânica…
+	Rename Data Set	Renomear conjunto de dados
+	Rename Variable	Renomear variável
+
+# Interactive Revolve controls.
+	Lighting	Iluminação
+	Revolve angle	Ângulo de giro
+	Axis side	Lado do eixo
+	Rotation X	Rotação X
+	Rotation Y	Rotação Y
+	Rotation Z	Rotação Z
+	Shading	Sombreamento
+	Direction	Direção
+	Elevation	Elevação
+	Intensity	Intensidade
+	Ambient	Luz ambiente
+	Segments	Segmentos
+	Show axis	Mostrar eixo
+	Reset all	Redefinir tudo
+	Reset to default	Restaurar padrão
+	Reset all Revolve settings to their defaults.	Restaurar os valores padrão de todas as configurações de revolução.
+	Drag values or labels. Double-click a value to type.	Arraste os valores ou rótulos. Clique duas vezes em um valor para digitá-lo.
+	Drag rings to rotate. Shift snaps to 15°.	Arraste os anéis para girar. Shift ajusta em incrementos de 15°.
+	Drag the light, or its rings. Shift snaps to 15°.	Arraste a luz ou seus anéis. Shift ajusta em incrementos de 15°.
+lighting	Light	Luz
+	Keep visible surfaces only when expanding	Manter apenas as superfícies visíveis ao expandir
+	Trim covered geometry on Expand Appearance. Live preview keeps the full surface. Transparent paints and surfaces exceeding visibility limits retain all faces.	Recortar a geometria coberta ao expandir a aparência. A visualização ao vivo mantém toda a superfície. Pinturas transparentes e superfícies que excedem os limites de visibilidade mantêm todas as faces.
+	Left	Esquerda
+	Right	Direita
+	Offset	Deslocamento
+	Accented Edges…	Bordas Acentuadas…
+	Angled Strokes…	Traços Angulares…
+	Crosshatch…	Hachura Cruzada…
+	Dark Strokes…	Traços Escuros…
+	Ink Outlines…	Contornos a Tinta…
+	Spatter…	Respingo…
+	Sprayed Strokes…	Traços Borrifados…
+	Sumi-e…	Sumi-e…

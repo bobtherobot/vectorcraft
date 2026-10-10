@@ -1486,7 +1486,9 @@ impl Writer<'_> {
     }
 
     /// Raster effects (drop shadow, glows, Gaussian blur, feather) as SVG filters: one `<g filter>`
-    /// per effect, the first effect innermost (the reference app's stacking order).
+    /// per effect, the first effect innermost (the reference app's stacking order). Photoshop-style
+    /// filters have no SVG equivalent: they are left out with a warning (exports from the app turn
+    /// such objects into images first).
     fn filtered(&mut self, n: &Node) {
         let mut inner = n.clone();
         inner.appearance.effects.retain(|e| !vectorcraft_effects::is_raster(&e.id));
@@ -1506,9 +1508,15 @@ impl Writer<'_> {
             }
             return 0;
         }
-        let reach: f64 = fx.iter().map(RasterFx::outset).sum::<f64>() + 2.0;
-        let region = n.visual_bounds().map(|b| self.xf.transform_rect_bbox(b).inflate(reach, reach));
+        let bounds = n.visual_bounds();
+        let reach: f64 = fx.iter().map(|f| f.outset(bounds.unwrap_or_default())).sum::<f64>() + 2.0;
+        let region = bounds.map(|b| self.xf.transform_rect_bbox(b).inflate(reach, reach));
+        let mut opened = 0;
         for f in fx.iter().rev() {
+            if matches!(f, RasterFx::Pixel(_)) {
+                self.warn("SVG has no pixel effects such as Radial Blur, Smart Blur or Unsharp Mask: they are left out");
+                continue;
+            }
             let fid = self.fresh_id("filter");
             let region_attr = match region {
                 Some(r) => format!(
@@ -1557,6 +1565,7 @@ impl Writer<'_> {
                     sd(*radius)
                 ),
                 RasterFx::GaussianBlur { radius } => format!("<feGaussianBlur in=\"SourceGraphic\" stdDeviation=\"{}\"/>", sd(*radius)),
+                RasterFx::Pixel(_) => continue,
             };
             // Filters composite normally: a shadow's or glow's other blend mode is recorded for import.
             let mode = match f {
@@ -1570,8 +1579,9 @@ impl Writer<'_> {
             self.def(1, &format!("<filter id=\"{fid}\"{region_attr}{mode} color-interpolation-filters=\"sRGB\">{body}</filter>"));
             self.line(&format!("<g filter=\"url(#{fid})\">"));
             self.depth += 1;
+            opened += 1;
         }
-        fx.len()
+        opened
     }
 
     fn close_filters(&mut self, opened: usize) {
@@ -1628,8 +1638,13 @@ impl Writer<'_> {
         let a = self.attrs(&css::transparency(n));
         self.line(&format!("<g{id}{a}>"));
         self.depth += 1;
-        let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
-        let pd = PathData::from_bezpath(&lay.to_bezpath()).transformed(t.xf);
+        let db = vectorcraft_text::FontDb::global();
+        let lay = vectorcraft_text::layout(db, t);
+        let mut all = lay.to_bezpath();
+        for (_, bar) in vectorcraft_text::decorations(&lay, db, t) {
+            all.extend(bar.iter());
+        }
+        let pd = PathData::from_bezpath(&all).transformed(t.xf);
         let d = self.path_d(&pd, self.xf);
         let tb = Some(t.xf.transform_rect_bbox(lay.bounds));
         let (below, above) = n.appearance.split_contents();
@@ -1661,12 +1676,15 @@ impl Writer<'_> {
     /// Text as glyph outlines: one compound path per run, painted like the run (gradients span
     /// the whole text, as on the canvas).
     fn text_outlines(&mut self, n: &Node, t: &TextObject) {
-        let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+        let db = vectorcraft_text::FontDb::global();
+        let lay = vectorcraft_text::layout(db, t);
         let mut runs: Vec<(usize, kurbo::BezPath)> = vec![];
-        for g in &lay.glyphs {
-            match runs.last_mut() {
-                Some((r, bp)) if *r == g.run => bp.extend(g.outline.iter()),
-                _ => runs.push((g.run, g.outline.clone())),
+        // Underline and strikethrough bars join their run's outlines.
+        let bars = vectorcraft_text::decorations(&lay, db, t);
+        for (run, outline) in lay.glyphs.iter().map(|g| (g.run, &g.outline)).chain(bars.iter().map(|(r, b)| (*r, b))) {
+            match runs.iter_mut().find(|(r, _)| *r == run) {
+                Some((_, bp)) => bp.extend(outline.iter()),
+                None => runs.push((run, outline.clone())),
             }
         }
         let id = self.id_attr(n);
