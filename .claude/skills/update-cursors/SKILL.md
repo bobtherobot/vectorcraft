@@ -75,11 +75,14 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   and record it `status = "needed"`, `slots = [<Variant>]`. The variant must exist: if the need
   is a state VectorCraft doesn't distinguish yet, add the variant (with its tool change, test,
   `precise()` and `cursor_icon` entries) in this sync, or leave the need out.
-- A `needed` entry VectorCraft no longer needs: set `status = "obsolete"`, `slots = []`, and ask
+- A `needed` entry VectorCraft no longer needs: set `status = "obsolete"`, `slots = []` (no
+  `svg_fp` needed), and ask
   the designer to delete the section.
 
 ## 6. Apply
-1. Before images: `CURSOR_SHEET_DIR=<scratch>/before cargo test -q -p vectorcraft-ui-egui --lib write_cursor_pngs -- --ignored`.
+1. Before images. Every path given to these tests must be absolute: `cargo test` runs them from
+   `crates/ui-egui`. Let `SCR` be an absolute scratch directory (your session scratchpad), then
+   `CURSOR_SHEET_DIR=$SCR/before cargo test -q -p vectorcraft-ui-egui --lib write_cursor_pngs -- --ignored`.
 2. `… -- gen <folder>/<file>.svg …` for every wired cursor of this group; replace those consts
    in `glyphs.rs` (whole const including its doc comment); update `GENERATED` (sorted like the
    `Cursor` enum). Remove the `#[expect(dead_code …)]` lines the first time.
@@ -91,8 +94,8 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
    evidence, their status lines and revision history.
 
 ## 7. Review and commit
-- After images: `CURSOR_SHEET_DIR=<scratch>/after …write_cursor_pngs…`, then
-  `SHEET_BEFORE=<scratch>/before SHEET_AFTER=<scratch>/after SHEET_OUT=plan/cursors/sync-<group>.png cargo test -q -p vectorcraft-ui-egui --lib compose_review_sheet -- --ignored`.
+- After images: `CURSOR_SHEET_DIR=$SCR/after …write_cursor_pngs…`, then, from the repo root,
+  `SHEET_BEFORE=$SCR/before SHEET_AFTER=$SCR/after SHEET_OUT=$PWD/plan/cursors/sync-<group>.png cargo test -q -p vectorcraft-ui-egui --lib compose_review_sheet -- --ignored`.
   Read the PNG yourself first; then give the designer its path, its row list (`.txt`; columns are
   before 1×, after 1×, before 2×, after 2× on light, grey, dark), the decisions, skips and needs
   added.

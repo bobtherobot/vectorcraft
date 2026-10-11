@@ -1,7 +1,7 @@
 # The cursor sync record, written by the /update-cursors skill (.claude/skills/update-cursors).
 # Don't edit by hand. One [[cursor]] per SVG or needed section in cursorcraft's folder:
 #   svg      file name in the cursorcraft folder
-#   svg_fp   the SVG's fingerprint (absent while status = "needed")
+#   svg_fp   the SVG's fingerprint (absent while status = "needed"; optional when "obsolete")
 #   info_fp  its 00-INFO.md description's fingerprint (without the needed marker)
 #   status   wired | skipped | needed | obsolete
 #   slots    the Cursor variants it draws (wired), or asks for (needed)

@@ -23,6 +23,9 @@ pub(crate) struct Glyph {
     pub svg: &'static str,
     #[allow(dead_code, reason = "read by the sync record's test")]
     pub fp: &'static str,
+    /// A fingerprint of `parts` as generated, so a hand-edited glyph fails the record test.
+    #[allow(dead_code, reason = "read by the sync record's test")]
+    pub data_fp: &'static str,
     pub parts: &'static [GlyphPart],
 }
 
@@ -132,10 +135,29 @@ mod tests {
         let mut seen = HashMap::new();
         for e in &r.cursor {
             assert!(seen.insert(e.svg.as_str(), ()).is_none(), "{} recorded twice", e.svg);
-            assert!(!e.note.trim().is_empty() && e.info_fp.len() == 8, "{}: note and info_fp", e.svg);
-            assert_eq!(e.svg_fp.is_some(), e.status != Status::Needed, "{}: svg_fp is set exactly when drawn", e.svg);
-            assert_eq!(e.slots.is_empty(), matches!(e.status, Status::Skipped | Status::Obsolete), "{}: slots", e.svg);
+            check_entry(e);
         }
+    }
+
+    /// One record entry's fields agree with its status.
+    fn check_entry(e: &Entry) {
+        assert!(!e.note.trim().is_empty() && e.info_fp.len() == 8, "{}: note and info_fp", e.svg);
+        match e.status {
+            Status::Wired | Status::Skipped => assert!(e.svg_fp.is_some(), "{}: a drawn cursor records its svg_fp", e.svg),
+            Status::Needed => assert!(e.svg_fp.is_none(), "{}: a request has no svg_fp yet", e.svg),
+            Status::Obsolete => {} // a withdrawn request, drawn or not
+        }
+        assert_eq!(e.slots.is_empty(), matches!(e.status, Status::Skipped | Status::Obsolete), "{}: slots", e.svg);
+    }
+
+    /// A withdrawn request was usually never drawn: it has no SVG to fingerprint.
+    #[test]
+    fn an_obsolete_request_needs_no_svg_fingerprint() {
+        let r: Record = toml::from_str(
+            "cursorcraft = \"x\"\n[[cursor]]\nsvg = \"lasso.svg\"\ninfo_fp = \"12345678\"\nstatus = \"obsolete\"\nnote = \"Withdrawn.\"\n",
+        )
+        .unwrap();
+        check_entry(&r.cursor[0]);
     }
 
     #[test]
@@ -155,6 +177,44 @@ mod tests {
             let wired: Vec<Cursor> = GENERATED.iter().filter(|(_, g)| g.svg == e.svg).map(|&(c, _)| c).collect();
             assert_eq!(wired.len(), e.slots.len(), "{}: GENERATED has {wired:?}, record has {:?}", e.svg, e.slots);
             assert!(e.slots.iter().all(|s| wired.contains(s)), "{}: GENERATED has {wired:?}, record has {:?}", e.svg, e.slots);
+        }
+    }
+
+    /// cursorcraft's data fingerprint (`emit::data_fingerprint`): FNV-1a over, part by part, a
+    /// kind byte (0 fill, 1 stroke), white, closed (1 for fills), the width (0 for fills) and the
+    /// point count, then the points, then the triangles; widths and coordinates as little-endian i32
+    /// hundredths, counts as u32, indices as u16.
+    fn data_fingerprint(g: &Glyph) -> String {
+        let hundredths = |v: f32| ((v * 100.0).round() as i32).to_le_bytes();
+        let mut bytes = Vec::new();
+        for part in g.parts {
+            let (kind, closed, width, white) = match part {
+                GlyphPart::Fill { white, .. } => (0u8, true, 0.0, *white),
+                GlyphPart::Stroke { closed, width, white, .. } => (1, *closed, *width, *white),
+            };
+            let (GlyphPart::Fill { points, .. } | GlyphPart::Stroke { points, .. }) = part;
+            let tris: &[[u16; 3]] = if let GlyphPart::Fill { tris, .. } = part { tris } else { &[] };
+            bytes.extend([kind, u8::from(white), u8::from(closed)]);
+            bytes.extend(hundredths(width));
+            bytes.extend((points.len() as u32).to_le_bytes());
+            for &(x, y) in points.iter() {
+                bytes.extend(hundredths(x));
+                bytes.extend(hundredths(y));
+            }
+            bytes.extend(tris.iter().flatten().flat_map(|i| i.to_le_bytes()));
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in bytes {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        format!("{:08x}", h >> 32)
+    }
+
+    #[test]
+    fn every_generated_glyph_is_as_generated() {
+        for (c, g) in GENERATED {
+            assert_eq!(data_fingerprint(g), g.data_fp, "{c:?} ({}): edited by hand? Regenerate it with cursorcraft gen", g.svg);
         }
     }
 
