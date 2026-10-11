@@ -362,6 +362,9 @@
 	Position Panel Above Text	Bedienfeld über dem Text positionieren
 	Clear Appearance	Aussehen löschen
 	Clear Guides	Hilfslinien löschen
+	Vertical Guide	Vertikale Hilfslinie
+	Horizontal Guide	Horizontale Hilfslinie
+	Move Guide to Layer	Hilfslinie auf Ebene verschieben
 	Clear Overrides	Abweichungen löschen
 	Clear Recent Files	Liste der zuletzt geöffneten Dateien leeren
 	Click	Klicken
@@ -3213,6 +3216,7 @@ axis	Vertical	Vertikal
 axis	Both	Beide
 theme	Appearance	Erscheinungsbild
 	Drag to move	Zum Verschieben ziehen
+	Drag to move out of the set	Ziehen, um aus dem Satz zu lösen
 	Drag to float as a toolbar	Ziehen, um als eigene Werkzeugleiste abzulösen
 	Put back in the toolbar	Zurück in die Werkzeugleiste setzen
 	Float Panel	Bedienfeld ablösen
@@ -3656,6 +3660,7 @@ theme	Appearance	Erscheinungsbild
 @msg	the image's pixels don't match its size	die Pixel des Bilds passen nicht zu seiner Größe
 @msg	the layer has no objects to clip by	die Ebene hat keine Objekte, an denen beschnitten werden könnte
 @msg	the layer or group is locked	die Ebene oder Gruppe ist gesperrt
+@msg	the guide is on a hidden or locked layer	die Hilfslinie liegt auf einer ausgeblendeten oder gesperrten Ebene
 @msg	the target layer is locked or hidden	die Zielebene ist gesperrt oder ausgeblendet
 @msg	the layer to flatten into is hidden	die Ebene, auf die reduziert werden soll, ist ausgeblendet
 @msg	the object already has an opacity mask	das Objekt hat bereits eine Deckkraftmaske
@@ -3681,7 +3686,7 @@ theme	Appearance	Erscheinungsbild
 @msg	the {tool} tool has no options	das Werkzeug „{tool}“ hat keine Optionen
 @msg	there are no objects to release	es gibt keine Objekte zum Zurückwandeln
 @msg	there are no printer settings to open here	hier lassen sich keine Druckereinstellungen öffnen
-@msg	this PostScript file can't be read ({_1}): save it as PDF or SVG in the app that made it	diese PostScript-Datei kann nicht gelesen werden ({_1}): Speichern Sie sie in der App, mit der sie erstellt wurde, als PDF oder SVG
+@msg	this PostScript file can't be read ({why}): save it as PDF or SVG in the app that made it	diese PostScript-Datei kann nicht gelesen werden ({why}): Speichern Sie sie in der App, mit der sie erstellt wurde, als PDF oder SVG
 @msg	this file's PostScript couldn't be read ({why}): {what}	das PostScript dieser Datei konnte nicht gelesen werden ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	dieses Format fasst eine Zeichenfläche: Exportieren Sie mehrere als PDF oder mit document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	dies ist eine DWG-Zeichnung, die nicht gelesen werden kann: Speichern Sie sie in der CAD-App als ASCII-DXF und öffnen Sie diese Datei
@@ -3769,6 +3774,9 @@ theme	Appearance	Erscheinungsbild
 @msg	tool (a tool id) is required	tool (eine Werkzeug-ID) ist erforderlich
 @msg	{tool} isn't in a toolbar group of several tools	{tool} gehört zu keiner Werkzeuggruppe mit mehreren Werkzeugen
 @msg	onto must name a panel floating in another group	onto muss ein Bedienfeld nennen, das in einer anderen Gruppe schwebt
+@msg	below and above must name a panel floating in another group	below und above müssen ein Bedienfeld nennen, das in einer anderen Gruppe schwebt
+@msg	give only one of onto, below and above	nur eines von onto, below und above angeben
+@msg	column must be true or a number from 1	column muss true oder eine Zahl ab 1 sein
 @msg	x and y must both be numbers	x und y müssen beide Zahlen sein
 @msg	"{0}" is not a colour: write it as #rrggbb	"{0}" ist keine Farbe: Schreiben Sie sie als #rrggbb
 @msg	this isn't a flat-colour logo ({_1}% of its solid areas match a few flat colours), so Flat Logo mode would turn its gradients into patches: use Color mode instead	dies ist kein Logo aus flächigen Farben ({_1} % seiner einfarbigen Bereiche entsprechen wenigen flächigen Farben), daher würde der Modus „Flaches Logo“ seine Verläufe in Flecken zerlegen: Verwenden Sie stattdessen den Modus „Farbe“

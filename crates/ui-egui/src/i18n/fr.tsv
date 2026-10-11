@@ -3314,6 +3314,7 @@ axis	Horizontal	Horizontal
 axis	Vertical	Vertical
 axis	Both	Les deux
 	Drag to move	Faire glisser pour déplacer
+	Drag to move out of the set	Faire glisser pour sortir de l’ensemble
 	Drag to float as a toolbar	Faire glisser pour détacher en barre d’outils flottante
 	Put back in the toolbar	Remettre dans la barre d’outils
 	Float Panel	Rendre le panneau flottant
@@ -3756,6 +3757,7 @@ axis	Both	Les deux
 @msg	the image's pixels don't match its size	les pixels de l’image ne correspondent pas à sa taille
 @msg	the layer has no objects to clip by	le calque n’a aucun objet servant à l’écrêtage
 @msg	the layer or group is locked	le calque ou le groupe est verrouillé
+@msg	the guide is on a hidden or locked layer	le repère se trouve sur un calque masqué ou verrouillé
 @msg	the target layer is locked or hidden	le calque cible est verrouillé ou masqué
 @msg	the layer to flatten into is hidden	le calque de destination de l’aplatissement est masqué
 @msg	the object already has an opacity mask	l’objet a déjà un masque d’opacité
@@ -3781,7 +3783,7 @@ axis	Both	Les deux
 @msg	the {tool} tool has no options	l’outil {tool} n’a pas d’options
 @msg	there are no objects to release	il n’y a aucun objet à libérer
 @msg	there are no printer settings to open here	il n’y a pas de réglages d’imprimante à ouvrir ici
-@msg	this PostScript file can't be read ({_1}): save it as PDF or SVG in the app that made it	impossible de lire ce fichier PostScript ({_1}) : enregistrez-le au format PDF ou SVG dans l’application qui l’a créé
+@msg	this PostScript file can't be read ({why}): save it as PDF or SVG in the app that made it	impossible de lire ce fichier PostScript ({why}) : enregistrez-le au format PDF ou SVG dans l’application qui l’a créé
 @msg	this file's PostScript couldn't be read ({why}): {what}	impossible de lire le PostScript de ce fichier ({why}) : {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	ce format ne contient qu’un plan de travail : exportez-en plusieurs au format PDF ou avec document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	c’est un dessin DWG, qui ne peut pas être lu : enregistrez-le depuis l’application de CAO au format DXF ASCII et ouvrez ce fichier
@@ -3870,6 +3872,9 @@ axis	Both	Les deux
 @msg	tool (a tool id) is required	tool (un identifiant d’outil) est obligatoire
 @msg	{tool} isn't in a toolbar group of several tools	{tool} ne fait pas partie d’un groupe de plusieurs outils dans la barre d’outils
 @msg	onto must name a panel floating in another group	onto doit désigner un panneau flottant dans un autre groupe
+@msg	below and above must name a panel floating in another group	below et above doivent désigner un panneau flottant dans un autre groupe
+@msg	give only one of onto, below and above	indiquez un seul de onto, below et above
+@msg	column must be true or a number from 1	column doit être true ou un nombre à partir de 1
 @msg	x and y must both be numbers	x et y doivent tous deux être des nombres
 @msg	"{0}" is not a colour: write it as #rrggbb	« {0} » n’est pas une couleur : écrivez-la sous la forme #rrggbb
 @msg	this isn't a flat-colour logo ({_1}% of its solid areas match a few flat colours), so Flat Logo mode would turn its gradients into patches: use Color mode instead	ce n’est pas un logo en aplats ({_1} % de ses zones pleines correspondent à quelques couleurs unies), donc le mode Logo en aplats transformerait ses dégradés en taches : utilisez le mode Couleur
@@ -4103,3 +4108,6 @@ lighting	Light	Lumière
 	Stroke Pressure	Pression des traits
 	Right Diagonal	Diagonale droite
 	Left Diagonal	Diagonale gauche
+	Vertical Guide	Repère vertical
+	Horizontal Guide	Repère horizontal
+	Move Guide to Layer	Déplacer le repère vers le calque

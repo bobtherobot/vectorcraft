@@ -3305,6 +3305,7 @@ axis	Horizontal	Горизонтальна
 axis	Vertical	Вертикальна
 axis	Both	Обидві
 	Drag to move	Перетягніть для переміщення
+	Drag to move out of the set	Перетягніть, щоб винести з набору
 	Drag to float as a toolbar	Перетягніть, щоб від’єднати панель інструментів
 	Put back in the toolbar	Повернути на панель інструментів
 	Float Panel	Від’єднати панель
@@ -3742,6 +3743,7 @@ axis	Both	Обидві
 @msg	the image's pixels don't match its size	пікселі зображення не відповідають його розміру
 @msg	the layer has no objects to clip by	у шарі немає об’єктів для обрізки
 @msg	the layer or group is locked	шар чи група заблоковані
+@msg	the guide is on a hidden or locked layer	напрямна розташована на прихованому або заблокованому шарі
 @msg	the target layer is locked or hidden	цільовий шар заблокований або прихований
 @msg	the layer to flatten into is hidden	шар для об’єднання прихований
 @msg	the object already has an opacity mask	об’єкт вже має маску непрозорості.
@@ -3767,7 +3769,7 @@ axis	Both	Обидві
 @msg	the {tool} tool has no options	інструмент {tool} не має параметрів
 @msg	there are no objects to release	немає об’єктів для звільнення
 @msg	there are no printer settings to open here	тут немає налаштувань принтера для відкриття
-@msg	this PostScript file can't be read ({_1}): save it as PDF or SVG in the app that made it	цей файл PostScript неможливо прочитати ({_1}): збережіть його як PDF або SVG у додатку, який його створив
+@msg	this PostScript file can't be read ({why}): save it as PDF or SVG in the app that made it	цей файл PostScript неможливо прочитати ({why}): збережіть його як PDF або SVG у додатку, який його створив
 @msg	this file's PostScript couldn't be read ({why}): {what}	PostScript цього файлу неможливо прочитати ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	цей формат містить одну монтажну область: експортуйте кілька як PDF або за допомогою document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	це креслення DWG, яке неможливо прочитати: збережіть його з CAD як ASCII DXF і відкрийте його
@@ -3856,6 +3858,9 @@ axis	Both	Обидві
 @msg	tool (a tool id) is required	потрібно tool (ідентифікатор інструменту)
 @msg	{tool} isn't in a toolbar group of several tools	{tool} не входить до групи панелі інструментів з кількох інструментів
 @msg	onto must name a panel floating in another group	onto має називати панель, що плаває в іншій групі
+@msg	below and above must name a panel floating in another group	below і above мають називати панель, що плаває в іншій групі
+@msg	give only one of onto, below and above	вкажіть лише один із onto, below і above
+@msg	column must be true or a number from 1	column має бути true або числом від 1
 @msg	x and y must both be numbers	x і y мають бути числами
 @msg	"{0}" is not a colour: write it as #rrggbb	"{0}" не є кольором: запишіть його як #rrggbb
 @msg	this isn't a flat-colour logo ({_1}% of its solid areas match a few flat colours), so Flat Logo mode would turn its gradients into patches: use Color mode instead	це не логотип із плоских кольорів ({_1}% його суцільних областей збігається з кількома плоскими кольорами), тому режим «Плоский логотип» перетворив би градієнти на плями: використовуйте режим «Колір»
@@ -4074,3 +4079,6 @@ lighting	Light	Світло
 	Stroke Pressure	Натиск мазка
 	Right Diagonal	Діагональ праворуч
 	Left Diagonal	Діагональ ліворуч
+	Vertical Guide	Вертикальна напрямна
+	Horizontal Guide	Горизонтальна напрямна
+	Move Guide to Layer	Перемістити напрямну на шар

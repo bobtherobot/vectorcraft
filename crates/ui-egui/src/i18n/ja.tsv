@@ -3265,6 +3265,7 @@ axis	Horizontal	水平方向
 axis	Vertical	垂直方向
 axis	Both	両方
 	Drag to move	移動するにはドラッグ
+	Drag to move out of the set	ドラッグしてセットから出す
 	Drag to float as a toolbar	ドラッグしてツールバーとして浮かせる
 	Put back in the toolbar	ツールバーに戻す
 	Float Panel	パネルをフローティング
@@ -3497,6 +3498,7 @@ theme	Appearance	外観
 @msg	no selection bounds	選択範囲に境界がありません
 @msg	the layer has no objects to clip by	レイヤーにクリッピングマスクとして使えるオブジェクトがありません
 @msg	the layer or group is locked	レイヤーまたはグループがロックされています
+@msg	the guide is on a hidden or locked layer	ガイドが非表示またはロックされたレイヤー上にあります
 @msg	the target layer is locked or hidden	ターゲットレイヤーがロックされているか非表示です
 @msg	the layer to flatten into is hidden	統合先のレイヤーが非表示になっています
 @msg	there are no objects to release	レイヤーに分配するオブジェクトがありません
@@ -3634,7 +3636,7 @@ theme	Appearance	外観
 @msg	shadings of an unknown type were left out	種類が不明なシェーディングは除外されました
 @msg	shadings whose functions are of an unknown type are filled with their middle colour	関数の種類が不明なシェーディングは中間の色で塗りつぶされています
 @msg	the file's preview header points outside the file	ファイルのプレビューヘッダーがファイルの範囲外を指しています
-@msg	this PostScript file can't be read ({_1}): save it as PDF or SVG in the app that made it	この PostScript ファイルは読み込めません ({_1}): 作成したアプリで PDF または SVG として保存してください
+@msg	this PostScript file can't be read ({why}): save it as PDF or SVG in the app that made it	この PostScript ファイルは読み込めません ({why}): 作成したアプリで PDF または SVG として保存してください
 @msg	this is not a PostScript file	PostScript ファイルではありません
 @msg	a PostScript error ({name} in `{op}`)	PostScript エラー (`{op}` での {name})
 @msg	a PostScript error ({name} in `{op}`), in {procs}	{procs} 内の PostScript エラー (`{op}` での {name})
@@ -3796,6 +3798,9 @@ theme	Appearance	外観
 @msg	give the path `id` and the width point `index`	パスの `id` と幅ポイントの `index` を指定してください
 @msg	no such width point	指定された幅ポイントが見つかりません
 @msg	onto must name a panel floating in another group	onto には、別のグループでフローティングしているパネルを指定してください
+@msg	below and above must name a panel floating in another group	below と above には別のグループでフローティングしているパネルを指定してください
+@msg	give only one of onto, below and above	onto、below、above のうち 1 つだけを指定してください
+@msg	column must be true or a number from 1	column には true または 1 以上の数値を指定してください
 @msg	unknown panel `{raw}`	`{raw}` は不明なパネルです
 @msg	x and y must both be numbers	x と y はどちらも数値で指定してください
 @msg	Downloaded {what}	{what} をダウンロードしました
@@ -4088,3 +4093,6 @@ lighting	Light	ライト
 	Stroke Pressure	ストロークの筆圧
 	Right Diagonal	右斜め
 	Left Diagonal	左斜め
+	Vertical Guide	垂直ガイド
+	Horizontal Guide	水平ガイド
+	Move Guide to Layer	ガイドをレイヤーへ移動
