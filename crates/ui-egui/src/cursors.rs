@@ -5,6 +5,8 @@
 //! The desktop app shows them as OS cursors ([`Images`]): the system moves those itself, at once,
 //! while a cursor painted into the window follows the pointer a few frames late (#444).
 
+mod glyphs;
+
 use egui::epaint::{Mesh, TessellationOptions, Tessellator, Vertex};
 use egui::{Color32, CustomCursorImage, Painter, Pos2, Shape, Stroke, Vec2, pos2, vec2};
 use vectorcraft_tools::Cursor;
@@ -284,8 +286,14 @@ fn shape_builder(p: &mut Ink, o: Pos2, erase: bool) {
 
 /// The shapes of cursor `c` with its hotspot at `p`; `None` for cursors that stay system cursors
 /// (hand, zoom, busy states).
+/// Cursor `c`'s shapes with the hotspot at `p`: its generated glyph ([`glyphs`]) if it has one,
+/// else the hand-drawn one.
 fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
     let ink = &mut Ink::default();
+    if let Some(g) = glyphs::generated(c) {
+        glyphs::draw_glyph(ink, p, g);
+        return Some(std::mem::take(&mut ink.0));
+    }
     match c {
         Cursor::Arrow => arrow(ink, p, false),
         Cursor::ArrowHollow => arrow(ink, p, true),
@@ -502,6 +510,64 @@ mod tests {
         Cursor::ShapeBuilder,
         Cursor::ShapeBuilderErase,
     ];
+
+    /// Every cursor's bitmap at 1× and 2× as `<dir>/<Cursor>@<n>.png`, for /update-cursors'
+    /// before/after review: `CURSOR_SHEET_DIR=dir cargo test -p vectorcraft-ui-egui --lib write_cursor_pngs -- --ignored`.
+    #[test]
+    #[ignore = "writes files; run by /update-cursors"]
+    fn write_cursor_pngs() {
+        let Some(dir) = std::env::var_os("CURSOR_SHEET_DIR").map(std::path::PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut all: Vec<Cursor> = GLYPHS.to_vec();
+        all.extend(glyphs::GENERATED.iter().map(|&(c, _)| c).filter(|c| !GLYPHS.contains(c)));
+        for c in all {
+            for ppp in [1u32, 2] {
+                let Some(img) = rasterize(c, ppp as f32) else { continue };
+                let [w, h] = img.size.map(u32::from);
+                let buf = image::RgbaImage::from_raw(w, h, img.rgba.to_vec()).unwrap();
+                buf.save(dir.join(format!("{c:?}@{ppp}.png"))).unwrap();
+            }
+        }
+    }
+
+    /// A before/after sheet of the cursors whose bitmaps differ between `SHEET_BEFORE` and
+    /// `SHEET_AFTER` (directories from `write_cursor_pngs`): one row each, before 1×, after 1×,
+    /// before 2×, after 2× on light, grey and dark grounds. Writes `SHEET_OUT` (a PNG) and its row
+    /// names beside it as `.txt`.
+    #[test]
+    #[ignore = "writes files; run by /update-cursors"]
+    fn compose_review_sheet() {
+        let var = |k| std::env::var_os(k).map(std::path::PathBuf::from);
+        let (Some(before), Some(after), Some(out)) = (var("SHEET_BEFORE"), var("SHEET_AFTER"), var("SHEET_OUT")) else { return };
+        let names = |d: &std::path::Path| -> std::collections::BTreeSet<String> {
+            std::fs::read_dir(d)
+                .map(|it| it.filter_map(|e| e.ok()?.file_name().into_string().ok()?.strip_suffix("@1.png").map(String::from)).collect())
+                .unwrap_or_default()
+        };
+        let load = |d: &std::path::Path, n: &str, s: u32| image::open(d.join(format!("{n}@{s}.png"))).ok().map(|i| i.to_rgba8());
+        let rows: Vec<String> = names(&before)
+            .union(&names(&after))
+            .filter(|n| [1, 2].iter().any(|&s| load(&before, n, s).map(|i| i.into_raw()) != load(&after, n, s).map(|i| i.into_raw())))
+            .cloned()
+            .collect();
+        const CELL: u32 = 108;
+        let grounds = [[255u8, 255, 255, 255], [138, 138, 138, 255], [32, 32, 32, 255]];
+        let mut sheet = image::RgbaImage::from_pixel(CELL * 12, CELL * rows.len().max(1) as u32, image::Rgba([200, 200, 200, 255]));
+        for (r, name) in rows.iter().enumerate() {
+            for (g, ground) in grounds.iter().enumerate() {
+                for (k, (dir, s)) in [(&before, 1), (&after, 1), (&before, 2), (&after, 2)].into_iter().enumerate() {
+                    let (x, y) = (CELL * (g as u32 * 4 + k as u32), CELL * r as u32);
+                    let mut cell = image::RgbaImage::from_pixel(CELL - 4, CELL - 4, image::Rgba(*ground));
+                    if let Some(img) = load(dir, name, s) {
+                        image::imageops::overlay(&mut cell, &img, 8, 8);
+                    }
+                    image::imageops::overlay(&mut sheet, &cell, i64::from(x), i64::from(y));
+                }
+            }
+        }
+        sheet.save(&out).unwrap();
+        std::fs::write(out.with_extension("txt"), rows.join("\n") + "\n").unwrap();
+    }
 
     /// The straight RGBA of pixel (x, y).
     fn pixel(img: &CustomCursorImage, x: usize, y: usize) -> [u8; 4] {
