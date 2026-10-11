@@ -1721,6 +1721,7 @@
 	Proof Colors	Provar Cores
 	Proof Setup	Configuração de Prova
 	Properties	Propriedades
+	Proportional Metrics	Métrica Proporcional
 	Pucker & Bloat…	Encolher e Inchar…
 	Pucker Tool	Ferramenta Encolher
 	Punctuation Space	Espaço de Pontuação
@@ -2755,6 +2756,14 @@
 	Ocean Ripple…	Ondulação oceânica…
 	Rename Data Set	Renomear conjunto de dados
 	Rename Variable	Renomear variável
+# Shared panel docking
+	Activate Panel	Ativar Painel
+	Change Panel Layout	Alterar Layout dos Painéis
+	Close Panel	Fechar Painel
+	Move Panel	Mover Painel
+	Group with	Agrupar com
+	Resize panels	Redimensionar painéis
+	Resize panel window	Redimensionar janela do painel
 
 # Interactive Revolve controls.
 	Lighting	Iluminação

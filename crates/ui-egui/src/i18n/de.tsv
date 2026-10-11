@@ -2000,6 +2000,7 @@
 	Proof Colors	Farbproof
 	Proof Setup	Proof einrichten
 	Properties	Eigenschaften
+	Proportional Metrics	Proportionale Metrik
 	Proportional Oldstyle	Proportionale Mediävalziffern
 	Pucker & Bloat…	Zusammenziehen und aufblasen…
 	Pucker Tool	Zusammenziehen-Werkzeug
@@ -3320,6 +3321,7 @@ theme	Appearance	Erscheinungsbild
 @msg	`color` must be a colour	`color` muss eine Farbe sein
 @msg	`command` must be a command whose menu item opens a dialog (see ui.menuDialog)	`command` muss ein Befehl sein, dessen Menüeintrag ein Dialogfeld öffnet (siehe ui.menuDialog)
 @msg	`freeform.points` must be an array	`freeform.points` muss ein Array sein
+@msg	`freeform.lines` must be an array	`freeform.lines` muss ein Array sein
 @msg	`gradient` must be an object	`gradient` muss ein Objekt sein
 @msg	`library` is a library id or name (see {list})	`library` ist die ID oder der Name einer Bibliothek (siehe {list})
 @msg	`mode` applies to freeform gradients	`mode` gilt für Freiformverläufe
@@ -3421,6 +3423,7 @@ theme	Appearance	Erscheinungsbild
 @msg	empty path	leerer Pfad
 @msg	file version {0} is newer than this VectorCraft supports ({VERSION})	die Dateiversion {0} ist neuer, als dieses VectorCraft unterstützt ({VERSION})
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	Freiformpunkt {i} braucht `at` [x, y] und eine gültige `color`
+@msg	freeform line {i} must be an array of point indices	Freiformlinie {i} muss ein Array von Punktindizes sein
 @msg	give both `start` and `end` [x, y] (or neither)	geben Sie sowohl `start` als auch `end` [x, y] an (oder keines von beiden)
 @msg	give corners of the path: anchors between two straight sides	geben Sie Ecken des Pfads an: Ankerpunkte zwischen zwei geraden Seiten
 @msg	give the path `id` and the width point `index`	geben Sie die `id` des Pfads und den `index` des Breitenpunkts an
@@ -3851,6 +3854,7 @@ theme	Appearance	Erscheinungsbild
 	ICF Bottom/Left	ICF unten/links
 @msg	`id` is the step reference {r}, which only `run` and `command_batch` resolve	`id` ist der Schrittverweis {r}, den nur `run` und `command_batch` auflösen
 @msg	`ids` must be an array of object ids, not {v}	`ids` muss ein Array von Objekt-IDs sein, nicht {v}
+@msg	`corners` must be an array of anchor indices, not {v}	`corners` muss ein Array von Ankerpunkt-Indizes sein, nicht {v}
 @msg	`{text}`: step {i}'s result has no such value (write $$ for a literal $)	`{text}`: Das Ergebnis von Schritt {i} hat keinen solchen Wert (schreiben Sie $$ für ein literales $)
 @msg	`{text}`: there is no step {i} before this one (steps count from 0; write $$ for a literal $)	`{text}`: Vor diesem Schritt gibt es keinen Schritt {i} (Schritte zählen ab 0; schreiben Sie $$ für ein literales $)
 @msg	object ids are non-negative integers, not {v}	Objekt-IDs sind nicht negative ganze Zahlen, nicht {v}
@@ -4003,6 +4007,31 @@ theme	Appearance	Erscheinungsbild
 	Define a variable first	Definieren Sie zuerst eine Variable
 	Text	Text
 	Visibility	Sichtbarkeit
+
+	Activate Panel	Bedienfeld aktivieren
+	Change Panel Layout	Bedienfeldanordnung ändern
+	Close Panel	Bedienfeld schließen
+	Move Panel	Bedienfeld verschieben
+	Group with	Gruppieren mit
+	Resize panel window	Bedienfeldfenster skalieren
+	Resize panels	Bedienfelder skalieren
+@msg	Invalid panel layout; restored the default dock	Ungültige Bedienfeldanordnung; Standarddock wiederhergestellt
+@msg	action is required	Eine Aktion ist erforderlich
+@msg	anchor must name a registered panel	Der Anker muss ein registriertes Bedienfeld benennen
+@msg	before must name a panel	before muss ein Bedienfeld benennen
+@msg	docking action contains an unknown panel or an excessive split path	Die Docking-Aktion enthält ein unbekanntes Bedienfeld oder einen zu langen Teilungspfad
+@msg	group must be true or false	group muss true oder false sein
+@msg	move requires a destination panel	Das Verschieben erfordert ein Zielbedienfeld
+@msg	move requires an existing destination panel	Das Verschieben erfordert ein vorhandenes Zielbedienfeld
+@msg	onto must name a floating panel	onto muss ein schwebendes Bedienfeld benennen
+@msg	panel group is empty	Die Bedienfeldgruppe ist leer
+@msg	panel must name a registered panel	panel muss ein registriertes Bedienfeld benennen
+@msg	saved panel layout is invalid; reset the workspace first	Die gespeicherte Bedienfeldanordnung ist ungültig; zuerst den Arbeitsbereich zurücksetzen
+@msg	x and y must be provided together	x und y müssen zusammen angegeben werden
+@msg	zone must be a string	zone muss eine Zeichenfolge sein
+@msg	zone must be tab, center, left, right, top or bottom	zone muss tab, center, left, right, top oder bottom sein
+@msg	{key} must be a finite coordinate	{key} muss eine endliche Koordinate sein
+@msg	invalid restored panel group	Ungültige wiederhergestellte Bedienfeldgruppe
 # 3D and Materials › Revolve: its options dialog and gizmos.
 	Ambient	Umgebungslicht
 	Axis side	Achsenseite
@@ -4056,3 +4085,6 @@ theme	Appearance	Erscheinungsbild
 	Stroke Pressure	Strichdruck
 	Right Diagonal	Diagonal nach rechts
 	Left Diagonal	Diagonal nach links
+@msg	invalid native panel set	Ungültiger nativer Bedienfeldsatz
+@msg	missing panel layout	Bedienfeldanordnung fehlt
+@msg	unsupported native docking operation	Nicht unterstützte native Docking-Operation

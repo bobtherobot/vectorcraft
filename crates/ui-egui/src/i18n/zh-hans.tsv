@@ -1976,6 +1976,7 @@
 	Proof Colors	校样颜色
 	Proof Setup	校样设置
 	Properties	属性
+	Proportional Metrics	比例度量
 	Proportional Oldstyle	比例旧式数字
 	Pucker & Bloat…	缩拢与膨胀…
 	Pucker Tool	收缩工具
@@ -3669,6 +3670,14 @@ effect	Vertical	垂直
 	Define a variable first	请先定义一个变量
 	Text	文本
 	Visibility	可见性
+# Shared panel docking
+	Activate Panel	激活面板
+	Change Panel Layout	更改面板布局
+	Close Panel	关闭面板
+	Move Panel	移动面板
+	Group with	组合到
+	Resize panels	调整面板大小
+	Resize panel window	调整面板窗口大小
 
 # Revolve profile guidance.
 

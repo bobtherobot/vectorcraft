@@ -316,6 +316,11 @@ pub(crate) fn checked_ids_param(s: &Session, p: &Value, key: &str, command: &str
     values.iter().map(|value| checked_id(s, value, command)).collect()
 }
 
+/// The objects a command acts on: `ids` when given (every one checked), else the selected objects.
+pub(crate) fn checked_ids_or_selection(s: &Session, p: &Value, command: &str) -> Result<Vec<NodeId>> {
+    if p.get("ids").is_some() { checked_ids_param(s, p, "ids", command) } else { edit::selected_roots(s) }
+}
+
 pub(crate) fn checked_id(s: &Session, value: &Value, command: &str) -> Result<NodeId> {
     let id = value.as_u64().map(NodeId).ok_or_else(|| bad(command, format!("invalid object id {value}: expected a non-negative integer")))?;
     if s.doc()?.doc.node(id).is_none() {
@@ -333,6 +338,12 @@ pub(crate) fn finite_numbers<const N: usize>(v: &Value) -> Option<[f64; N]> {
         *o = n.as_f64().filter(|n| n.is_finite())?;
     }
     Some(out)
+}
+
+/// `v` as a list of point indices: `None` unless it is an array of non-negative integers, so no
+/// malformed index is dropped or wrapped round.
+pub(crate) fn point_indices(v: &Value) -> Option<Vec<usize>> {
+    v.as_array()?.iter().map(|i| usize::try_from(i.as_u64()?).ok()).collect()
 }
 
 pub(crate) fn point_param(p: &Value, key: &str) -> Option<Point> {

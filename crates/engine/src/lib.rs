@@ -1324,6 +1324,11 @@ impl Session {
         {
             let st = self.doc_mut()?;
             let Some(it) = &st.interaction else { return Err(EngineError::Other("no interaction in progress".into())) };
+            // Undoing the previous preview counts as a change, so views redraw even when the command
+            // below returns without an edit.
+            if !Arc::ptr_eq(&st.doc, &it.doc) || st.selection != it.selection {
+                st.revision += 1;
+            }
             st.doc = it.doc.clone();
             st.selection = it.selection.clone();
         }
@@ -1692,6 +1697,8 @@ mod tests_toolsettings;
 mod tests_transparencygrid;
 #[cfg(test)]
 mod tests_typearea;
+#[cfg(test)]
+mod tests_typescale;
 #[cfg(test)]
 mod tests_units;
 #[cfg(test)]

@@ -284,7 +284,7 @@ objects' fills or strokes differ (`fillMixed` / `strokeMixed`, drawn as a "?" pr
 | `transform` | `{ids?, dx?, dy?, rotate?, scale?, scaleX?, scaleY?, reflect?, shear?, origin?, copy?}` | Runs move, rotate, scale, reflect, shear in that order. With `copy`, the first step duplicates. |
 | `create_graph` | `{type?, x, y, width, height, csv? \| series?, categories?, rows?}` | The nine Illustrator graph types: column, stacked column, bar, stacked bar, line, area, scatter, pie and radar. An empty CSV cell or a `null` in `rows` is a blank value; a number in straight quotes is a label. Edit later with `graph.setData` / `graph.setType` via `run_command`. |
 | `text_wrap` | `{ids?, offset?, invert?, release?}` | Area type below the objects (same layer) flows around them. |
-| `undo` / `redo` | `{}` | |
+| `undo` / `redo` | `{}` | Many calls that change nothing record no undo step, for example `object.align` with nothing to move, `object.move` by 0 without `copy` and `object.showAll` with nothing hidden. `undo` (`edit.undo`) after such a call undoes the step before it. `inspect_document` lists the undo steps as `history`. |
 
 With `mods.shift`, a marquee dragged with the Selection tool toggles the objects it reaches (the selected ones leave
 the selection, the others join it, the rest stays), and one dragged with Direct or Group Selection toggles the anchors
@@ -2625,6 +2625,19 @@ without ideographs uses its em box. One undo step.
 
 ```json
 {"name":"run_command","arguments":{"command":"text.setFormat","params":{"charAlign":"icfTop"}}}
+```
+
+## Proportional Metrics
+
+`text.setFormat {proportionalMetrics: true}` (the selected type, or `ids`) and `text.setRangeStyle {id, start, end,
+proportionalMetrics}` (a range) set full-width glyphs on the proportional widths the font gives them with the
+OpenType `palt` feature; glyphs the font doesn't re-space keep their full width. Line-end Punctuation Half Width then takes nothing more off the punctuation `palt` re-spaced (the opening
+bracket at a line's start, consecutive punctuation, the closing mark at a line's end); punctuation left full width is
+trimmed as before. Off by default and saved only when on. Horizontal type only for now: vertical type sets as before.
+One undo step.
+
+```json
+{"name":"run_command","arguments":{"command":"text.setFormat","params":{"proportionalMetrics":true}}}
 ```
 
 ## New type in a Japanese interface

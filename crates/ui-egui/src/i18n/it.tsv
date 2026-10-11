@@ -2051,6 +2051,7 @@
 	Proof Colors	Colori di prova
 	Proof Setup	Impostazione prova
 	Properties	Proprietà
+	Proportional Metrics	Metrica proporzionale
 	Proportional Oldstyle	Proporzionali stile antico
 	Pucker & Bloat…	Contrai e gonfia…
 	Pucker Tool	Strumento Contrai
@@ -3421,6 +3422,7 @@ axis	Both	Entrambi
 @msg	`color` must be a colour	`color` deve essere un colore
 @msg	`command` must be a command whose menu item opens a dialog (see ui.menuDialog)	`command` deve essere un comando la cui voce di menu apre una finestra di dialogo (vedi ui.menuDialog)
 @msg	`freeform.points` must be an array	`freeform.points` deve essere un array
+@msg	`freeform.lines` must be an array	`freeform.lines` deve essere un array
 @msg	`gradient` must be an object	`gradient` deve essere un oggetto
 @msg	`library` is a library id or name (see {list})	`library` è l'id o il nome di una libreria (vedi {list})
 @msg	`mode` applies to freeform gradients	`mode` si applica alle sfumature a forma libera
@@ -3522,6 +3524,7 @@ axis	Both	Entrambi
 @msg	empty path	tracciato vuoto
 @msg	file version {0} is newer than this VectorCraft supports ({VERSION})	la versione del file {0} è più recente di quelle supportate da questo VectorCraft ({VERSION})
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	il punto a forma libera {i} richiede `at` [x, y] e un `color` valido
+@msg	freeform line {i} must be an array of point indices	la linea a forma libera {i} deve essere un array di indici di punti
 @msg	give both `start` and `end` [x, y] (or neither)	specifica sia `start` sia `end` [x, y] (o nessuno dei due)
 @msg	give corners of the path: anchors between two straight sides	specifica angoli del tracciato: punti di ancoraggio tra due lati diritti
 @msg	give the path `id` and the width point `index`	specifica l'`id` del tracciato e l'`index` del punto di larghezza
@@ -3938,6 +3941,7 @@ axis	Both	Entrambi
 	Perspective Distort	Distorsione prospettica
 @msg	`id` is the step reference {r}, which only `run` and `command_batch` resolve	`id` è il riferimento al passaggio {r}, che solo `run` e `command_batch` risolvono
 @msg	`ids` must be an array of object ids, not {v}	`ids` deve essere un elenco di ID oggetto, non {v}
+@msg	`corners` must be an array of anchor indices, not {v}	`corners` deve essere un elenco di indici di punti di ancoraggio, non {v}
 @msg	`{text}`: step {i}'s result has no such value (write $$ for a literal $)	`{text}`: il risultato del passaggio {i} non ha questo valore (scrivi $$ per un $ letterale)
 @msg	`{text}`: there is no step {i} before this one (steps count from 0; write $$ for a literal $)	`{text}`: non c’è un passaggio {i} prima di questo (i passaggi si contano da 0; scrivi $$ per un $ letterale)
 @msg	object ids are non-negative integers, not {v}	gli ID oggetto sono interi non negativi, non {v}
@@ -4045,6 +4049,31 @@ effect	Regular	Normale
 	Define a variable first	Definisci prima una variabile
 	Text	Testo
 	Visibility	Visibilità
+# Shared panel docking
+	Activate Panel	Attiva pannello
+	Change Panel Layout	Modifica disposizione dei pannelli
+	Close Panel	Chiudi pannello
+	Move Panel	Sposta pannello
+	Group with	Raggruppa con
+	Resize panels	Ridimensiona pannelli
+	Resize panel window	Ridimensiona finestra del pannello
+@msg	Invalid panel layout; restored the default dock	La disposizione dei pannelli non è valida; è stato ripristinato l’ancoraggio predefinito
+@msg	action is required	action è obbligatorio
+@msg	anchor must name a registered panel	anchor deve indicare un pannello registrato
+@msg	before must name a panel	before deve indicare un pannello
+@msg	docking action contains an unknown panel or an excessive split path	L’azione di ancoraggio contiene un pannello sconosciuto o un percorso di divisioni troppo lungo
+@msg	group must be true or false	group deve essere true o false
+@msg	move requires a destination panel	Lo spostamento richiede un pannello di destinazione
+@msg	move requires an existing destination panel	Lo spostamento richiede un pannello di destinazione esistente
+@msg	onto must name a floating panel	onto deve indicare un pannello mobile
+@msg	panel group is empty	Il gruppo di pannelli è vuoto
+@msg	panel must name a registered panel	panel deve indicare un pannello registrato
+@msg	saved panel layout is invalid; reset the workspace first	La disposizione salvata dei pannelli non è valida; reimposta prima l’area di lavoro
+@msg	zone must be a string	zone deve essere una stringa
+@msg	zone must be tab, center, left, right, top or bottom	zone deve essere tab, center, left, right, top o bottom
+@msg	{key} must be a finite coordinate	{key} deve essere una coordinata finita
+@msg	x and y must be provided together	x e y devono essere forniti insieme
+@msg	invalid restored panel group	Il gruppo di pannelli ripristinato non è valido
 
 # Revolve profile guidance.
 
@@ -4103,3 +4132,6 @@ lighting	Light	Luce
 	Vertical Guide	Guida verticale
 	Horizontal Guide	Guida orizzontale
 	Move Guide to Layer	Sposta guida nel livello
+@msg	invalid native panel set	Gruppo nativo di pannelli non valido
+@msg	missing panel layout	Disposizione dei pannelli mancante
+@msg	unsupported native docking operation	Operazione nativa di ancoraggio non supportata
