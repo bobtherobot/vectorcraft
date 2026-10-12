@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first checklist: pen, anchors, handles, snapping, nudging, modifiers, panels) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Move and pen cursors from original designs) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -49,7 +49,7 @@ tools, never checked side by side) isn't captured row by row.
 | Click an open path's end to continue it; click another path's end to join | done | #776 |
 | Rubber Band preview | done | Preferences option |
 | Auto Add/Delete on a selected path; Shift or the preference disables it | done | |
-| Pen cursors (new path ×, continue /, close o, add +, delete −, convert ^) | partial | vector cursors exist; not every state verified |
+| Pen cursors (new path ×, continue /, close o, add +, delete −, convert ^) | partial | original designs (cursorcraft, `/update-cursors`); not every state verified |
 | Each anchor snaps to Smart Guides and construction angles | done | `DrawSnap` |
 | Curvature tool: click/drag points, double-click or Alt-click for a corner, temporary Direct Selection, point conversion | partial | modifiers requested in #975 |
 | Add/Delete/Anchor Point tools; Anchor Point tool drags segments to reshape | done | |
@@ -166,4 +166,5 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Move and pen cursors from original cursorcraft designs |
 | 2026-10-10 | major | First checklist, built from the tool sources and tests against Illustrator 2026's public documentation |

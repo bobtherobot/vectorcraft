@@ -8,5 +8,68 @@
 #   status   wired | skipped | needed | obsolete
 #   slots    the Cursor variants it draws (wired), or asks for (needed)
 #   note     why: the decision and anything the designer clarified
-cursorcraft = "none"
+cursorcraft = "529be17-dirty"
 
+[[cursor]]
+id = "Move"
+id_fp = "0fc6e1af"
+info_fp = "c185f4dc"
+status = "wired"
+slots = ["Move"]
+note = "Redrawn; its own slot (Selection over a selected object, Reshape, Curvature over a point, transform boxes, mesh and pin points, gradient and perspective handles). Curvature over a point moves to the curve-edit set next."
+
+[[cursor]]
+id = "Pen"
+id_fp = "73e4a365"
+info_fp = "38ea9195"
+status = "wired"
+slots = ["Pen"]
+note = "Redrawn; its own slot (the Pen at rest, Curvature away from its points, the Anchor Point tool)."
+
+[[cursor]]
+id = "PenAdd"
+id_fp = "236f8568"
+info_fp = "00dc8a51"
+status = "wired"
+slots = ["PenAdd"]
+note = "Redrawn; its own slot (Pen over a selected segment, Add Anchor Point, Curvature over a segment, Mesh, Puppet Warp)."
+
+[[cursor]]
+id = "PenClose"
+id_fp = "bc49cd0a"
+info_fp = "55e5661d"
+status = "wired"
+slots = ["PenClose"]
+note = "Redrawn; its own slot (Pen or Curvature over the first point while drawing). Fixed the Curs3or typo in 00-INFO.md, designer approved."
+
+[[cursor]]
+id = "PenContinue"
+id_fp = "a7dc1df3"
+info_fp = "3de20588"
+status = "wired"
+slots = ["PenContinue"]
+note = "Redrawn; its own slot (Pen or Curvature over an open path's end)."
+
+[[cursor]]
+id = "PenConvert"
+id_fp = "48aab3ad"
+info_fp = "1084d8dd"
+status = "wired"
+slots = ["PenConvert"]
+note = "Redrawn; its own slot (Pen over the last anchor, Pen or Curvature with Alt). The Alt uses move to the curve-edit set next."
+
+[[cursor]]
+id = "PenDelete"
+id_fp = "740b73f4"
+info_fp = "f3da7c1b"
+status = "wired"
+slots = ["PenDelete"]
+note = "Redrawn; its own slot (Pen over a selected anchor, Delete Anchor Point, Mesh with Alt over a point)."
+
+[[cursor]]
+id = "PenJoin"
+id_fp = "72cb0502"
+info_fp = "233c1b92"
+status = "wired"
+slots = ["PenJoin"]
+note = "Redrawn; its own slot (Pen while drawing, over another open path's end)."
