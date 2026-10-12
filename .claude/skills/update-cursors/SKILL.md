@@ -1,6 +1,6 @@
 ---
 name: update-cursors
-description: Sync VectorCraft's tool cursors with a cursorcraft folder (SVG designs → generated glyphs). Use when the user runs /update-cursors, says cursors were handed over from cursorcraft, or asks to update/wire cursor designs. Also writes the cursors VectorCraft still needs back into the designer's 00-INFO.md.
+description: Sync VectorCraft's tool cursors with a cursorcraft folder (cursor designs → generated glyphs). Use when the user runs /update-cursors, says cursors were handed over from cursorcraft, or asks to update/wire cursor designs. Also writes the cursors VectorCraft still needs back into the designer's 00-INFO.md.
 ---
 
 # /update-cursors [folder] [group]
@@ -16,6 +16,12 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   in `crates/ui-egui/src/cursors/glyphs.rs`, and `cursors.toml` beside it.
 - In `00-INFO.md`, only append sections, or write back wording the designer approved.
 - Never invent a tool to give a cursor a home: record it `skipped` and list it.
+- Cursors are named by **id**: cursorcraft's file name without `.svg`, equal to the `Cursor`
+  value it draws (`PenAdd.svg` → `PenAdd` → `Cursor::PenAdd`). A cursor with no value yet has a
+  name led by its tool (`LassoObject`), so files sort by tool. VectorCraft never mentions files
+  or SVGs: the record, `Glyph::id` and needed requests all use ids. A wired cursor whose id isn't
+  its slot's name: ask the designer to rename the file (a rename keeps its decision, see 2.).
+- Work on the current cursor branch (e.g. `cursor-workflow`), never on `main`: the user merges.
 
 ## 1. Orient
 - cursorcraft = the argument's checkout, else `$CURSORCRAFT_DIR`, else `~/projects/cursorcraft`;
@@ -26,11 +32,11 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   `git -C <folder> status --porcelain -- .` isn't empty (warn the designer).
 
 ## 2. Diff
-- `… -- status <folder>` → JSON rows `{file, const, svg_fp, info_fp, needed, drawn, error}`.
-- Compare with `crates/ui-egui/src/cursors/cursors.toml` by `svg`:
-  new (no entry) · redrawn (svg_fp differs) · re-described (info_fp differs) · needed-now-drawn
+- `… -- status <folder>` → JSON rows `{id, file, const, id_fp, info_fp, needed, drawn, error}`.
+- Compare with `crates/ui-egui/src/cursors/cursors.toml` by `id`:
+  new (no entry) · redrawn (id_fp differs) · re-described (info_fp differs) · needed-now-drawn
   (entry `needed`, row `drawn`) · removed (entry, no row) · rename (removed + new with the same
-  svg_fp: keep the decision) · unchanged.
+  id_fp: keep the decision) · unchanged.
 - A first sync or one with more than ~15 cursors to decide: work in groups (the `group` argument,
   else ask). Order: pen family + eyedropper + knife + mesh; selection and direct selection; type;
   transform, resize, rotate and zoom; the rest. One review and one commit per group.
@@ -65,7 +71,7 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
 - For each, append to `00-INFO.md`:
 
   ```
-  ## <name>.svg
+  ## <Variant>.svg
 
   Needed by VectorCraft (`Cursor::<Variant>`).
 
@@ -76,8 +82,7 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   is a state VectorCraft doesn't distinguish yet, add the variant (with its tool change, test,
   `precise()` and `cursor_icon` entries) in this sync, or leave the need out.
 - A `needed` entry VectorCraft no longer needs: set `status = "obsolete"`, `slots = []` (no
-  `svg_fp` needed), and ask
-  the designer to delete the section.
+  `id_fp` needed), and ask the designer to delete the section.
 
 ## 6. Apply
 1. Before images. Every path given to these tests must be absolute: `cargo test` runs them from
@@ -87,7 +92,7 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
    in `glyphs.rs` (whole const including its doc comment); update `GENERATED` (sorted like the
    `Cursor` enum). Remove the `#[expect(dead_code …)]` lines the first time.
 3. Write `cursors.toml`: `cursorcraft = "<source id>"`; one `[[cursor]]` per row of this group,
-   fields `svg, svg_fp, info_fp, status, slots, note` (needed: no `svg_fp`), sorted by `svg`.
+   fields `id, id_fp, info_fp, status, slots, note` (needed: no `id_fp`), sorted by `id`.
 4. Tool / variant changes with their tests.
 5. `CARGO_TARGET_DIR=$PWD/target cargo xtask ci` until green.
 6. Docs touched by the change: `docs/ui-parity.md` cursor rows, `docs/target-app-parity.md`
@@ -99,7 +104,7 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   Read the PNG yourself first; then give the designer its path, its row list (`.txt`; columns are
   before 1×, after 1×, before 2×, after 2× on light, grey, dark), the decisions, skips and needs
   added.
-- On the designer's OK: `git add` the touched files only, commit to `main`:
+- On the designer's OK: `git add` the touched files only, commit to the cursor branch:
   `cursors: sync from cursorcraft <source id> (<group>)`, body listing wired / skipped / needed.
 - Tell the designer `00-INFO.md` changed in cursorcraft (theirs to commit), and to run
   `cursorcraft check` to see the new to-dos.
