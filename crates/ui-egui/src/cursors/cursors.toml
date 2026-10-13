@@ -169,6 +169,22 @@ slots = ["SelectionCopy"]
 note = "Drawn from VectorCraft's placeholder; its own slot (Alt-dragging a copy with Selection or Direct Selection)."
 
 [[cursor]]
+id = "Text"
+id_fp = "e855824f"
+info_fp = "dce4ead1"
+status = "wired"
+slots = ["Text"]
+note = "Its own slot (every type tool, vertical forms included, except Area / Path type over a suitable path)."
+
+[[cursor]]
+id = "TypeWidget"
+id_fp = "1efa9822"
+info_fp = "017e886c"
+status = "wired"
+slots = ["TypeWidget"]
+note = "Its own slot (the Selection tool over selected type's widget)."
+
+[[cursor]]
 id = "ZoomIn"
 info_fp = "f422829b"
 status = "needed"
