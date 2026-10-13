@@ -499,7 +499,16 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
 fn cursor_icon(c: Cursor) -> egui::CursorIcon {
     use egui::CursorIcon as C;
     match c {
-        Cursor::Arrow | Cursor::ArrowHollow | Cursor::CornerRadius | Cursor::PathBracket | Cursor::TypeWidget => C::Default,
+        Cursor::Arrow
+        | Cursor::ArrowHollow
+        | Cursor::DirectAnchor
+        | Cursor::DirectAnchorSelected
+        | Cursor::ReshapeSegment
+        | Cursor::GroupSelection
+        | Cursor::CornerRadius
+        | Cursor::PathBracket
+        | Cursor::TypeWidget => C::Default,
+        Cursor::SelectionCopy => C::Copy,
         Cursor::Move => C::Move,
         Cursor::Crosshair => C::Crosshair,
         Cursor::ResizeH => C::ResizeHorizontal,
@@ -514,14 +523,8 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         | Cursor::PenContinue
         | Cursor::PenJoin
         | Cursor::PenConvert
+        | Cursor::AnchorPoint
         | Cursor::Curvature => C::Crosshair,
-        Cursor::CurveEditIntent
-        | Cursor::CurveEditAnchor
-        | Cursor::CurveEditLine
-        | Cursor::CurveEditHandle
-        | Cursor::CurveEditMove
-        | Cursor::CurveEditClose
-        | Cursor::CurveEditConvert => C::Default,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,
         Cursor::HandGrab => C::Grabbing,

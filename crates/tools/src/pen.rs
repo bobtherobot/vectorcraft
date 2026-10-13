@@ -141,16 +141,14 @@ fn alt_converts(cx: &ToolContext, p: Point, m: Mods) -> bool {
             || crate::draw2::segment_in(cx, crate::draw2::shown_paths(cx), p, cx.pick_tol()).is_some())
 }
 
-/// The curve-edit cursor for what an Alt press takes where [`alt_converts`]: a handle, an anchor
-/// (converted), a segment (reshaped).
+/// The cursor where [`alt_converts`]: Alt lends the Anchor Point tool, so its caret over a handle
+/// end or an anchor, the Reshape Segment cursor over a segment.
 fn alt_cursor(cx: &ToolContext, p: Point) -> Cursor {
     let point = cx.point_tol();
-    if hit_handle(cx, p, point).is_some() {
-        Cursor::CurveEditHandle
-    } else if crate::draw2::anchor_in(cx, editable_paths(cx), p, point).is_some() {
-        Cursor::CurveEditConvert
+    if hit_handle(cx, p, point).is_some() || crate::draw2::anchor_in(cx, crate::draw2::shown_paths(cx), p, point).is_some() {
+        Cursor::AnchorPoint
     } else {
-        Cursor::CurveEditLine
+        Cursor::ReshapeSegment
     }
 }
 
@@ -380,6 +378,7 @@ impl Tool for PenTool {
         o
     }
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
+        // An Alt gesture under way keeps the Anchor Point tool's cursor.
         if let Some(t) = &self.convert {
             return t.cursor(cx, p, m);
         }
@@ -397,10 +396,6 @@ impl Tool for PenTool {
         }
         if alt_converts(cx, p, m) {
             return alt_cursor(cx, p);
-        }
-        // Alt lends the Anchor Point tool's gestures while a selected path could take them.
-        if m.alt && !self.drawing && self.drag.is_none() && editable_paths(cx).next().is_some() {
-            return Cursor::CurveEditIntent;
         }
         if !self.drawing {
             match spine_click(cx, p, tol).as_deref() {
@@ -1172,17 +1167,16 @@ mod tests {
         let alt = Mods { alt: true, ..Mods::default() };
         let t = PenTool::default();
         let cx0 = cx(&d, &s, &p);
-        assert_eq!(t.cursor(&cx0, Point::new(250.0, 101.0), alt), Cursor::CurveEditHandle);
-        assert_eq!(t.cursor(&cx0, Point::new(200.0, 101.0), alt), Cursor::CurveEditConvert);
+        // Alt lends the Anchor Point tool, and its caret with it.
+        assert_eq!(t.cursor(&cx0, Point::new(250.0, 101.0), alt), Cursor::AnchorPoint);
+        assert_eq!(t.cursor(&cx0, Point::new(200.0, 101.0), alt), Cursor::AnchorPoint);
         assert_eq!(t.cursor(&cx0, Point::new(250.0, 101.0), Mods::default()), Cursor::Pen);
-        // Away from the path, Alt says the Pen lends the Anchor Point tool's gestures.
-        assert_eq!(t.cursor(&cx0, Point::new(150.0, 300.0), alt), Cursor::CurveEditIntent);
+        assert_eq!(t.cursor(&cx0, Point::new(150.0, 300.0), alt), Cursor::Pen);
         // A drag of the handle moves it alone, as one gesture.
         let mut t = PenTool::default();
         assert_eq!(t.pointer(&cx0, &PointerEvent::new(PointerKind::Down, 250.0, 101.0).with_mods(alt)), vec![]);
         assert!(t.busy());
         let a = t.pointer(&cx0, &PointerEvent::new(PointerKind::Drag, 260.0, 140.0).with_mods(alt));
-        assert_eq!(t.cursor(&cx0, Point::new(260.0, 140.0), alt), Cursor::CurveEditMove);
         assert_eq!(
             a,
             vec![
@@ -1199,7 +1193,7 @@ mod tests {
         // With other anchors direct-selected the handles of this one are hidden, and not grabbed.
         s.anchors.insert(id, std::collections::BTreeSet::from([(0, 0)]));
         let cx1 = cx(&d, &s, &p);
-        assert_eq!(t.cursor(&cx1, Point::new(250.0, 101.0), alt), Cursor::CurveEditIntent);
+        assert_eq!(t.cursor(&cx1, Point::new(250.0, 101.0), alt), Cursor::Pen);
     }
 
     /// #494: Alt held over a segment of a selected path reshapes it as the Anchor Point tool does,
@@ -1211,10 +1205,11 @@ mod tests {
         let cx = cx(&d, &s, &p);
         let alt = Mods { alt: true, ..Mods::default() };
         let mut t = PenTool { drawing: true, ..PenTool::default() };
-        assert_eq!(t.cursor(&cx, Point::new(150.0, 302.0), alt), Cursor::CurveEditLine);
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 302.0), alt), Cursor::ReshapeSegment);
         assert_eq!(t.cursor(&cx, Point::new(150.0, 302.0), Mods::default()), Cursor::Pen);
         assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 302.0).with_mods(alt)), vec![]);
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 262.0).with_mods(alt));
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 262.0), alt), Cursor::ReshapeSegment, "kept during the reshape");
         assert_eq!(a[0], Action::Begin("Reshape".into()));
         assert!(
             matches!(&a[1], Action::Preview(c, v) if c == "path.reshapeSegment" && v["id"] == id.0 && v["segment"] == 0 && v["dy"] == -40.0),

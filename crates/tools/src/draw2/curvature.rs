@@ -571,14 +571,11 @@ impl Tool for CurvatureTool {
         o
     }
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
-        if matches!(self.drag, Some((_, _, true))) {
-            return Cursor::CurveEditMove;
-        }
         if self.active(cx).is_some() {
             return match self.hit_point(cx, p) {
                 Some(0) if !self.closed && self.pts.len() >= 3 => Cursor::PenClose,
-                Some(_) if m.alt => Cursor::CurveEditConvert,
-                Some(_) => Cursor::CurveEditAnchor,
+                Some(_) if m.alt => Cursor::PenConvert,
+                Some(_) => Cursor::Move,
                 None => Cursor::Curvature,
             };
         }
@@ -590,11 +587,11 @@ impl Tool for CurvatureTool {
         if let Some((id, si, ai)) = anchor_in(cx, editable_paths(cx), p, tol) {
             let open_end = subpath(cx, id, si).is_some_and(|sp| !sp.closed && (ai == 0 || ai + 1 == sp.anchors.len()));
             return if m.alt {
-                Cursor::CurveEditConvert
+                Cursor::PenConvert
             } else if open_end {
                 Cursor::PenContinue
             } else {
-                Cursor::CurveEditAnchor
+                Cursor::Move
             };
         }
         if end.is_none() && segment_in(cx, editable_paths(cx), p, tol).is_some() {
@@ -834,7 +831,7 @@ mod tests {
         let (s, p) = (selected(id, None), paint());
         let cx = quiet(&d, &s, &p);
         let mut t = CurvatureTool::default();
-        assert_eq!(t.cursor(&cx, pt(250.0, 81.0), Mods::default()), Cursor::CurveEditAnchor);
+        assert_eq!(t.cursor(&cx, pt(250.0, 81.0), Mods::default()), Cursor::Move);
         assert_eq!(t.cursor(&cx, pt(450.0, 61.0), Mods::default()), Cursor::PenContinue);
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 251.0, 81.0));
         assert_eq!(a, vec![Action::Exec("select.anchors".into(), json!({"id": id.0, "anchors": [[0, 2]], "mode": "set"}))]);
@@ -843,7 +840,6 @@ mod tests {
         let moved = edit_op(&a[1]).map(|(op, v)| (op, v["anchor"].clone(), v["x"].clone(), v["y"].clone()));
         assert_eq!(moved, Some(("move", json!(2), json!(260.0), json!(140.0))));
         assert!(t.busy());
-        assert_eq!(t.cursor(&cx, pt(260.0, 140.0), Mods::default()), Cursor::CurveEditMove);
         assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 260.0, 140.0)), vec![Action::Commit]);
         // A press without a drag only selects.
         assert_eq!(press(&mut t, &cx, 100.0, 0.0, false).len(), 1);
@@ -859,7 +855,7 @@ mod tests {
         let to = |a: &[Action]| a.iter().find(|a| matches!(a, Action::Exec(c, _) if c == "path.convertAnchor")).cloned();
         let a = press(&mut t, &cx, 100.0, 0.0, true);
         assert!(matches!(to(&a), Some(Action::Exec(_, v)) if v["anchor"] == 1 && v["to"] == "corner"), "{a:?}");
-        assert_eq!(t.cursor(&cx, pt(100.0, 0.0), Mods { alt: true, ..Mods::default() }), Cursor::CurveEditConvert);
+        assert_eq!(t.cursor(&cx, pt(100.0, 0.0), Mods { alt: true, ..Mods::default() }), Cursor::PenConvert);
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, 0.0, 100.0));
         assert!(matches!(to(&a), Some(Action::Exec(_, v)) if v["anchor"] == 0 && v["to"] == "smooth"), "{a:?}");
         // Delete is the tool's while a point is current, and removes it.

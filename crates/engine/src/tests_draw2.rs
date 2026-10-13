@@ -870,7 +870,7 @@ fn pen_with_cmd_borrows_direct_selection_and_goes_on_drawing() {
     gesture(&mut s, &[(200.0, 300.0), (250.0, 300.0)], none);
     let id = s.doc().unwrap().selection.objects[0];
     assert_eq!(s.cursor(Point::new(250.0, 300.0), none, v), vectorcraft_tools::Cursor::Pen);
-    assert_eq!(s.cursor(Point::new(250.0, 300.0), cmd, v), vectorcraft_tools::Cursor::CurveEditHandle, "Direct Selection's, over the handle");
+    assert_eq!(s.cursor(Point::new(250.0, 300.0), cmd, v), vectorcraft_tools::Cursor::ArrowHollow, "Direct Selection's");
     // The new anchor's outgoing handle: it moves, its incoming one turning with it.
     s.pointer(&PointerEvent::new(PointerKind::Down, 250.0, 300.0).with_mods(cmd), v).unwrap();
     assert_eq!(s.tool_id(), "directSelection");

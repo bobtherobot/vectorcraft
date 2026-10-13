@@ -213,27 +213,23 @@ impl Tool for AnchorTool {
                 }
             }
             _ => match self.state {
-                State::Convert { .. } => Cursor::CurveEditConvert,
-                State::Handle { began: true, .. } | State::Reshape { began: true, .. } => Cursor::CurveEditMove,
-                State::Handle { .. } => Cursor::CurveEditHandle,
-                State::Reshape { .. } => Cursor::CurveEditLine,
-                State::Idle => convert_cursor(cx, p).unwrap_or(Cursor::CurveEditIntent),
+                State::Reshape { .. } => Cursor::ReshapeSegment,
+                State::Idle => press_cursor(cx, p),
+                State::Convert { .. } | State::Handle { .. } => Cursor::AnchorPoint,
             },
         }
     }
 }
 
-/// The curve-edit cursor for what an Anchor Point press at `p` would take, in the press's order: a
-/// shown handle, an anchor (which it converts), a segment (which it reshapes).
-pub(crate) fn convert_cursor(cx: &ToolContext, p: Point) -> Option<Cursor> {
-    let point = cx.point_tol();
-    if hit_handle(cx, p, point).is_some() {
-        Some(Cursor::CurveEditHandle)
-    } else if hit_anchor(cx, p, point).is_some() {
-        Some(Cursor::CurveEditConvert)
-    } else {
-        hit_segment(cx, p, cx.pick_tol()).map(|_| Cursor::CurveEditLine)
-    }
+/// The Anchor Point tool's cursor for a press at `p`: the Reshape Segment cursor where it takes a
+/// segment (a path's or a selected blend's spine's), else its caret. Handles and anchors win
+/// over the segments through them, as the press has it.
+pub(crate) fn press_cursor(cx: &ToolContext, p: Point) -> Cursor {
+    let (point, tol) = (cx.point_tol(), cx.pick_tol());
+    let segment = hit_handle(cx, p, point).is_none()
+        && hit_anchor(cx, p, point).is_none()
+        && (hit_segment(cx, p, tol).is_some() || crate::direct::hit_spine_segment(cx, p, tol).is_some());
+    if segment { Cursor::ReshapeSegment } else { Cursor::AnchorPoint }
 }
 
 #[cfg(test)]
@@ -242,28 +238,23 @@ mod tests {
     use crate::testutil::*;
     use vectorcraft_doc::Selection;
 
-    /// The Anchor Point tool shows the curve-edit cursors: white away from paths, black over the
-    /// part a press takes (a segment it reshapes, an anchor it converts), the convert cursor while
-    /// pulling handles out of an anchor.
+    /// The Anchor Point tool has its own caret cursor, not the Pen's start-a-path one, and over a
+    /// segment the Reshape Segment cursor, kept while the segment is dragged.
     #[test]
-    fn anchor_point_tool_shows_the_curve_edit_cursors() {
+    fn anchor_point_tool_shows_its_caret_and_reshape_over_segments() {
         let (d, _) = doc_with_rect();
         let s = Selection::default();
         let p = paint();
         let cx = cx(&d, &s, &p);
         let mut t = AnchorTool::new("anchorPoint");
         let none = Mods::default();
-        assert_eq!(t.cursor(&cx, Point::new(20.0, 20.0), none), Cursor::CurveEditIntent);
-        assert_eq!(t.cursor(&cx, Point::new(150.0, 101.0), none), Cursor::CurveEditLine);
-        assert_eq!(t.cursor(&cx, Point::new(200.0, 100.0), none), Cursor::CurveEditConvert);
-        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 200.0, 100.0));
-        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 230.0, 100.0));
-        assert_eq!(t.cursor(&cx, Point::new(230.0, 100.0), none), Cursor::CurveEditConvert);
-        t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 230.0, 100.0));
+        for at in [Point::new(20.0, 20.0), Point::new(200.0, 100.0)] {
+            assert_eq!(t.cursor(&cx, at, none), Cursor::AnchorPoint, "{at:?}");
+        }
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 101.0), none), Cursor::ReshapeSegment);
         t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 101.0));
-        assert_eq!(t.cursor(&cx, Point::new(150.0, 101.0), none), Cursor::CurveEditLine);
-        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 120.0));
-        assert_eq!(t.cursor(&cx, Point::new(150.0, 120.0), none), Cursor::CurveEditMove);
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 140.0));
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 140.0), none), Cursor::ReshapeSegment);
     }
 
     #[test]

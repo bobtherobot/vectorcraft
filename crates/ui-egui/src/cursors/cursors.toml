@@ -8,79 +8,72 @@
 #   status   wired | skipped | needed | obsolete
 #   slots    the Cursor variants it draws (wired), or asks for (needed)
 #   note     why: the decision and anything the designer clarified
-cursorcraft = "529be17-dirty"
+cursorcraft = "c57bd48-dirty"
 
 [[cursor]]
-id = "AnchorPointConvert"
-info_fp = "83b0c22e"
-status = "obsolete"
-slots = []
-note = "Withdrawn: the Anchor Point tool now shows the shared CurveEditConvert over an anchor. Designer to delete the section."
-
-[[cursor]]
-id = "CurveEditAnchor"
-info_fp = "10ce2605"
+id = "AnchorPoint"
+info_fp = "5f8f3b68"
 status = "needed"
-slots = ["CurveEditAnchor"]
-note = "Shared curve-edit set: Direct Selection over an anchor, Curvature over a point, a dragged anchor over another."
+slots = ["AnchorPoint"]
+note = "Placeholder exported from VectorCraft's caret: the Anchor Point tool, the Pen with Alt over an anchor or handle (Pen+Alt = Anchor Point tool, per the public manual)."
 
 [[cursor]]
-id = "CurveEditClose"
-info_fp = "b78fed12"
+id = "DirectAnchor"
+info_fp = "3413edbf"
 status = "needed"
-slots = ["CurveEditClose"]
-note = "Shared curve-edit set: a dragged open end over its path's other end (cursor only, nothing closes)."
+slots = ["DirectAnchor"]
+note = "Placeholder: Direct Selection over an anchor of an unselected path (white arrow, hollow square, per the public manual)."
 
 [[cursor]]
-id = "CurveEditConvert"
-info_fp = "8858d751"
+id = "DirectAnchorSelected"
+info_fp = "fcdee53f"
 status = "needed"
-slots = ["CurveEditConvert"]
-note = "Shared curve-edit set: over an anchor that converts (Anchor Point, Pen or Curvature with Alt), and pulling out handles."
+slots = ["DirectAnchorSelected"]
+note = "Placeholder: Direct Selection over an anchor of a selected path (white arrow, filled square, per the public manual)."
 
 [[cursor]]
-id = "CurveEditHandle"
-info_fp = "cb039774"
+id = "Eyedropper"
+info_fp = "de06c0fa"
 status = "needed"
-slots = ["CurveEditHandle"]
-note = "Shared curve-edit set: over a shown handle end (Direct Selection, Anchor Point, Pen with Alt)."
+slots = ["Eyedropper"]
+note = "Placeholder exported from upstream's pipette (#1269); replaces the v0.9.0 crosshair export."
 
 [[cursor]]
-id = "CurveEditIntent"
-info_fp = "8ef117e7"
+id = "GroupSelection"
+info_fp = "4f87cfb3"
 status = "needed"
-slots = ["CurveEditIntent"]
-note = "Shared curve-edit set (white): the Anchor Point tool at rest, the Pen with Alt away from a selected path's parts."
+slots = ["GroupSelection"]
+note = "Placeholder: the Group Selection tool, Direct Selection with Alt (white arrow with a plus, per the public manual)."
 
 [[cursor]]
-id = "CurveEditLine"
-info_fp = "8221db3f"
+id = "Hand"
+info_fp = "225e6f99"
 status = "needed"
-slots = ["CurveEditLine"]
-note = "Shared curve-edit set: over a segment a press picks or reshapes, a dragged anchor over a segment."
+slots = ["Hand"]
+note = "Placeholder exported from upstream's open hand (v0.10.0)."
 
 [[cursor]]
-id = "CurveEditMove"
-info_fp = "dc6bbea3"
+id = "HandGrab"
+info_fp = "ab3187b6"
 status = "needed"
-slots = ["CurveEditMove"]
-note = "Shared curve-edit set: dragging an anchor, a segment or a handle."
+slots = ["HandGrab"]
+note = "Placeholder exported from upstream's closed hand (v0.10.0)."
 
 [[cursor]]
 id = "Move"
 id_fp = "0fc6e1af"
-info_fp = "c185f4dc"
+info_fp = "0c3d0174"
 status = "wired"
 slots = ["Move"]
-note = "Redrawn; its own slot (Selection over a selected object, Reshape, Curvature over a point, transform boxes, mesh and pin points, gradient and perspective handles). Curvature over a point moves to the curve-edit set next."
+note = "Redrawn; its own slot (Selection over a selected object or with Alt before the drag, Reshape, Curvature over a point, transform boxes, mesh and pin points, gradient and perspective handles)."
 
 [[cursor]]
 id = "Pen"
 id_fp = "73e4a365"
-info_fp = "38ea9195"
+info_fp = "1a75d8a8"
 status = "wired"
 slots = ["Pen"]
-note = "Redrawn; its own slot (the Pen at rest, Curvature away from its points, the Anchor Point tool)."
+note = "Redrawn; its own slot (the Pen at rest, Curvature away from its points)."
 
 [[cursor]]
 id = "PenAdd"
@@ -109,10 +102,10 @@ note = "Redrawn; its own slot (Pen or Curvature over an open path's end)."
 [[cursor]]
 id = "PenConvert"
 id_fp = "48aab3ad"
-info_fp = "1084d8dd"
+info_fp = "316ffa5f"
 status = "wired"
 slots = ["PenConvert"]
-note = "Redrawn; its own slot (Pen over the last anchor, Pen or Curvature with Alt). The Alt uses move to the curve-edit set next."
+note = "Redrawn; its own slot (Pen over the last anchor while drawing, Curvature with Alt). The Pen with Alt shows AnchorPoint / ReshapeSegment."
 
 [[cursor]]
 id = "PenDelete"
@@ -129,3 +122,31 @@ info_fp = "233c1b92"
 status = "wired"
 slots = ["PenJoin"]
 note = "Redrawn; its own slot (Pen while drawing, over another open path's end)."
+
+[[cursor]]
+id = "ReshapeSegment"
+info_fp = "b6ec95c6"
+status = "needed"
+slots = ["ReshapeSegment"]
+note = "Placeholder: over a segment a drag bends (Direct Selection on curves, Anchor Point, Pen with Alt), the manual's Reshape Segment cursor."
+
+[[cursor]]
+id = "SelectionCopy"
+info_fp = "5b3b8de9"
+status = "needed"
+slots = ["SelectionCopy"]
+note = "Placeholder: Alt-dragging a copy with Selection or Direct Selection (double arrowhead)."
+
+[[cursor]]
+id = "ZoomIn"
+info_fp = "f422829b"
+status = "needed"
+slots = ["ZoomIn"]
+note = "Placeholder exported from upstream's magnifier with a plus (v0.10.0)."
+
+[[cursor]]
+id = "ZoomOut"
+info_fp = "9da447c8"
+status = "needed"
+slots = ["ZoomOut"]
+note = "Placeholder exported from upstream's magnifier with a minus (v0.10.0)."

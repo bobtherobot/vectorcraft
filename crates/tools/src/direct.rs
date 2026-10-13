@@ -30,8 +30,7 @@ use std::borrow::Cow;
 use serde_json::{Value, json};
 use vectorcraft_doc::hit::{HitKind, hit_test};
 use vectorcraft_doc::{AnchorRef, Node, NodeId, NodeKind, Selection};
-use vectorcraft_geom::kurbo::ParamCurveNearest;
-use vectorcraft_geom::{Anchor, PathData, Point, Rect};
+use vectorcraft_geom::{Anchor, PathData, Point, Rect, Vec2};
 
 use crate::bbox::move_delta;
 use crate::corners::{self, CornerDrag, over_widget};
@@ -117,6 +116,16 @@ enum State {
     },
 }
 
+/// How far (pt) a snap must move a dragged point for the arrow to say it snapped.
+const SNAPPED: f64 = 1e-9;
+
+/// Whether a drag step snapped: the snapped move `d` left where the pointer alone put it
+/// (`unsnapped`). With Shift the constraint (General › Constrain Angle) moves it too, so only a
+/// snap's guide tells then.
+fn snapped(d: Vec2, unsnapped: Vec2, shift: bool, guides: &[Overlay]) -> bool {
+    if shift { !guides.is_empty() } else { (d - unsnapped).hypot() > SNAPPED }
+}
+
 pub struct DirectSelectionTool {
     group: bool,
     state: State,
@@ -134,6 +143,8 @@ pub struct DirectSelectionTool {
     handle_snap: HandleSnap,
     /// What the objects being moved snap to, gathered when the move begins.
     move_snap: Option<MoveSnap>,
+    /// The drag snapped to a point or a guide at its last step: the arrow turns hollow.
+    snapped: bool,
     /// The anchor under the pointer (Highlight anchors on mouse over): its path, where it is.
     hover: Option<(NodeId, Point)>,
     guide: GuideEdit,
@@ -156,6 +167,7 @@ impl DirectSelectionTool {
             copy_snap: None,
             handle_snap: HandleSnap::default(),
             move_snap: None,
+            snapped: false,
             hover: None,
             guide: GuideEdit::default(),
             click: None,
@@ -395,6 +407,7 @@ impl Tool for DirectSelectionTool {
                     return vec![Action::Begin("Reshape Spine".into())];
                 }
                 self.spine = None;
+                self.snapped = false;
                 if let Some(g) = self.mesh.hit(cx, &cx.selection.objects, p) {
                     self.state = State::Mesh;
                     return self.mesh.press(g);
@@ -503,6 +516,7 @@ impl Tool for DirectSelectionTool {
                     self.anchor_snap = Some(PointSnap::new(cx, || Targets::for_anchor_drag(cx.doc, cx.selection)));
                 }
                 let mut d = move_delta(start, p, ev.mods.shift);
+                let unsnapped = d;
                 // The grabbed anchor snaps and the others follow it. Shift keeps the move at its
                 // angle, and the anchor slides along it onto what Smart Guides find there (#886).
                 self.guides.clear();
@@ -511,6 +525,7 @@ impl Tool for DirectSelectionTool {
                     let (q, guides) = snap.snap_from(cx, grab + (p - start), shift.as_ref());
                     (d, self.guides) = (q - grab, guides);
                 }
+                self.snapped = snapped(d, unsnapped, ev.mods.shift, &self.guides);
                 out.push(Action::Preview("path.moveAnchors".into(), json!({"dx": d.x, "dy": d.y})));
                 out
             }
@@ -547,6 +562,7 @@ impl Tool for DirectSelectionTool {
                     }
                 }
                 let mut d = move_delta(start, p, ev.mods.shift);
+                let unsnapped = d;
                 self.guides.clear();
                 let snap = if ev.mods.alt { &self.copy_snap } else { &self.anchor_snap };
                 if let (Some(grab), Some(snap)) = (grab, snap) {
@@ -556,6 +572,7 @@ impl Tool for DirectSelectionTool {
                 } else if let Some(snap) = &self.move_snap {
                     (d, self.guides) = snap.snap(cx, start, d, ev.mods.alt);
                 }
+                self.snapped = snapped(d, unsnapped, ev.mods.shift, &self.guides);
                 out.push(Action::Preview(
                     "object.transform".into(),
                     json!({"matrix": matrix_json(vectorcraft_geom::Affine::translate(d)), "copy": ev.mods.alt}),
@@ -577,6 +594,7 @@ impl Tool for DirectSelectionTool {
             }
             (PointerKind::Drag, State::Handle { id, si, ai, out }) => {
                 let (q, guides) = self.handle_snap.snap(cx, (id, si, ai), p, ev.mods.shift);
+                self.snapped = snapped(q.to_vec2(), p.to_vec2(), ev.mods.shift, &guides);
                 self.guides = guides;
                 vec![Action::Preview(
                     "path.setHandle".into(),
@@ -729,11 +747,32 @@ impl Tool for DirectSelectionTool {
         if !self.group && (matches!(self.state, State::Bracket(_)) || over_bracket(cx, p)) {
             return Cursor::PathBracket;
         }
+        let rest = if self.group { Cursor::GroupSelection } else { Cursor::ArrowHollow };
         if !self.group {
             match self.state {
-                State::Handle { .. } | State::Segment { began: true, .. } => return Cursor::CurveEditMove,
-                State::MoveAnchors { began: true, .. } => return drag_target(cx, p).unwrap_or(Cursor::CurveEditMove),
-                State::Idle if !m.alt => {
+                // Alt-dragging leaves a copy behind.
+                State::MoveObject { began: true, .. } if m.alt => return Cursor::SelectionCopy,
+                // Bending a segment keeps the cursor that offered it.
+                State::Segment { began: true, .. } | State::SpineSegment { began: true, .. } => return Cursor::ReshapeSegment,
+                // A drag shows the filled arrow, hollow while it snaps to a point or a guide.
+                State::Handle { .. }
+                | State::SpineHandle { .. }
+                | State::SpinePoint { began: true, .. }
+                | State::TypeArea { began: true, .. }
+                | State::MoveAnchors { began: true, .. }
+                | State::MoveObject { began: true, .. } => {
+                    return if self.snapped { Cursor::ArrowHollow } else { Cursor::Arrow };
+                }
+                // Alt makes it the Group Selection tool for the next press, unless the press takes
+                // a handle, a mesh or spine point, a type frame's edge or a ruler guide.
+                State::Idle if m.alt => {
+                    let other = self.takes_point(cx, p)
+                        || hovered_anchor(cx, p).is_none() && (hit_frame_edge(cx, p, cx.pick_tol()).is_some() || self.guide.cursor(cx, p).is_some());
+                    if !other {
+                        return Cursor::GroupSelection;
+                    }
+                }
+                State::Idle => {
                     if let Some(c) = self.part_under(cx, p, m) {
                         return c;
                     }
@@ -742,80 +781,48 @@ impl Tool for DirectSelectionTool {
             }
         }
         // A press on the highlighted anchor picks it, not the guide.
-        self.guide.cursor(cx, p).filter(|_| self.hover.is_none() || self.guide.busy()).unwrap_or(Cursor::ArrowHollow)
+        self.guide.cursor(cx, p).filter(|_| self.hover.is_none() || self.guide.busy()).unwrap_or(rest)
     }
 }
 
 impl DirectSelectionTool {
-    /// The curve-edit cursor for the path part a press at `p` would pick, in the press's order:
-    /// a shown handle, an anchor, then (after ruler guides) a segment of a path not selected whole.
-    /// Mesh and blend-spine points keep the plain cursor.
-    fn part_under(&self, cx: &ToolContext, p: Point, m: Mods) -> Option<Cursor> {
+    /// A press at `p` takes a mesh point or handle, a direction handle's end, the clicked spine
+    /// point's handle or a spine point, before any anchor or segment.
+    fn takes_point(&self, cx: &ToolContext, p: Point) -> bool {
         let point = cx.point_tol();
-        if self.mesh.hit(cx, &cx.selection.objects, p).is_some() || hit_spine_point(cx, p, point).is_some() {
+        self.mesh.hit(cx, &cx.selection.objects, p).is_some()
+            || hit_handle(cx, p, point).is_some()
+            || self.spine.is_some_and(|sel| hit_spine_handle(cx, sel, p, point).is_some())
+            || hit_spine_point(cx, p, point).is_some()
+    }
+
+    /// The cursor for the path part a press at `p` takes, in the press's order: an anchor (its
+    /// square filled when its path is selected), then a curved segment a drag reshapes (a path's
+    /// not selected whole, or a selected blend's spine's). Handles, mesh and spine points, frame
+    /// edges, ruler guides, straight segments and fills keep the plain cursor.
+    fn part_under(&self, cx: &ToolContext, p: Point, m: Mods) -> Option<Cursor> {
+        let tol = cx.pick_tol();
+        if self.takes_point(cx, p) {
             return None;
         }
-        if hit_handle(cx, p, point).is_some() {
-            return Some(Cursor::CurveEditHandle);
+        // A selected path's anchors or the anchors of the path under the pointer, as Highlight
+        // anchors on mouse over finds them: walking every path on each hover is too slow.
+        if let Some((id, _)) = hovered_anchor(cx, p) {
+            return Some(if cx.selection.contains(id) { Cursor::DirectAnchorSelected } else { Cursor::DirectAnchor });
         }
-        if hit_anchor(cx, p, point).is_some() {
-            return Some(Cursor::CurveEditAnchor);
+        if hit_frame_edge(cx, p, tol).is_some() {
+            return None;
         }
-        if m.shift || self.guide.cursor(cx, p).is_some() || hit_frame_edge(cx, p, cx.pick_tol()).is_some() {
+        if matches!(hit_spine_segment(cx, p, tol), Some((.., false))) {
+            return Some(Cursor::ReshapeSegment);
+        }
+        if m.shift || self.guide.cursor(cx, p).is_some() {
             return None;
         }
         let h = hit_test(cx.doc, p, cx.hit_options())?;
         let whole = cx.selection.contains(h.leaf) && cx.selection.partial(h.leaf).is_none();
-        (!whole && matches!(h.kind, HitKind::Stroke | HitKind::Outline) && segment_at(cx, h.leaf, p).is_some()).then_some(Cursor::CurveEditLine)
-    }
-}
-
-/// While anchors are dragged, what the pointer is over: an anchor that isn't moving
-/// ([`Cursor::CurveEditClose`] when the one anchor dragged is an open end and that anchor is its
-/// subpath's other end, else [`Cursor::CurveEditAnchor`]), or a segment that doesn't move with
-/// them ([`Cursor::CurveEditLine`]). The cursor only tells; the release closes and joins nothing.
-fn drag_target(cx: &ToolContext, p: Point) -> Option<Cursor> {
-    let moving = |id: NodeId, si: usize, ai: usize| cx.selection.contains(id) && cx.selection.partial(id).is_none_or(|s| s.contains(&(si, ai)));
-    let owners = anchor_owners(cx, |n| matches!(n.kind, NodeKind::Path { .. }));
-    let point = cx.point_tol();
-    for &id in &owners {
-        let Some(pd) = cx.doc.node(id).and_then(|n| n.path_data()) else { continue };
-        let near = pd
-            .anchors()
-            .filter(|(si, ai, a)| !moving(id, *si, *ai) && a.p.distance(p) <= point)
-            .min_by(|x, y| x.2.p.distance(p).total_cmp(&y.2.p.distance(p)));
-        if let Some((si, ai, _)) = near {
-            return Some(if closes(cx, id, pd, si, ai) { Cursor::CurveEditClose } else { Cursor::CurveEditAnchor });
-        }
-    }
-    let tol = cx.pick_tol();
-    for &id in &owners {
-        let Some(pd) = cx.doc.node(id).and_then(|n| n.path_data()) else { continue };
-        for (si, sp) in pd.subpaths.iter().enumerate() {
-            let n = sp.anchors.len();
-            for seg in 0..sp.segment_count() {
-                let (Some(a), Some(b)) = (seg.checked_rem(n), (seg + 1).checked_rem(n)) else { continue };
-                if moving(id, si, a) || moving(id, si, b) {
-                    continue;
-                }
-                if sp.segment(seg).nearest(p, 1e-6).distance_sq.sqrt() <= tol {
-                    return Some(Cursor::CurveEditLine);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Whether anchor `ai` of subpath `si` of path `id` is the other end of the open subpath whose
-/// end is the one anchor being dragged.
-fn closes(cx: &ToolContext, id: NodeId, pd: &PathData, si: usize, ai: usize) -> bool {
-    let Some(sp) = pd.subpaths.get(si).filter(|sp| !sp.closed && sp.anchors.len() >= 2) else { return false };
-    let last = sp.anchors.len() - 1;
-    let dragged = cx.selection.partial(id).filter(|s| cx.selection.objects.len() == 1 && s.len() == 1).and_then(|s| s.first().copied());
-    match dragged {
-        Some((dsi, dai)) if dsi == si => (dai == 0 && ai == last) || (dai == last && ai == 0),
-        _ => false,
+        let curved = matches!(h.kind, HitKind::Stroke | HitKind::Outline) && segment_at(cx, h.leaf, p).is_some_and(|s| s.curved);
+        (!whole && curved).then_some(Cursor::ReshapeSegment)
     }
 }
 
@@ -1300,53 +1307,79 @@ mod tests {
         assert_eq!(t.pointer(&c, &PointerEvent::new(PointerKind::Down, 102.5, 300.0)), vec![Action::Begin("Reshape".into())], "the handle");
     }
 
-    /// The curve-edit cursors: black over the part a press picks (a handle, an anchor, a segment
-    /// of a path not selected whole), the hollow arrow elsewhere, with Alt (which picks the whole
-    /// path) and with Group Selection.
+    /// Direct Selection's cursors from Illustrator's manual: the white arrow at rest; over an anchor
+    /// a square, hollow on an unselected path and filled on a selected one; the Reshape Segment
+    /// cursor over a curved segment a drag reshapes, not over a straight one (which moves) or a
+    /// path selected whole (which moves whole); Group Selection's plus with Alt and as its tool.
     #[test]
-    fn hovering_path_parts_shows_the_curve_edit_cursors() {
-        let (d, id) = arch_doc();
-        let none = Selection::default();
+    fn hovering_shows_the_anchor_square_reshape_and_group_cursors() {
+        let (d, arch) = arch_doc();
         let p = paint();
+        let m = Mods::default();
+        let pt = Point::new;
+        let none = Selection::default();
         let c = cx(&d, &none, &p);
         let t = DirectSelectionTool::new(false);
-        let m = Mods::default();
-        assert_eq!(t.cursor(&c, Point::new(100.0, 100.0), m), Cursor::CurveEditAnchor);
-        assert_eq!(t.cursor(&c, Point::new(150.0, 100.0), m), Cursor::CurveEditLine);
-        assert_eq!(t.cursor(&c, Point::new(150.0, 150.0), m), Cursor::ArrowHollow, "the fill");
-        assert_eq!(t.cursor(&c, Point::new(20.0, 20.0), m), Cursor::ArrowHollow);
-        assert_eq!(t.cursor(&c, Point::new(100.0, 100.0), Mods { alt: true, ..m }), Cursor::ArrowHollow);
-        assert_eq!(DirectSelectionTool::new(true).cursor(&c, Point::new(100.0, 100.0), m), Cursor::ArrowHollow);
-        let s = anchors_of(id, &[(0, 0)]);
+        assert_eq!(t.cursor(&c, pt(20.0, 20.0), m), Cursor::ArrowHollow);
+        assert_eq!(t.cursor(&c, pt(100.0, 300.0), m), Cursor::DirectAnchor);
+        assert_eq!(t.cursor(&c, pt(150.0, 262.5), m), Cursor::ReshapeSegment);
+        assert_eq!(t.cursor(&c, pt(150.0, 100.0), m), Cursor::ArrowHollow, "a straight segment moves");
+        assert_eq!(t.cursor(&c, pt(150.0, 150.0), m), Cursor::ArrowHollow, "the fill");
+        let alt = Mods { alt: true, ..m };
+        assert_eq!(t.cursor(&c, pt(100.0, 300.0), alt), Cursor::GroupSelection);
+        assert_eq!(DirectSelectionTool::new(true).cursor(&c, pt(100.0, 300.0), m), Cursor::GroupSelection);
+        let mut whole = Selection::default();
+        whole.set([arch]);
+        let c = cx(&d, &whole, &p);
+        assert_eq!(t.cursor(&c, pt(200.0, 300.0), m), Cursor::DirectAnchorSelected);
+        assert_eq!(t.cursor(&c, pt(150.0, 262.5), m), Cursor::ArrowHollow, "a path selected whole moves whole");
+        // One anchor selected: its handle end shows and keeps the plain arrow, Alt or not (a press
+        // takes the handle).
+        let s = anchors_of(arch, &[(0, 0)]);
         let c = cx(&d, &s, &p);
-        assert_eq!(t.cursor(&c, Point::new(100.0, 250.0), m), Cursor::CurveEditHandle);
+        assert_eq!(t.cursor(&c, pt(100.0, 250.0), m), Cursor::ArrowHollow, "a handle end");
+        assert_eq!(t.cursor(&c, pt(100.0, 250.0), alt), Cursor::ArrowHollow, "a handle end with Alt");
+        assert_eq!(t.cursor(&c, pt(200.0, 300.0), m), Cursor::DirectAnchorSelected);
+        // Bending the curve keeps the Reshape Segment cursor.
+        let mut t = DirectSelectionTool::new(false);
+        let c = cx(&d, &none, &p);
+        t.pointer(&c, &PointerEvent::new(PointerKind::Down, 150.0, 262.5));
+        t.pointer(&c, &PointerEvent::new(PointerKind::Drag, 150.0, 230.0));
+        assert_eq!(t.cursor(&c, pt(150.0, 230.0), m), Cursor::ReshapeSegment);
     }
 
-    /// Dragging an anchor: the plain black arrowhead, the anchor badge over another anchor, the
-    /// circle over the other end of its own open path, the line badge over a segment that doesn't
-    /// move with it.
+    /// A drag shows the filled arrow, hollow while it snaps to a point; an Alt-drag copy shows the
+    /// double arrowhead.
     #[test]
-    fn dragging_an_anchor_shows_what_it_is_over() {
-        let (mut d, _) = doc_with_rect();
-        let l = d.layers[0].id;
-        let id = d.alloc_id();
-        let sp = vectorcraft_geom::SubPath::polyline(&[Point::new(300.0, 300.0), Point::new(400.0, 300.0), Point::new(400.0, 400.0)], false);
-        d.insert(Some(l), 1, vectorcraft_doc::Node::path(id, PathData::single(sp), vectorcraft_doc::Appearance::default_art())).unwrap();
-        let s = anchors_of(id, &[(0, 0)]);
+    fn drags_show_the_filled_arrow_hollow_on_a_snap_and_alt_the_copy_cursor() {
+        let (d, _, b) = two_squares();
         let p = paint();
-        let c = cx(&d, &s, &p);
+        let none = Mods::default();
+        let at = |kind, x, y, m: Mods| PointerEvent::new(kind, x, y).with_mods(m);
+        let one = anchors_of(b, &[(0, 0)]);
+        let c = cx(&d, &one, &p);
         let mut t = DirectSelectionTool::new(false);
-        let m = Mods::default();
-        assert_eq!(t.cursor(&c, Point::new(300.0, 300.0), m), Cursor::CurveEditAnchor);
-        t.pointer(&c, &PointerEvent::new(PointerKind::Down, 300.0, 300.0));
-        t.pointer(&c, &PointerEvent::new(PointerKind::Drag, 250.0, 250.0));
-        assert_eq!(t.cursor(&c, Point::new(250.0, 250.0), m), Cursor::CurveEditMove);
-        assert_eq!(t.cursor(&c, Point::new(400.0, 400.0), m), Cursor::CurveEditClose);
-        assert_eq!(t.cursor(&c, Point::new(400.0, 300.0), m), Cursor::CurveEditAnchor);
-        assert_eq!(t.cursor(&c, Point::new(100.0, 100.0), m), Cursor::CurveEditAnchor);
-        assert_eq!(t.cursor(&c, Point::new(400.0, 350.0), m), Cursor::CurveEditLine);
-        assert_eq!(t.cursor(&c, Point::new(200.0, 150.0), m), Cursor::CurveEditLine);
-        assert_eq!(t.cursor(&c, Point::new(350.0, 300.0), m), Cursor::CurveEditMove, "its own segment moves with it");
+        t.pointer(&c, &at(PointerKind::Down, 300.0, 300.0, none));
+        t.pointer(&c, &at(PointerKind::Drag, 250.0, 260.0, none));
+        assert_eq!(t.cursor(&c, Point::new(250.0, 260.0), none), Cursor::Arrow);
+        // Onto A's bottom-right corner.
+        t.pointer(&c, &at(PointerKind::Drag, 203.0, 199.0, none));
+        assert_eq!(t.cursor(&c, Point::new(203.0, 199.0), none), Cursor::ArrowHollow);
+        t.pointer(&c, &at(PointerKind::Up, 203.0, 199.0, none));
+        // Shift with a Constrain Angle of 10°: the constraint alone isn't a snap.
+        let shift = Mods { shift: true, ..none };
+        let tilted = ToolContext { constrain_angle: 10.0, ..cx(&d, &one, &p) };
+        t.pointer(&tilted, &at(PointerKind::Down, 300.0, 300.0, shift));
+        t.pointer(&tilted, &at(PointerKind::Drag, 380.0, 262.0, shift));
+        assert_eq!(t.cursor(&tilted, Point::new(380.0, 262.0), shift), Cursor::Arrow);
+        t.pointer(&tilted, &at(PointerKind::Up, 380.0, 262.0, shift));
+        let mut whole = Selection::default();
+        whole.set([b]);
+        let c = cx(&d, &whole, &p);
+        let alt = Mods { alt: true, ..none };
+        t.pointer(&c, &at(PointerKind::Down, 300.0, 300.0, alt));
+        t.pointer(&c, &at(PointerKind::Drag, 250.0, 260.0, alt));
+        assert_eq!(t.cursor(&c, Point::new(250.0, 260.0), alt), Cursor::SelectionCopy);
     }
 
     /// [`doc_with_rect`] (A, 100..200) and a second square B, 300..400: (A, B).

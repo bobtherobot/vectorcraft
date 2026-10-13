@@ -123,32 +123,77 @@ fn pen(p: &mut Ink, o: Pos2, badge: &str) {
     }
 }
 
-/// The curve-edit cursors until cursorcraft draws them: a stemless arrowhead, tip on the hotspot,
-/// white (`hollow`, node editing) or black (over a path part, or editing it), with a badge at its
-/// lower right: `a` anchor (a square), `l` line, `h` handle (a wave), `c` close (a ring), `^`
-/// convert, none while dragging.
-fn curve_edit(p: &mut Ink, o: Pos2, hollow: bool, badge: char) {
-    let head = vec![o, o + vec2(0.0, 14.0), o + vec2(4.2, 10.4), o + vec2(10.0, 10.0)];
-    poly(p, head, if hollow { HALO } else { INK }, INK);
-    let b = o + vec2(11.0, 12.0);
-    match badge {
-        'a' => poly(p, [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)].map(|(x, y)| b + vec2(x, y)).to_vec(), INK, INK),
-        'l' => line(p, b + vec2(0.0, 6.0), b + vec2(6.0, 0.0)),
-        'h' => {
-            let wave: Vec<Pos2> = (0..=12).map(|i| b + vec2(i as f32 * 0.6, 3.0 - 2.2 * (i as f32 * std::f32::consts::PI / 6.0).sin())).collect();
-            p.add(Shape::line(wave.clone(), Stroke::new(3.0, HALO)));
-            p.add(Shape::line(wave, Stroke::new(1.2, INK)));
-        }
-        'c' => {
-            p.circle_stroke(b + vec2(3.0, 3.0), 3.0, Stroke::new(3.0, HALO));
-            p.circle_stroke(b + vec2(3.0, 3.0), 3.0, Stroke::new(1.2, INK));
-        }
-        '^' => {
-            line(p, b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
-            line(p, b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
-        }
-        _ => {}
+/// The Anchor Point tool's caret (as its toolbar icon): a small hollow square on the anchor at
+/// the hotspot, legs spreading down from its lower corners. Every halo goes under every stroke, so
+/// the legs join the square.
+fn anchor_point(p: &mut Ink, o: Pos2) {
+    let s = 2.5;
+    let square = vec![o + vec2(-s, -s), o + vec2(s, -s), o + vec2(s, s), o + vec2(-s, s)];
+    let legs = [[o + vec2(-s, s), o + vec2(-7.5, 13.0)], [o + vec2(s, s), o + vec2(7.5, 13.0)]];
+    for leg in legs {
+        p.line_segment(leg, Stroke::new(3.0, HALO));
     }
+    p.add(Shape::closed_line(square.clone(), Stroke::new(3.0, HALO)));
+    p.add(Shape::convex_polygon(square.clone(), HALO, Stroke::NONE));
+    for leg in legs {
+        p.line_segment(leg, Stroke::new(1.2, INK));
+    }
+    p.add(Shape::closed_line(square, Stroke::new(1.0, INK)));
+}
+
+/// Halos under every stroke first, then the ink, so crossing strokes don't cut each other.
+fn strokes(p: &mut Ink, parts: &[Vec<Pos2>]) {
+    for s in parts {
+        p.add(Shape::line(s.clone(), Stroke::new(3.0, HALO)));
+    }
+    for s in parts {
+        p.add(Shape::line(s.clone(), Stroke::new(1.2, INK)));
+    }
+}
+
+/// A stemless arrowhead, tip at `o`.
+fn arrowhead(o: Pos2) -> Vec<Pos2> {
+    vec![o, o + vec2(0.0, 14.0), o + vec2(4.2, 10.4), o + vec2(10.0, 10.0)]
+}
+
+/// Direct Selection over an anchor: the white arrow with a small square at its lower right,
+/// filled when the anchor's path is selected.
+fn arrow_square(p: &mut Ink, o: Pos2, filled: bool) {
+    arrow(p, o, true);
+    let b = o + vec2(11.0, 13.0);
+    let square = [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)].map(|(x, y)| b + vec2(x, y)).to_vec();
+    poly(p, square, if filled { INK } else { HALO }, INK);
+}
+
+/// The Reshape Segment cursor: a black arrowhead with a small curve between two anchor marks at
+/// its lower right.
+fn reshape_segment(p: &mut Ink, o: Pos2) {
+    poly(p, arrowhead(o), INK, INK);
+    let (a, c) = (o + vec2(10.0, 19.0), o + vec2(19.0, 19.0));
+    let curve: Vec<Pos2> = (0..=12)
+        .map(|i| {
+            let t = i as f32 / 12.0;
+            a + (c - a) * t - vec2(0.0, 4.5 * (std::f32::consts::PI * t).sin())
+        })
+        .collect();
+    strokes(p, &[curve]);
+    for m in [a, c] {
+        let mark = [(-1.5, -1.5), (1.5, -1.5), (1.5, 1.5), (-1.5, 1.5)].map(|(x, y)| m + vec2(x, y)).to_vec();
+        poly(p, mark, INK, INK);
+    }
+}
+
+/// Group Selection: the white arrow with a plus at its lower right.
+fn arrow_plus(p: &mut Ink, o: Pos2) {
+    arrow(p, o, true);
+    let c = o + vec2(14.0, 15.0);
+    strokes(p, &[vec![c - vec2(3.5, 0.0), c + vec2(3.5, 0.0)], vec![c - vec2(0.0, 3.5), c + vec2(0.0, 3.5)]]);
+}
+
+/// An Alt-drag copy: a black arrowhead in front of a white one set down and to the right.
+fn double_arrowhead(p: &mut Ink, o: Pos2) {
+    poly(p, arrowhead(o + vec2(4.0, 4.0)), HALO, INK);
+    poly(p, arrowhead(o), INK, INK);
 }
 
 fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
@@ -362,6 +407,11 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
     match c {
         Cursor::Arrow => arrow(ink, p, false),
         Cursor::ArrowHollow => arrow(ink, p, true),
+        Cursor::DirectAnchor => arrow_square(ink, p, false),
+        Cursor::DirectAnchorSelected => arrow_square(ink, p, true),
+        Cursor::ReshapeSegment => reshape_segment(ink, p),
+        Cursor::GroupSelection => arrow_plus(ink, p),
+        Cursor::SelectionCopy => double_arrowhead(ink, p),
         Cursor::Move => {
             arrow(ink, p, false);
             double_arrow(ink, p + vec2(15.0, 18.0), vec2(1.0, 0.0));
@@ -380,13 +430,7 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenDelete => pen(ink, p, "-"),
         Cursor::PenClose => pen(ink, p, "o"),
         Cursor::PenContinue => pen(ink, p, "/"),
-        Cursor::CurveEditIntent => curve_edit(ink, p, true, ' '),
-        Cursor::CurveEditAnchor => curve_edit(ink, p, false, 'a'),
-        Cursor::CurveEditLine => curve_edit(ink, p, false, 'l'),
-        Cursor::CurveEditHandle => curve_edit(ink, p, false, 'h'),
-        Cursor::CurveEditMove => curve_edit(ink, p, false, ' '),
-        Cursor::CurveEditClose => curve_edit(ink, p, false, 'c'),
-        Cursor::CurveEditConvert => curve_edit(ink, p, false, '^'),
+        Cursor::AnchorPoint => anchor_point(ink, p),
         Cursor::Curvature => pen(ink, p, "~"),
         Cursor::PenJoin => pen(ink, p, "j"),
         Cursor::PenConvert => pen(ink, p, "^"),
@@ -548,13 +592,18 @@ mod tests {
     use crate::VectorcraftApp;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 46] = [
+    const GLYPHS: [Cursor; 45] = [
         Cursor::Hand,
         Cursor::HandGrab,
         Cursor::ZoomIn,
         Cursor::ZoomOut,
         Cursor::Arrow,
         Cursor::ArrowHollow,
+        Cursor::DirectAnchor,
+        Cursor::DirectAnchorSelected,
+        Cursor::ReshapeSegment,
+        Cursor::GroupSelection,
+        Cursor::SelectionCopy,
         Cursor::Move,
         Cursor::Crosshair,
         Cursor::ResizeH,
@@ -571,13 +620,7 @@ mod tests {
         Cursor::PenContinue,
         Cursor::PenJoin,
         Cursor::PenConvert,
-        Cursor::CurveEditIntent,
-        Cursor::CurveEditAnchor,
-        Cursor::CurveEditLine,
-        Cursor::CurveEditHandle,
-        Cursor::CurveEditMove,
-        Cursor::CurveEditClose,
-        Cursor::CurveEditConvert,
+        Cursor::AnchorPoint,
         Cursor::Curvature,
         Cursor::Text,
         Cursor::Eyedropper,
@@ -661,17 +704,43 @@ mod tests {
         [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2], img.rgba[i + 3]]
     }
 
-    /// The curve-edit arrowhead is white while node editing, black over a path part: just inside
-    /// its tip.
+    /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, ink on
+    /// the square's edge just above it.
     #[test]
-    fn curve_edit_arrowheads_are_white_or_black() {
+    fn anchor_point_hotspot_is_inside_its_square() {
         for ppp in [1.0f32, 2.0] {
-            for (c, white) in [(Cursor::CurveEditIntent, true), (Cursor::CurveEditAnchor, false), (Cursor::CurveEditMove, false)] {
+            let img = rasterize(Cursor::AnchorPoint, ppp).expect("anchor point has a bitmap");
+            let [hx, hy] = img.hotspot.map(usize::from);
+            assert_eq!(pixel(&img, hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
+            let edge = hy - (2.5 * ppp).round() as usize;
+            let ink = pixel(&img, hx, edge);
+            assert!(ink[0] < 64 && ink[3] > 200, "ink on the square's top edge at {ppp}x: {ink:?}");
+        }
+    }
+
+    /// Direct Selection's anchor square is hollow over an unselected path and filled over a
+    /// selected one; the arrow stays white. The Reshape Segment and copy arrowheads are black and
+    /// Group Selection's arrow white, just inside their tips.
+    #[test]
+    fn selection_arrows_are_white_or_black() {
+        let at = |img: &CustomCursorImage, x: f32, y: f32, ppp: f32| {
+            let [hx, hy] = img.hotspot.map(usize::from);
+            pixel(img, hx + (x * ppp).round() as usize, hy + (y * ppp).round() as usize)
+        };
+        for ppp in [1.0f32, 2.0] {
+            for (c, square_white) in [(Cursor::DirectAnchor, true), (Cursor::DirectAnchorSelected, false)] {
                 let img = rasterize(c, ppp).expect("a bitmap");
-                let [hx, hy] = img.hotspot.map(usize::from);
-                let px = pixel(&img, hx + (1.5 * ppp).round() as usize, hy + (6.0 * ppp).round() as usize);
-                assert_eq!(px[0] > 192, white, "{c:?} at {ppp}x: {px:?}");
-                assert!(px[3] > 200, "{c:?} at {ppp}x: {px:?}");
+                let tip = at(&img, 1.5, 6.0, ppp);
+                assert!(tip[0] > 192 && tip[3] > 200, "{c:?}'s arrow is white at {ppp}x: {tip:?}");
+                let square = at(&img, 13.5, 15.5, ppp);
+                assert_eq!(square[0] > 192, square_white, "{c:?}'s square at {ppp}x: {square:?}");
+                assert!(square[3] > 200, "{c:?}'s square at {ppp}x: {square:?}");
+            }
+            for (c, white) in [(Cursor::ReshapeSegment, false), (Cursor::SelectionCopy, false), (Cursor::GroupSelection, true)] {
+                let img = rasterize(c, ppp).expect("a bitmap");
+                let tip = at(&img, 1.5, 6.0, ppp);
+                assert_eq!(tip[0] > 192, white, "{c:?} at {ppp}x: {tip:?}");
+                assert!(tip[3] > 200, "{c:?} at {ppp}x: {tip:?}");
             }
         }
     }

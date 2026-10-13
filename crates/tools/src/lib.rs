@@ -420,6 +420,18 @@ pub enum Cursor {
     #[default]
     Arrow,
     ArrowHollow,
+    /// Direct Selection over an anchor of a path that isn't selected: the white arrow with a
+    /// hollow square.
+    DirectAnchor,
+    /// Direct Selection over an anchor of a selected path: the white arrow with a filled square.
+    DirectAnchorSelected,
+    /// Over a segment a drag reshapes (Direct Selection, the Anchor Point tool, the Pen with Alt):
+    /// an arrowhead with a small curve between two anchor marks.
+    ReshapeSegment,
+    /// The Group Selection tool, and Direct Selection with Alt held: the white arrow with a plus.
+    GroupSelection,
+    /// Alt-dragging a copy with the Selection or Direct Selection tool: a double arrowhead.
+    SelectionCopy,
     Move,
     Crosshair,
     ResizeH,
@@ -439,31 +451,15 @@ pub enum Cursor {
     PenDelete,
     PenClose,
     PenContinue,
+    /// The Anchor Point tool, and the Pen with Alt held (which lends its gestures): a caret, its tip
+    /// on the anchor it converts.
+    AnchorPoint,
     /// The Curvature tool: the pen nib with a curve badge.
     Curvature,
     /// While drawing, over an end of another open path (a click joins the two).
     PenJoin,
     /// Over the last anchor of the path being drawn: a click retracts its outgoing handle.
     PenConvert,
-    /// The curve-edit cursors, shared by the tools that edit anchors, segments and handles (Direct
-    /// Selection, the Anchor Point tool, the Pen with Alt, Curvature over a point). White means the
-    /// tool edits curves; black means a press here changes something, or a change is under way.
-    /// Node editing away from any path part: a white arrowhead.
-    CurveEditIntent,
-    /// Over an anchor, or dragging an anchor over another one: a black arrowhead, square badge.
-    CurveEditAnchor,
-    /// Over a segment, or dragging an anchor over one: a black arrowhead, line badge.
-    CurveEditLine,
-    /// Over a direction handle's end: a black arrowhead, wavy badge.
-    CurveEditHandle,
-    /// Dragging an anchor, a segment or a handle: a plain black arrowhead.
-    CurveEditMove,
-    /// Dragging an open path's end over its other end: a black arrowhead, circle badge. The release
-    /// doesn't close the path; the cursor only says the two ends meet.
-    CurveEditClose,
-    /// Over an anchor a click or drag converts (the Anchor Point tool, the Pen or Curvature with
-    /// Alt), or pulling out its handles: a black arrowhead, caret badge.
-    CurveEditConvert,
     Text,
     Hand,
     HandGrab,
