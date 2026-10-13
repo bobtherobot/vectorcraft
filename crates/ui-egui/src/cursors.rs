@@ -396,12 +396,24 @@ fn magnifier(p: &mut Ink, o: Pos2, out: bool) {
     }
 }
 
+/// The octant of [`Cursor::RotateToward`] cursorcraft draws (the top-right corner); the other seven
+/// are that glyph turned.
+const ROTATE_TOWARD_DRAWN: u8 = 1;
+
 /// The shapes of cursor `c` with its hotspot at `p`; `None` for cursors that stay system cursors
 /// (the busy states): its generated glyph ([`glyphs`]) if it has one, else the hand-drawn one.
 fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
     let ink = &mut Ink::default();
     if let Some(g) = glyphs::generated(c) {
-        glyphs::draw_glyph(ink, p, g);
+        glyphs::draw_glyph(ink, p, g, 0.0);
+        return Some(std::mem::take(&mut ink.0));
+    }
+    // The rotate cursor beside a box: the one drawn glyph, turned to the pointer's side.
+    if let Cursor::RotateToward(octant) = c
+        && let Some(g) = glyphs::generated(Cursor::RotateToward(ROTATE_TOWARD_DRAWN))
+    {
+        let steps = (octant % 8 + 8 - ROTATE_TOWARD_DRAWN) % 8;
+        glyphs::draw_glyph(ink, p, g, f32::from(steps) * std::f32::consts::FRAC_PI_4);
         return Some(std::mem::take(&mut ink.0));
     }
     match c {
@@ -750,6 +762,19 @@ mod tests {
                 assert!(tip[3] > 200, "{c:?} at {ppp}x: {tip:?}");
             }
         }
+    }
+
+    /// The rotate cursor beside a box is the drawn top-right glyph turned to the pointer's side:
+    /// as drawn at the top right, a quarter turn on at the bottom right.
+    #[test]
+    fn the_turned_rotate_cursors_are_the_drawn_glyph_turned() {
+        let pixels = |c: Cursor| rasterize(c, 2.0).map(|i| (i.size, i.hotspot, i.rgba.to_vec())).unwrap();
+        assert!(glyphs::generated(Cursor::RotateToward(ROTATE_TOWARD_DRAWN)).is_some());
+        let drawn = pixels(Cursor::RotateToward(ROTATE_TOWARD_DRAWN));
+        let bottom_right = pixels(Cursor::RotateToward(3));
+        assert_ne!(bottom_right, drawn);
+        assert_eq!((bottom_right.0[0], bottom_right.0[1]), (drawn.0[1], drawn.0[0]), "a quarter turn swaps width and height");
+        assert_eq!(pixels(Cursor::RotateToward(9)), drawn, "octants wrap");
     }
 
     #[test]

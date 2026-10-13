@@ -8,7 +8,7 @@
 #   status   wired | skipped | needed | obsolete
 #   slots    the Cursor variants it draws (wired), or asks for (needed)
 #   note     why: the decision and anything the designer clarified
-cursorcraft = "1550b59"
+cursorcraft = "1550b59-dirty"
 
 [[cursor]]
 id = "AnchorPoint"
@@ -33,6 +33,14 @@ info_fp = "ab5d4aa6"
 status = "wired"
 slots = ["ArrowHollow"]
 note = "Its own slot (Direct Selection at rest, the Cmd/Ctrl Direct Selection the pen family borrows, a drag that snaps)."
+
+[[cursor]]
+id = "CornerRadius"
+id_fp = "57b72740"
+info_fp = "287b26da"
+status = "wired"
+slots = ["CornerRadius"]
+note = "Its own slot (Selection and Direct Selection over or dragging a Live Corners widget)."
 
 [[cursor]]
 id = "Crosshair"
@@ -76,17 +84,19 @@ note = "Drawn from VectorCraft's placeholder; its own slot (the Group Selection 
 
 [[cursor]]
 id = "Hand"
+id_fp = "6ee9284a"
 info_fp = "225e6f99"
-status = "needed"
+status = "wired"
 slots = ["Hand"]
-note = "Placeholder exported from upstream's open hand (v0.10.0)."
+note = "Drawn from VectorCraft's placeholder; its own slot (the Hand tool, Space with any tool)."
 
 [[cursor]]
 id = "HandGrab"
+id_fp = "b4ff6631"
 info_fp = "ab3187b6"
-status = "needed"
+status = "wired"
 slots = ["HandGrab"]
-note = "Placeholder exported from upstream's closed hand (v0.10.0)."
+note = "Drawn from VectorCraft's placeholder; its own slot (panning: Hand or Space drag, middle-button drag). The thumb line's white fill was set to none (a zero-area fill drew a 240 pt spike)."
 
 [[cursor]]
 id = "Move"
@@ -161,6 +171,54 @@ slots = ["ReshapeSegment"]
 note = "Drawn from VectorCraft's placeholder; its own slot (a drag bends the segment: Direct Selection on curves, Anchor Point, Pen with Alt)."
 
 [[cursor]]
+id = "ResizeH"
+id_fp = "313dcd71"
+info_fp = "4d4615ff"
+status = "wired"
+slots = ["ResizeH"]
+note = "Its own slot (left/right box handles, vertical guides, perspective extent handles, the freeform gradient's spread ring, Free Transform's side shear)."
+
+[[cursor]]
+id = "ResizeNeSw"
+id_fp = "468c0ec0"
+info_fp = "d2daae5b"
+status = "wired"
+slots = ["ResizeNeSw"]
+note = "Its own slot (top-right and bottom-left box corners)."
+
+[[cursor]]
+id = "ResizeNwSe"
+id_fp = "0f3f1bb0"
+info_fp = "310bb714"
+status = "wired"
+slots = ["ResizeNwSe"]
+note = "Its own slot (top-left and bottom-right box corners)."
+
+[[cursor]]
+id = "ResizeV"
+id_fp = "cce9f40d"
+info_fp = "b348d037"
+status = "wired"
+slots = ["ResizeV"]
+note = "Its own slot (top/bottom box handles, horizontal guides, perspective horizon, height and cell handles)."
+
+[[cursor]]
+id = "Rotate"
+id_fp = "912e182a"
+info_fp = "6f19d73c"
+status = "wired"
+slots = ["Rotate"]
+note = "Its own slot (the Rotate tool dragging, the Gradient tool's rotate zone, Puppet Warp with Alt, a box's rotate zone exactly on its centre)."
+
+[[cursor]]
+id = "RotateToward"
+id_fp = "97985d0d"
+info_fp = "0d639b40"
+status = "wired"
+slots = [{ RotateToward = 1 }]
+note = "Drawn for octant 1 (top right); VectorCraft turns it in 45° steps for the other seven octants beside a bounding box (Selection, Free Transform)."
+
+[[cursor]]
 id = "SelectionCopy"
 id_fp = "2c292102"
 info_fp = "5b3b8de9"
@@ -186,14 +244,16 @@ note = "Its own slot (the Selection tool over selected type's widget)."
 
 [[cursor]]
 id = "ZoomIn"
+id_fp = "034eff6d"
 info_fp = "f422829b"
-status = "needed"
+status = "wired"
 slots = ["ZoomIn"]
-note = "Placeholder exported from upstream's magnifier with a plus (v0.10.0)."
+note = "Drawn from VectorCraft's placeholder; its own slot (the Zoom tool, Cmd/Ctrl+Space)."
 
 [[cursor]]
 id = "ZoomOut"
+id_fp = "18364b07"
 info_fp = "9da447c8"
-status = "needed"
+status = "wired"
 slots = ["ZoomOut"]
-note = "Placeholder exported from upstream's magnifier with a minus (v0.10.0)."
+note = "Drawn from VectorCraft's placeholder; its own slot (the Zoom tool or Cmd/Ctrl+Space with Alt)."
