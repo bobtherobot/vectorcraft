@@ -437,15 +437,31 @@ pub enum Cursor {
     PenDelete,
     PenClose,
     PenContinue,
-    /// The Anchor Point tool: a caret, its tip on the anchor it converts.
-    AnchorPoint,
     /// The Curvature tool: the pen nib with a curve badge.
     Curvature,
     /// While drawing, over an end of another open path (a click joins the two).
     PenJoin,
-    /// Over the last anchor of the path being drawn (a click retracts its outgoing handle), or with
-    /// Alt held over a selected path's handle or anchor (the Anchor Point tool's gesture).
+    /// Over the last anchor of the path being drawn: a click retracts its outgoing handle.
     PenConvert,
+    /// The curve-edit cursors, shared by the tools that edit anchors, segments and handles (Direct
+    /// Selection, the Anchor Point tool, the Pen with Alt, Curvature over a point). White means the
+    /// tool edits curves; black means a press here changes something, or a change is under way.
+    /// Node editing away from any path part: a white arrowhead.
+    CurveEditIntent,
+    /// Over an anchor, or dragging an anchor over another one: a black arrowhead, square badge.
+    CurveEditAnchor,
+    /// Over a segment, or dragging an anchor over one: a black arrowhead, line badge.
+    CurveEditLine,
+    /// Over a direction handle's end: a black arrowhead, wavy badge.
+    CurveEditHandle,
+    /// Dragging an anchor, a segment or a handle: a plain black arrowhead.
+    CurveEditMove,
+    /// Dragging an open path's end over its other end: a black arrowhead, circle badge. The release
+    /// doesn't close the path; the cursor only says the two ends meet.
+    CurveEditClose,
+    /// Over an anchor a click or drag converts (the Anchor Point tool, the Pen or Curvature with
+    /// Alt), or pulling out its handles: a black arrowhead, caret badge.
+    CurveEditConvert,
     Text,
     Hand,
     HandGrab,

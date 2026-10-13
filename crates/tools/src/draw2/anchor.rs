@@ -185,8 +185,27 @@ impl Tool for AnchorTool {
                     Cursor::NotAllowed
                 }
             }
-            _ => Cursor::AnchorPoint,
+            _ => match self.state {
+                State::Convert { .. } => Cursor::CurveEditConvert,
+                State::Handle { began: true, .. } | State::Reshape { began: true, .. } => Cursor::CurveEditMove,
+                State::Handle { .. } => Cursor::CurveEditHandle,
+                State::Reshape { .. } => Cursor::CurveEditLine,
+                State::Idle => convert_cursor(cx, p).unwrap_or(Cursor::CurveEditIntent),
+            },
         }
+    }
+}
+
+/// The curve-edit cursor for what an Anchor Point press at `p` would take, in the press's order: a
+/// shown handle, an anchor (which it converts), a segment (which it reshapes).
+pub(crate) fn convert_cursor(cx: &ToolContext, p: Point) -> Option<Cursor> {
+    let point = cx.point_tol();
+    if hit_handle(cx, p, point).is_some() {
+        Some(Cursor::CurveEditHandle)
+    } else if hit_anchor(cx, p, point).is_some() {
+        Some(Cursor::CurveEditConvert)
+    } else {
+        hit_segment(cx, p, cx.pick_tol()).map(|_| Cursor::CurveEditLine)
     }
 }
 
@@ -196,17 +215,28 @@ mod tests {
     use crate::testutil::*;
     use vectorcraft_doc::Selection;
 
-    /// The Anchor Point tool has its own caret cursor, not the Pen's start-a-path one.
+    /// The Anchor Point tool shows the curve-edit cursors: white away from paths, black over the
+    /// part a press takes (a segment it reshapes, an anchor it converts), the convert cursor while
+    /// pulling handles out of an anchor.
     #[test]
-    fn anchor_point_tool_shows_its_caret() {
+    fn anchor_point_tool_shows_the_curve_edit_cursors() {
         let (d, _) = doc_with_rect();
         let s = Selection::default();
         let p = paint();
         let cx = cx(&d, &s, &p);
-        let t = AnchorTool::new("anchorPoint");
-        for at in [Point::new(150.0, 101.0), Point::new(20.0, 20.0)] {
-            assert_eq!(t.cursor(&cx, at, Mods::default()), Cursor::AnchorPoint);
-        }
+        let mut t = AnchorTool::new("anchorPoint");
+        let none = Mods::default();
+        assert_eq!(t.cursor(&cx, Point::new(20.0, 20.0), none), Cursor::CurveEditIntent);
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 101.0), none), Cursor::CurveEditLine);
+        assert_eq!(t.cursor(&cx, Point::new(200.0, 100.0), none), Cursor::CurveEditConvert);
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 200.0, 100.0));
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 230.0, 100.0));
+        assert_eq!(t.cursor(&cx, Point::new(230.0, 100.0), none), Cursor::CurveEditConvert);
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 230.0, 100.0));
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 101.0));
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 101.0), none), Cursor::CurveEditLine);
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 120.0));
+        assert_eq!(t.cursor(&cx, Point::new(150.0, 120.0), none), Cursor::CurveEditMove);
     }
 
     #[test]

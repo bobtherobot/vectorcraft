@@ -112,22 +112,32 @@ fn pen(p: &mut Ink, o: Pos2, badge: &str) {
     }
 }
 
-/// The Anchor Point tool's caret (as its toolbar icon): a small hollow square on the anchor at
-/// the hotspot, legs spreading down from its lower corners. Every halo goes under every stroke, so
-/// the legs join the square.
-fn anchor_point(p: &mut Ink, o: Pos2) {
-    let s = 2.5;
-    let square = vec![o + vec2(-s, -s), o + vec2(s, -s), o + vec2(s, s), o + vec2(-s, s)];
-    let legs = [[o + vec2(-s, s), o + vec2(-7.5, 13.0)], [o + vec2(s, s), o + vec2(7.5, 13.0)]];
-    for leg in legs {
-        p.line_segment(leg, Stroke::new(3.0, HALO));
+/// The curve-edit cursors until cursorcraft draws them: a stemless arrowhead, tip on the hotspot,
+/// white (`hollow`, node editing) or black (over a path part, or editing it), with a badge at its
+/// lower right: `a` anchor (a square), `l` line, `h` handle (a wave), `c` close (a ring), `^`
+/// convert, none while dragging.
+fn curve_edit(p: &mut Ink, o: Pos2, hollow: bool, badge: char) {
+    let head = vec![o, o + vec2(0.0, 14.0), o + vec2(4.2, 10.4), o + vec2(10.0, 10.0)];
+    poly(p, head, if hollow { HALO } else { INK }, INK);
+    let b = o + vec2(11.0, 12.0);
+    match badge {
+        'a' => poly(p, [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)].map(|(x, y)| b + vec2(x, y)).to_vec(), INK, INK),
+        'l' => line(p, b + vec2(0.0, 6.0), b + vec2(6.0, 0.0)),
+        'h' => {
+            let wave: Vec<Pos2> = (0..=12).map(|i| b + vec2(i as f32 * 0.6, 3.0 - 2.2 * (i as f32 * std::f32::consts::PI / 6.0).sin())).collect();
+            p.add(Shape::line(wave.clone(), Stroke::new(3.0, HALO)));
+            p.add(Shape::line(wave, Stroke::new(1.2, INK)));
+        }
+        'c' => {
+            p.circle_stroke(b + vec2(3.0, 3.0), 3.0, Stroke::new(3.0, HALO));
+            p.circle_stroke(b + vec2(3.0, 3.0), 3.0, Stroke::new(1.2, INK));
+        }
+        '^' => {
+            line(p, b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
+            line(p, b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
+        }
+        _ => {}
     }
-    p.add(Shape::closed_line(square.clone(), Stroke::new(3.0, HALO)));
-    p.add(Shape::convex_polygon(square.clone(), HALO, Stroke::NONE));
-    for leg in legs {
-        p.line_segment(leg, Stroke::new(1.2, INK));
-    }
-    p.add(Shape::closed_line(square, Stroke::new(1.0, INK)));
 }
 
 fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
@@ -314,7 +324,13 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenDelete => pen(ink, p, "-"),
         Cursor::PenClose => pen(ink, p, "o"),
         Cursor::PenContinue => pen(ink, p, "/"),
-        Cursor::AnchorPoint => anchor_point(ink, p),
+        Cursor::CurveEditIntent => curve_edit(ink, p, true, ' '),
+        Cursor::CurveEditAnchor => curve_edit(ink, p, false, 'a'),
+        Cursor::CurveEditLine => curve_edit(ink, p, false, 'l'),
+        Cursor::CurveEditHandle => curve_edit(ink, p, false, 'h'),
+        Cursor::CurveEditMove => curve_edit(ink, p, false, ' '),
+        Cursor::CurveEditClose => curve_edit(ink, p, false, 'c'),
+        Cursor::CurveEditConvert => curve_edit(ink, p, false, '^'),
         Cursor::Curvature => pen(ink, p, "~"),
         Cursor::PenJoin => pen(ink, p, "j"),
         Cursor::PenConvert => pen(ink, p, "^"),
@@ -472,7 +488,7 @@ mod tests {
     use crate::VectorcraftApp;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 36] = [
+    const GLYPHS: [Cursor; 42] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -491,7 +507,13 @@ mod tests {
         Cursor::PenContinue,
         Cursor::PenJoin,
         Cursor::PenConvert,
-        Cursor::AnchorPoint,
+        Cursor::CurveEditIntent,
+        Cursor::CurveEditAnchor,
+        Cursor::CurveEditLine,
+        Cursor::CurveEditHandle,
+        Cursor::CurveEditMove,
+        Cursor::CurveEditClose,
+        Cursor::CurveEditConvert,
         Cursor::Curvature,
         Cursor::Text,
         Cursor::Eyedropper,
@@ -575,17 +597,18 @@ mod tests {
         [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2], img.rgba[i + 3]]
     }
 
-    /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, ink on
-    /// the square's edge just above it.
+    /// The curve-edit arrowhead is white while node editing, black over a path part: just inside
+    /// its tip.
     #[test]
-    fn anchor_point_hotspot_is_inside_its_square() {
+    fn curve_edit_arrowheads_are_white_or_black() {
         for ppp in [1.0f32, 2.0] {
-            let img = rasterize(Cursor::AnchorPoint, ppp).expect("anchor point has a bitmap");
-            let [hx, hy] = img.hotspot.map(usize::from);
-            assert_eq!(pixel(&img, hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
-            let edge = hy - (2.5 * ppp).round() as usize;
-            let ink = pixel(&img, hx, edge);
-            assert!(ink[0] < 64 && ink[3] > 200, "ink on the square's top edge at {ppp}x: {ink:?}");
+            for (c, white) in [(Cursor::CurveEditIntent, true), (Cursor::CurveEditAnchor, false), (Cursor::CurveEditMove, false)] {
+                let img = rasterize(c, ppp).expect("a bitmap");
+                let [hx, hy] = img.hotspot.map(usize::from);
+                let px = pixel(&img, hx + (1.5 * ppp).round() as usize, hy + (6.0 * ppp).round() as usize);
+                assert_eq!(px[0] > 192, white, "{c:?} at {ppp}x: {px:?}");
+                assert!(px[3] > 200, "{c:?} at {ppp}x: {px:?}");
+            }
         }
     }
 

@@ -11,6 +11,62 @@
 cursorcraft = "529be17-dirty"
 
 [[cursor]]
+id = "AnchorPointConvert"
+info_fp = "83b0c22e"
+status = "obsolete"
+slots = []
+note = "Withdrawn: the Anchor Point tool now shows the shared CurveEditConvert over an anchor. Designer to delete the section."
+
+[[cursor]]
+id = "CurveEditAnchor"
+info_fp = "10ce2605"
+status = "needed"
+slots = ["CurveEditAnchor"]
+note = "Shared curve-edit set: Direct Selection over an anchor, Curvature over a point, a dragged anchor over another."
+
+[[cursor]]
+id = "CurveEditClose"
+info_fp = "b78fed12"
+status = "needed"
+slots = ["CurveEditClose"]
+note = "Shared curve-edit set: a dragged open end over its path's other end (cursor only, nothing closes)."
+
+[[cursor]]
+id = "CurveEditConvert"
+info_fp = "8858d751"
+status = "needed"
+slots = ["CurveEditConvert"]
+note = "Shared curve-edit set: over an anchor that converts (Anchor Point, Pen or Curvature with Alt), and pulling out handles."
+
+[[cursor]]
+id = "CurveEditHandle"
+info_fp = "cb039774"
+status = "needed"
+slots = ["CurveEditHandle"]
+note = "Shared curve-edit set: over a shown handle end (Direct Selection, Anchor Point, Pen with Alt)."
+
+[[cursor]]
+id = "CurveEditIntent"
+info_fp = "8ef117e7"
+status = "needed"
+slots = ["CurveEditIntent"]
+note = "Shared curve-edit set (white): the Anchor Point tool at rest, the Pen with Alt away from a selected path's parts."
+
+[[cursor]]
+id = "CurveEditLine"
+info_fp = "8221db3f"
+status = "needed"
+slots = ["CurveEditLine"]
+note = "Shared curve-edit set: over a segment a press picks or reshapes, a dragged anchor over a segment."
+
+[[cursor]]
+id = "CurveEditMove"
+info_fp = "dc6bbea3"
+status = "needed"
+slots = ["CurveEditMove"]
+note = "Shared curve-edit set: dragging an anchor, a segment or a handle."
+
+[[cursor]]
 id = "Move"
 id_fp = "0fc6e1af"
 info_fp = "c185f4dc"
