@@ -8,42 +8,47 @@
 #   status   wired | skipped | needed | obsolete
 #   slots    the Cursor variants it draws (wired), or asks for (needed)
 #   note     why: the decision and anything the designer clarified
-cursorcraft = "c57bd48-dirty"
+cursorcraft = "1550b59"
 
 [[cursor]]
 id = "AnchorPoint"
+id_fp = "9ce25d0c"
 info_fp = "5f8f3b68"
-status = "needed"
+status = "wired"
 slots = ["AnchorPoint"]
-note = "Placeholder exported from VectorCraft's caret: the Anchor Point tool, the Pen with Alt over an anchor or handle (Pen+Alt = Anchor Point tool, per the public manual)."
+note = "Drawn from VectorCraft's placeholder; its own slot (the Anchor Point tool, the Pen with Alt over an anchor or handle)."
 
 [[cursor]]
 id = "DirectAnchor"
+id_fp = "4ccca660"
 info_fp = "3413edbf"
-status = "needed"
+status = "wired"
 slots = ["DirectAnchor"]
-note = "Placeholder: Direct Selection over an anchor of an unselected path (white arrow, hollow square, per the public manual)."
+note = "Drawn from VectorCraft's placeholder; its own slot (Direct Selection over an anchor of an unselected path)."
 
 [[cursor]]
 id = "DirectAnchorSelected"
+id_fp = "e2a5f78d"
 info_fp = "fcdee53f"
-status = "needed"
+status = "wired"
 slots = ["DirectAnchorSelected"]
-note = "Placeholder: Direct Selection over an anchor of a selected path (white arrow, filled square, per the public manual)."
+note = "Drawn from VectorCraft's placeholder; its own slot (Direct Selection over an anchor of a selected path)."
 
 [[cursor]]
 id = "Eyedropper"
+id_fp = "bb4de203"
 info_fp = "de06c0fa"
-status = "needed"
+status = "wired"
 slots = ["Eyedropper"]
-note = "Placeholder exported from upstream's pipette (#1269); replaces the v0.9.0 crosshair export."
+note = "Drawn from VectorCraft's placeholder (upstream's pipette, #1269); its own slot. Use Precise Cursors keeps the crosshair."
 
 [[cursor]]
 id = "GroupSelection"
+id_fp = "69699f03"
 info_fp = "4f87cfb3"
-status = "needed"
+status = "wired"
 slots = ["GroupSelection"]
-note = "Placeholder: the Group Selection tool, Direct Selection with Alt (white arrow with a plus, per the public manual)."
+note = "Drawn from VectorCraft's placeholder; its own slot (the Group Selection tool, Direct Selection with Alt)."
 
 [[cursor]]
 id = "Hand"
@@ -61,7 +66,7 @@ note = "Placeholder exported from upstream's closed hand (v0.10.0)."
 
 [[cursor]]
 id = "Move"
-id_fp = "0fc6e1af"
+id_fp = "017b5d05"
 info_fp = "0c3d0174"
 status = "wired"
 slots = ["Move"]
@@ -73,11 +78,11 @@ id_fp = "73e4a365"
 info_fp = "1a75d8a8"
 status = "wired"
 slots = ["Pen"]
-note = "Redrawn; its own slot (the Pen at rest, Curvature away from its points)."
+note = "Its own slot (the Pen at rest, Curvature away from its points)."
 
 [[cursor]]
 id = "PenAdd"
-id_fp = "236f8568"
+id_fp = "2b817a27"
 info_fp = "00dc8a51"
 status = "wired"
 slots = ["PenAdd"]
@@ -85,15 +90,15 @@ note = "Redrawn; its own slot (Pen over a selected segment, Add Anchor Point, Cu
 
 [[cursor]]
 id = "PenClose"
-id_fp = "bc49cd0a"
+id_fp = "399d927e"
 info_fp = "55e5661d"
 status = "wired"
 slots = ["PenClose"]
-note = "Redrawn; its own slot (Pen or Curvature over the first point while drawing). Fixed the Curs3or typo in 00-INFO.md, designer approved."
+note = "Redrawn; its own slot (Pen or Curvature over the first point while drawing)."
 
 [[cursor]]
 id = "PenContinue"
-id_fp = "a7dc1df3"
+id_fp = "3ee4e33f"
 info_fp = "3de20588"
 status = "wired"
 slots = ["PenContinue"]
@@ -101,7 +106,7 @@ note = "Redrawn; its own slot (Pen or Curvature over an open path's end)."
 
 [[cursor]]
 id = "PenConvert"
-id_fp = "48aab3ad"
+id_fp = "5eb960ab"
 info_fp = "316ffa5f"
 status = "wired"
 slots = ["PenConvert"]
@@ -109,7 +114,7 @@ note = "Redrawn; its own slot (Pen over the last anchor while drawing, Curvature
 
 [[cursor]]
 id = "PenDelete"
-id_fp = "740b73f4"
+id_fp = "e72e5426"
 info_fp = "f3da7c1b"
 status = "wired"
 slots = ["PenDelete"]
@@ -117,7 +122,7 @@ note = "Redrawn; its own slot (Pen over a selected anchor, Delete Anchor Point, 
 
 [[cursor]]
 id = "PenJoin"
-id_fp = "72cb0502"
+id_fp = "a1ed2c40"
 info_fp = "233c1b92"
 status = "wired"
 slots = ["PenJoin"]
@@ -125,17 +130,19 @@ note = "Redrawn; its own slot (Pen while drawing, over another open path's end).
 
 [[cursor]]
 id = "ReshapeSegment"
+id_fp = "a49d82c9"
 info_fp = "b6ec95c6"
-status = "needed"
+status = "wired"
 slots = ["ReshapeSegment"]
-note = "Placeholder: over a segment a drag bends (Direct Selection on curves, Anchor Point, Pen with Alt), the manual's Reshape Segment cursor."
+note = "Drawn from VectorCraft's placeholder; its own slot (a drag bends the segment: Direct Selection on curves, Anchor Point, Pen with Alt)."
 
 [[cursor]]
 id = "SelectionCopy"
+id_fp = "2c292102"
 info_fp = "5b3b8de9"
-status = "needed"
+status = "wired"
 slots = ["SelectionCopy"]
-note = "Placeholder: Alt-dragging a copy with Selection or Direct Selection (double arrowhead)."
+note = "Drawn from VectorCraft's placeholder; its own slot (Alt-dragging a copy with Selection or Direct Selection)."
 
 [[cursor]]
 id = "ZoomIn"

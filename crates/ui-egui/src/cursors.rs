@@ -704,17 +704,20 @@ mod tests {
         [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2], img.rgba[i + 3]]
     }
 
-    /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, ink on
-    /// the square's edge just above it.
+    /// The Anchor Point caret's hotspot is the middle of its hollow square: white there, with the
+    /// square's ink a few points above it, however the designer sizes the square.
     #[test]
     fn anchor_point_hotspot_is_inside_its_square() {
         for ppp in [1.0f32, 2.0] {
             let img = rasterize(Cursor::AnchorPoint, ppp).expect("anchor point has a bitmap");
             let [hx, hy] = img.hotspot.map(usize::from);
             assert_eq!(pixel(&img, hx, hy), [255, 255, 255, 255], "hollow at the hotspot at {ppp}x");
-            let edge = hy - (2.5 * ppp).round() as usize;
-            let ink = pixel(&img, hx, edge);
-            assert!(ink[0] < 64 && ink[3] > 200, "ink on the square's top edge at {ppp}x: {ink:?}");
+            let reach = (4.0 * ppp).round() as usize;
+            let inked = (1..=reach.min(hy)).any(|d| {
+                let p = pixel(&img, hx, hy - d);
+                p[0] < 64 && p[3] > 200
+            });
+            assert!(inked, "ink on the square's top edge within 4 points above the hotspot at {ppp}x");
         }
     }
 
@@ -728,14 +731,18 @@ mod tests {
             pixel(img, hx + (x * ppp).round() as usize, hy + (y * ppp).round() as usize)
         };
         for ppp in [1.0f32, 2.0] {
-            for (c, square_white) in [(Cursor::DirectAnchor, true), (Cursor::DirectAnchorSelected, false)] {
+            for c in [Cursor::DirectAnchor, Cursor::DirectAnchorSelected] {
                 let img = rasterize(c, ppp).expect("a bitmap");
                 let tip = at(&img, 1.5, 6.0, ppp);
                 assert!(tip[0] > 192 && tip[3] > 200, "{c:?}'s arrow is white at {ppp}x: {tip:?}");
-                let square = at(&img, 13.5, 15.5, ppp);
-                assert_eq!(square[0] > 192, square_white, "{c:?}'s square at {ppp}x: {square:?}");
-                assert!(square[3] > 200, "{c:?}'s square at {ppp}x: {square:?}");
             }
+            // Same arrow, so the filled square shows as more ink than the hollow one.
+            let ink = |c| {
+                let img = rasterize(c, ppp).expect("a bitmap");
+                img.rgba.as_chunks::<4>().0.iter().filter(|p| p[0] < 64 && p[3] > 200).count()
+            };
+            let (hollow, filled) = (ink(Cursor::DirectAnchor), ink(Cursor::DirectAnchorSelected));
+            assert!(filled > hollow, "the selected path's square is filled at {ppp}x: {filled} vs {hollow}");
             for (c, white) in [(Cursor::ReshapeSegment, false), (Cursor::SelectionCopy, false), (Cursor::GroupSelection, true)] {
                 let img = rasterize(c, ppp).expect("a bitmap");
                 let tip = at(&img, 1.5, 6.0, ppp);

@@ -29,6 +29,10 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
 - Work on the current cursor branch (e.g. `cursor-workflow`), never on `main`: the user merges.
 
 ## 1. Orient
+- A run after an earlier one (the designer changed something in between): start over from step 1.
+  Discard that run's diff, groupings, proposals and unanswered questions; only what's committed
+  (and the designer's answers that still apply to the new files) carries over. Uncommitted
+  changes of the earlier run: redo them from the new handoff, don't build on them.
 - cursorcraft = the argument's checkout, else `$CURSORCRAFT_DIR`, else `~/projects/cursorcraft`;
   folder = argument, else `<cursorcraft>/svg-vectorcraft`. Missing → stop and say where you looked.
 - `cargo run -q --manifest-path <cursorcraft>/Cargo.toml -- check <folder>`: problems → stop and
