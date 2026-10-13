@@ -19,6 +19,30 @@ slots = ["AnchorPoint"]
 note = "Drawn from VectorCraft's placeholder; its own slot (the Anchor Point tool, the Pen with Alt over an anchor or handle)."
 
 [[cursor]]
+id = "Arrow"
+id_fp = "dd70eee1"
+info_fp = "b8734f2e"
+status = "wired"
+slots = ["Arrow"]
+note = "Its own slot (Selection at rest, Selection and Direct Selection drags, tools with no cursor of their own, resting states of Live Paint Selection, Reshape, Free Transform, Puppet Warp, Crop Image, the perspective tools)."
+
+[[cursor]]
+id = "ArrowHollow"
+id_fp = "2cb36b08"
+info_fp = "ab5d4aa6"
+status = "wired"
+slots = ["ArrowHollow"]
+note = "Its own slot (Direct Selection at rest, the Cmd/Ctrl Direct Selection the pen family borrows, a drag that snaps)."
+
+[[cursor]]
+id = "Crosshair"
+id_fp = "02880ef8"
+info_fp = "73c8265c"
+status = "wired"
+slots = ["Crosshair"]
+note = "Its own slot (the generic drawing cursor, and every Use Precise Cursors state)."
+
+[[cursor]]
 id = "DirectAnchor"
 id_fp = "4ccca660"
 info_fp = "3413edbf"
