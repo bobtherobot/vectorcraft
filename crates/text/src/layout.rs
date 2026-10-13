@@ -13,7 +13,8 @@ use crate::composer::{Breakpoint, Params, compose};
 use crate::fontdb::FontDb;
 use crate::hyphen::hyphen_points;
 use crate::shape::{
-    Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, no_line_end, no_line_start, punct, shape_range, soft_line_start, style_metrics,
+    Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, mark_word_ends, no_line_end, no_line_start, punct, shape_range, soft_line_start,
+    style_metrics,
 };
 use crate::{Composer, FirstBaseline, InlineGlyph, LayoutOptions, LineInfo, OtFeatures, PositionedGlyph, TextLayout, VerticalAlign};
 
@@ -55,6 +56,15 @@ impl Ctx<'_> {
                 let extra = upright_cell(g) - g.face.advance(g.gid) * g.sx;
                 g.dx += extra * 0.5;
                 g.adv += extra;
+                // Proportional Metrics: `vpal` (and the vertical kerning with it) moves it and
+                // changes its length down the column, in fonts with vertical metrics (else the cell
+                // stays as it is, #966).
+                if let Some(a) = g.vpal.filter(|_| g.tcy.is_none() && g.face.vertical_glyph(g.gid).is_some()) {
+                    g.dx += a.dx;
+                    g.dy += a.dy;
+                    g.adv += a.advance;
+                    g.proportional = a.proportional;
+                }
             }
         }
         v
@@ -1176,8 +1186,10 @@ mod wrapping_tests {
                 ch,
                 tcy: None,
                 inline: None,
+                word_end: false,
                 lead: 0.0,
                 proportional: false,
+                vpal: None,
                 level: unicode_bidi::Level::ltr(),
             })
             .collect()
@@ -1433,6 +1445,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
         let bidi = para_bidi(text.get(pr.clone()).unwrap_or_default(), para.direction);
         let rtl = is_rtl(bidi.as_ref());
         let mut sg = cx.shape_para(pr.clone(), bidi.as_ref());
+        // Thai, Lao, Khmer and Myanmar break lines between words, not at spaces.
+        mark_word_ends(text.get(pr.clone()).unwrap_or_default(), pr.start, &mut sg);
         // Japanese composition: consecutive punctuation shares one half-em space.
         let compressed = if para.mojikumi == Mojikumi::LineEndHalf { compress_punctuation(&mut sg) } else { vec![] };
         // …and a quarter em between Japanese and Latin text.

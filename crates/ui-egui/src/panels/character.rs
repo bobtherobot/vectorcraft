@@ -655,11 +655,32 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
                 }
             });
         });
-        // Proportional Metrics: full-width glyphs on the font's proportional widths (`palt`).
+        // Proportional Metrics: full-width glyphs on the font's proportional widths (`palt`, `vpal`).
         let proportional = s.as_ref().is_some_and(|s| s.proportional_metrics);
         if menu_item(ui, tl!("Proportional Metrics"), has, proportional) {
             format(app, json!({"proportionalMetrics": !proportional}));
         }
+        ui.separator();
+    }
+    // Digits: the numeral system the selected characters' digits are drawn in, with the Middle
+    // Eastern (Indic) options, as Paragraph Direction is in the Paragraph panel.
+    if app.session.prefs.show_indic_options {
+        let digits = s.as_ref().map(|s| s.digits);
+        ui.add_enabled_ui(has, |ui| {
+            ui.menu_button(format!("   {}", tl!("Digits")), |ui| {
+                use vectorcraft_doc::Digits;
+                for (label, d, key) in [
+                    (tl!("Default"), Digits::Default, "default"),
+                    (tl!("Arabic"), Digits::Arabic, "arabic"),
+                    (tl!("Hindi"), Digits::Hindi, "hindi"),
+                    (tl!("Farsi"), Digits::Farsi, "farsi"),
+                ] {
+                    if menu_item(ui, label, true, digits == Some(d)) {
+                        format(app, json!({"digits": key}));
+                    }
+                }
+            });
+        });
         ui.separator();
     }
     for l in ["Standard Vertical Roman Alignment", "Tate-chu-yoko", "Fractional Widths", "System Layout", "No Break"] {
@@ -804,5 +825,19 @@ mod tests {
         assert_eq!(shown(&mut app), (false, false));
         app.session.prefs.show_east_asian_options = true;
         assert_eq!(shown(&mut app), (true, true));
+    }
+
+    /// Digits is in the panel menu with the Middle Eastern (Indic) options only, as Paragraph
+    /// Direction is in the Paragraph panel.
+    #[test]
+    fn digits_show_with_the_indic_options() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        let id = app.session.execute("text.create", &json!({"x": 20, "y": 50, "text": "صفحة 3"})).unwrap()["id"].clone();
+        app.session.execute("select.set", &json!({"ids": [id]})).unwrap();
+        let shown = |app: &mut VectorcraftApp| crate::tests_labels::painted_text(app, menu).contains("Digits");
+        assert!(!shown(&mut app));
+        app.session.prefs.show_indic_options = true;
+        assert!(shown(&mut app));
     }
 }
