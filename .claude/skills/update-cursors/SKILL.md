@@ -14,7 +14,12 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   never what Adobe's cursors look like.
 - Never hand-edit a generated `const`: regenerate it. Only edit `GENERATED` and the consts block
   in `crates/ui-egui/src/cursors/glyphs.rs`, and `cursors.toml` beside it.
-- In `00-INFO.md`, only append sections, or write back wording the designer approved.
+- In `00-INFO.md`, only append sections, mark a section as a placeholder (see 5.), or write back
+  wording the designer approved. Nothing but cursor sections below the designer's header: no notes,
+  analysis or doc references of your own.
+- Write for a designer reading the raw file: plain words, each paragraph or bullet on one line
+  (never hard-wrap at ~80 or 100 columns), short bullet lists where a section lists cases. When you
+  edit a wrapped paragraph, rejoin it onto one line.
 - Never invent a tool to give a cursor a home: record it `skipped` and list it.
 - Cursors are named by **id**: cursorcraft's file name without `.svg`, equal to the `Cursor`
   value it draws (`PenAdd.svg` → `PenAdd` → `Cursor::PenAdd`). A cursor with no value yet has a
@@ -60,8 +65,8 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
 - Only the marker line removed (info_fp unchanged, the row no longer `needed`): no decision.
 
 ## 4. Converse
-- Batch every uncertain call into one round of questions (AskUserQuestion, ≤4 per call, more
-  rounds if needed): name the cursor, what you'd do, and the alternative.
+- Batch every uncertain call into one round of questions, asked in plain text (not
+  AskUserQuestion): name the cursor, what you'd do, and the alternative.
 - When an answer clarifies the description, show the new wording; on approval, rewrite that
   section in `00-INFO.md` (keep the marker line if present).
 
@@ -75,12 +80,24 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
 
   Needed by VectorCraft (`Cursor::<Variant>`).
 
-  <Tool>, <state / modifier keys / what's under the pointer>: <what the cursor must convey>.
-  Hotspot: <where the click lands>. Source: <helpx URL from plan/illustrator notes, if any>.
+  Look: <what it should look like, if decided>.
+
+  Shown when <the situation, in plain words>:
+  - <Tool, state or modifier key>.
+
+  Hotspot: <where the click lands>.
   ```
   and record it `status = "needed"`, `slots = [<Variant>]`. The variant must exist: if the need
   is a state VectorCraft doesn't distinguish yet, add the variant (with its tool change, test,
   `precise()` and `cursor_icon` entries) in this sync, or leave the need out.
+- **Hand back what VectorCraft draws.** Whenever VectorCraft adds a cursor look of its own (a
+  hand-drawn fallback in `cursors.rs` for a needed variant) or changes one, export it to
+  `<folder>/<Id>.svg` as the designer's starting point: 32×32, the tip at (5, 5), black ink and
+  white parts as the fallback draws them, no halo, a red `<circle id="hotspot" r="0.25">`, a
+  `<desc>` saying it's a placeholder exported from `cursors.rs` (function name). Never overwrite
+  an SVG the designer drew. In its section (append it first if missing), replace the marker line
+  with: `Cursor::<Id>`. Placeholder drawn by VectorCraft as a starting point: redraw it or touch it up.
+  Run `check` and `gen` on the file; tell the user which SVGs you wrote and what changed.
 - A `needed` entry VectorCraft no longer needs: set `status = "obsolete"`, `slots = []` (no
   `id_fp` needed), and ask the designer to delete the section.
 
