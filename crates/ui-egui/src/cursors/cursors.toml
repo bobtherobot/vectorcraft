@@ -11,6 +11,14 @@
 cursorcraft = "1550b59-dirty"
 
 [[cursor]]
+id = "AddStop"
+id_fp = "10b85c0f"
+info_fp = "acacf892"
+status = "wired"
+slots = ["AddStop"]
+note = "Its own slot (the Gradient tool over the annotator's bar; the freeform gradient over its line or the art)."
+
+[[cursor]]
 id = "AnchorPoint"
 id_fp = "9ce25d0c"
 info_fp = "5f8f3b68"
@@ -33,6 +41,30 @@ info_fp = "ab5d4aa6"
 status = "wired"
 slots = ["ArrowHollow"]
 note = "Its own slot (Direct Selection at rest, the Cmd/Ctrl Direct Selection the pen family borrows, a drag that snaps)."
+
+[[cursor]]
+id = "Blend"
+id_fp = "5fb6b6b7"
+info_fp = "b425fb4e"
+status = "wired"
+slots = ["Blend"]
+note = "Its own slot (the Blend tool away from art)."
+
+[[cursor]]
+id = "BlendAnchor"
+id_fp = "de792386"
+info_fp = "151ba4dd"
+status = "wired"
+slots = ["BlendAnchor"]
+note = "Its own slot (the Blend tool over an anchor point)."
+
+[[cursor]]
+id = "BlendObject"
+id_fp = "df602b40"
+info_fp = "7062eaee"
+status = "wired"
+slots = ["BlendObject"]
+note = "Its own slot (the Blend tool over an object it can blend)."
 
 [[cursor]]
 id = "CornerRadius"
@@ -107,6 +139,14 @@ slots = ["Move"]
 note = "Redrawn; its own slot (Selection over a selected object or with Alt before the drag, Reshape, Curvature over a point, transform boxes, mesh and pin points, gradient and perspective handles)."
 
 [[cursor]]
+id = "PathBracket"
+id_fp = "4eda4138"
+info_fp = "e4d9e3c4"
+status = "wired"
+slots = ["PathBracket"]
+note = "Its own slot (Selection and Direct Selection over or dragging a type-on-a-path bracket)."
+
+[[cursor]]
 id = "Pen"
 id_fp = "73e4a365"
 info_fp = "1a75d8a8"
@@ -161,6 +201,14 @@ info_fp = "233c1b92"
 status = "wired"
 slots = ["PenJoin"]
 note = "Redrawn; its own slot (Pen while drawing, over another open path's end)."
+
+[[cursor]]
+id = "RemoveStop"
+id_fp = "cd01567a"
+info_fp = "893c9820"
+status = "wired"
+slots = ["RemoveStop"]
+note = "Its own slot (a gradient stop or freeform point dragged off to delete it)."
 
 [[cursor]]
 id = "ReshapeSegment"
@@ -227,6 +275,38 @@ slots = ["SelectionCopy"]
 note = "Drawn from VectorCraft's placeholder; its own slot (Alt-dragging a copy with Selection or Direct Selection)."
 
 [[cursor]]
+id = "ShapeBuilder"
+id_fp = "f5d788fe"
+info_fp = "b7d3d507"
+status = "wired"
+slots = ["ShapeBuilder"]
+note = "Its own slot (Shape Builder in merge mode)."
+
+[[cursor]]
+id = "ShapeBuilderErase"
+id_fp = "0b327500"
+info_fp = "91ce385d"
+status = "wired"
+slots = ["ShapeBuilderErase"]
+note = "Its own slot (Shape Builder with Alt, erase mode)."
+
+[[cursor]]
+id = "Slice"
+id_fp = "fef28b5b"
+info_fp = "c79b7821"
+status = "wired"
+slots = ["Slice"]
+note = "Its own slot (the Slice tool)."
+
+[[cursor]]
+id = "SliceSelect"
+id_fp = "ef56daa1"
+info_fp = "6ee9d2e4"
+status = "wired"
+slots = ["SliceSelect"]
+note = "Its own slot (Slice Selection away from the selected slice's handles)."
+
+[[cursor]]
 id = "Text"
 id_fp = "e855824f"
 info_fp = "dce4ead1"
@@ -241,6 +321,30 @@ info_fp = "017e886c"
 status = "wired"
 slots = ["TypeWidget"]
 note = "Its own slot (the Selection tool over selected type's widget)."
+
+[[cursor]]
+id = "Width"
+id_fp = "974c9a3a"
+info_fp = "dc33be1d"
+status = "wired"
+slots = ["Width"]
+note = "Its own slot (the Width tool away from strokes)."
+
+[[cursor]]
+id = "WidthAdd"
+id_fp = "c0e9ba83"
+info_fp = "b39b0af1"
+status = "wired"
+slots = ["WidthAdd"]
+note = "Its own slot (the Width tool over a stroke, away from its width points)."
+
+[[cursor]]
+id = "WidthPoint"
+id_fp = "006fd01c"
+info_fp = "700cf8db"
+status = "wired"
+slots = ["WidthPoint"]
+note = "Its own slot (the Width tool over a width point or handle end, and any Width drag)."
 
 [[cursor]]
 id = "ZoomIn"
