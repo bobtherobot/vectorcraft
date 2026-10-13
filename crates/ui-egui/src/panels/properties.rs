@@ -97,7 +97,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
     let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
-    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(l, LiveShape::Path { .. }));
+    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(**l, LiveShape::Path { .. }));
     let mut actions: Vec<(&str, &str)> = vec![];
     if n_sel > 1 {
         actions.push((tl!("Group"), "object.group"));
@@ -199,6 +199,7 @@ fn multi_color(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
 /// Exit back to the Selection tool (#530).
 fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     let units = app.session.general_unit();
+    let origin = app.ruler_origin();
     let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
     let i = super::artboards::selected(app, n);
     let scale_art = super::artboards::scale_art(app);
@@ -214,8 +215,13 @@ fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             {
                 for (label, key, v) in [(l1, k1, v1), (l2, k2, v2)] {
                     dim_label(ui, label);
-                    if let Some(v) = widgets::num_field(ui, ("ab", key, row), Some(v), units, fw) {
-                        app.run("artboard.setProps", json!({"index": i, key: v, "scaleArt": scale_art, "moveArt": move_art})).ok();
+                    let offset = match key {
+                        "x" => origin.x,
+                        "y" => origin.y,
+                        _ => 0.0,
+                    };
+                    if let Some(v) = widgets::num_field(ui, ("ab", key, row), Some(v - offset), units, fw) {
+                        app.run("artboard.setProps", json!({"index": i, key: v + offset, "scaleArt": scale_art, "moveArt": move_art})).ok();
                     }
                 }
                 ui.end_row();
@@ -356,13 +362,11 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
     divider(ui);
     section_header(ui, tl!("Snap Options"));
-    let mut sp = app.ui.view.snap_to_point;
-    if ui.checkbox(&mut sp, tl!("Snap to Point")).changed() {
-        app.ui.view.snap_to_point = sp;
+    if widgets::check(ui, tl!("Snap to Point"), app.ui.view.snap_to_point, true) {
+        app.ui.view.snap_to_point ^= true;
     }
-    let mut sg = app.ui.view.snap_to_grid;
-    if ui.checkbox(&mut sg, tl!("Snap to Grid")).changed() {
-        app.ui.view.snap_to_grid = sg;
+    if widgets::check(ui, tl!("Snap to Grid"), app.ui.view.snap_to_grid, true) {
+        app.ui.view.snap_to_grid ^= true;
     }
     divider(ui);
     section_header(ui, tl!("Preferences"));
@@ -373,9 +377,9 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.session.prefs.keyboard_increment = v.max(0.001);
         }
     });
-    let mut ss = app.session.prefs.scale_strokes;
-    if ui.checkbox(&mut ss, tl!("Scale Strokes & Effects")).changed() {
-        super::transform::set_pref(app, "scaleStrokes", ss);
+    let ss = app.session.prefs.scale_strokes;
+    if widgets::check(ui, tl!("Scale Strokes & Effects"), ss, true) {
+        super::transform::set_pref(app, "scaleStrokes", !ss);
     }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
@@ -395,6 +399,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let units = app.session.general_unit();
+    let origin = app.ruler_origin();
     // The bounding box, rotated with rotated objects (as in the Transform panel).
     let Some(bx) = app.selection_box() else {
         dim_label(ui, tl!("No Selection"));
@@ -413,8 +418,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         let link = app.session.prefs.constrain_proportions;
         egui::Grid::new("xf-grid").num_columns(4).spacing([4.0, 6.0]).min_col_width(0.0).show(ui, |ui| {
             dim_label(ui, "X:");
-            if let Some(v) = widgets::num_field(ui, "tx", Some(rp.x), units, fw) {
-                app.run("object.setBounds", json!({"x": v, "reference": refi})).ok();
+            if let Some(v) = widgets::num_field(ui, "tx", Some(rp.x - origin.x), units, fw) {
+                app.run("object.setBounds", json!({"x": v + origin.x, "reference": refi})).ok();
             }
             dim_label(ui, "W:");
             if let Some(v) = widgets::num_field(ui, "tw", Some(b.width()), units, fw) {
@@ -422,8 +427,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
             ui.end_row();
             dim_label(ui, "Y:");
-            if let Some(v) = widgets::num_field(ui, "ty", Some(rp.y), units, fw) {
-                app.run("object.setBounds", json!({"y": v, "reference": refi})).ok();
+            if let Some(v) = widgets::num_field(ui, "ty", Some(rp.y - origin.y), units, fw) {
+                app.run("object.setBounds", json!({"y": v + origin.y, "reference": refi})).ok();
             }
             dim_label(ui, "H:");
             if let Some(v) = widgets::num_field(ui, "th", Some(b.height()), units, fw) {
@@ -467,7 +472,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     if let Some(n) = first_selected(app)
         && let NodeKind::Path { live: Some(live), .. } = &n.kind
     {
-        match live {
+        match &**live {
             vectorcraft_doc::LiveShape::Rectangle { .. } => corner_radius_row(app, ui, &n, "radius"),
             vectorcraft_doc::LiveShape::Polygon { .. } => super::transform::polygon_rows(app, ui, &n, live, "props-polygon"),
             vectorcraft_doc::LiveShape::Ellipse { pie, .. } => super::transform::pie_rows(app, ui, *pie, "props-pie"),
@@ -582,6 +587,40 @@ mod tests {
         let b = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Default::default() };
         frame(app, ctx, vec![Event::PointerMoved(at), b(true)]);
         frame(app, ctx, vec![b(false)]);
+    }
+
+    /// The Snap Options and Scale Strokes & Effects checkboxes keep a visible box at rest in every
+    /// theme, as the Preferences ones do (#1080), and toggle when clicked.
+    #[test]
+    fn the_document_checkboxes_show_their_boxes_and_toggle() {
+        for brightness in crate::theme::Brightness::ALL {
+            let mut app = VectorcraftApp::new(Session::new(), Default::default());
+            app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
+            let ctx = egui::Context::default();
+            crate::theme::install_fonts(&ctx);
+            crate::theme::apply(&ctx, brightness);
+            frame(&mut app, &ctx, vec![]);
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 700.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| show(&mut app, ui));
+            out.textures_delta.clear();
+            let boxes = out
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.stroke.width > 0.0 && (r.rect.width() - 13.0).abs() < 0.5 && (r.rect.height() - 13.0).abs() < 0.5))
+                .count();
+            assert!(boxes >= 3, "{brightness:?}: {boxes} checkbox outlines");
+        }
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let texts = frame(&mut app, &ctx, vec![]);
+        let (grid, strokes) = (app.ui.view.snap_to_grid, app.session.prefs.scale_strokes);
+        click(&mut app, &ctx, &texts, "Snap to Grid");
+        assert_eq!(app.ui.view.snap_to_grid, !grid);
+        let texts = frame(&mut app, &ctx, vec![]);
+        click(&mut app, &ctx, &texts, "Scale Strokes & Effects");
+        assert_eq!(app.session.prefs.scale_strokes, !strokes);
     }
 
     /// #921: with the Gradient tool, a Gradient section: the type, and for a freeform gradient

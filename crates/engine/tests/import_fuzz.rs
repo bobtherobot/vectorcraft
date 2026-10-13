@@ -260,8 +260,8 @@ proptest! {
             let mut s = vectorcraft_engine::Session::new();
             s.execute("file.new", &json!({"width":100,"height":100})).unwrap();
             let p = json!({"name":"renamed.png", "dataBase64":vectorcraft_format::base64_encode(&bytes)});
-            for cmd in ["file.place", "file.place.info"] { assert!(s.execute(cmd, &p).is_err()); }
-            assert!(s.execute("file.place.queue", &json!({"files":[p]})).is_err());
+            for cmd in ["file.place", "file.place.info"] { assert!(no_panic(s.execute(cmd, &p)).is_err()); }
+            assert!(no_panic(s.execute("file.place.queue", &json!({"files":[p]}))).is_err());
         });
         prop_assert!(r.is_ok(), "Affinity placement panicked: {:?}", r.err());
     }
@@ -485,6 +485,15 @@ fn mutate_text(src: &str, cut: usize, edits: &[(usize, char)]) -> String {
     chars.into_iter().collect()
 }
 
+/// Type shifted two billion points down exports to PDF: an input of
+/// `svg_hostile_markup_never_panics`, cut down to its type.
+#[test]
+fn svg_type_shifted_two_billion_points_exports_to_pdf() {
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><text baseline-shift="-2147483649">f</text></svg>"#;
+    let d = vectorcraft_svg::import(svg).unwrap();
+    assert!(vectorcraft_engine::export_pdf(&d, &vectorcraft_pdf::PdfOptions::default()).is_ok());
+}
+
 proptest! {
     #![proptest_config(config())]
 
@@ -669,8 +678,8 @@ proptest! {
         let r = catch_quiet(|| {
             let mut s = vectorcraft_engine::Session::new();
             let p = json!({"name": "x.pdf", "dataBase64": b64, "pages": pages, "cropTo": crop, "password": password, "thumbnail": 1, "thumbnailSize": 64});
-            let _ = s.execute("document.pdfInfo", &p);
-            if s.execute("document.open", &p).is_ok() {
+            let _ = no_panic(s.execute("document.pdfInfo", &p));
+            if no_panic(s.execute("document.open", &p)).is_ok() {
                 let d = (*s.doc().unwrap().doc).clone();
                 survive("pdf options", || Some(d)).unwrap();
             }
@@ -1037,8 +1046,8 @@ proptest! {
             let mut s = vectorcraft_engine::Session::new();
             s.execute("file.new", &json!({"width": 100, "height": 100})).unwrap();
             let p = json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(&bytes), "thumbnail": 8});
-            let _ = s.execute("file.place.info", &p);
-            let _ = s.execute("file.place", &p);
+            let _ = no_panic(s.execute("file.place.info", &p));
+            let _ = no_panic(s.execute("file.place", &p));
         });
         prop_assert!(r.is_ok(), "{name}: panicked: {:?}", r.err());
     }
@@ -1133,10 +1142,10 @@ fn paste_from_elsewhere(cmd: &str, p: Value) -> Result<(), TestCaseError> {
     let r = catch_quiet(|| {
         let mut s = vectorcraft_engine::Session::new();
         s.execute("file.new", &json!({"width": 100, "height": 100})).unwrap();
-        if s.execute(cmd, &p).is_ok() {
+        if no_panic(s.execute(cmd, &p)).is_ok() {
             // Paste may refuse what it was given, e.g. a damaged PDF whose art spans more than the
             // canvas ("result would exceed the canvas"): an error is a fine outcome, a panic isn't.
-            let _ = s.execute("edit.paste", &json!({"center": [50, 50]}));
+            let _ = no_panic(s.execute("edit.paste", &json!({"center": [50, 50]})));
         }
     });
     prop_assert!(r.is_ok(), "{cmd}: panicked: {:?}", r.err());
@@ -1294,7 +1303,7 @@ proptest! {
         survive("hostile PostScript", || vectorcraft_engine::cmd::fileio::load("x.eps", ps.as_bytes()).ok().map(|l| l.doc))?;
         let r = catch_quiet(|| {
             let mut s = rich_session();
-            let _ = s.execute("file.place", &json!({"name": "x.eps", "dataBase64": vectorcraft_format::base64_encode(ps.as_bytes())}));
+            let _ = no_panic(s.execute("file.place", &json!({"name": "x.eps", "dataBase64": vectorcraft_format::base64_encode(ps.as_bytes())})));
         });
         r.map_err(|msg| TestCaseError::fail(format!("placing hostile PostScript panicked: {msg}")))?;
     }
@@ -1390,8 +1399,8 @@ proptest! {
         let r = catch_quiet(|| {
             let mut s = vectorcraft_engine::Session::new();
             let p = json!({"name": "x.pdf", "dataBase64": b64, "password": password});
-            let _ = s.execute("document.pdfInfo", &p);
-            if s.execute("document.open", &p).is_ok() {
+            let _ = no_panic(s.execute("document.pdfInfo", &p));
+            if no_panic(s.execute("document.open", &p)).is_ok() {
                 let d = (*s.doc().unwrap().doc).clone();
                 survive("encrypted pdf", || Some(d)).unwrap();
             }
@@ -1460,11 +1469,11 @@ fn survive_dxf(what: &str, bytes: &[u8], fit: bool) -> Result<(), TestCaseError>
     let _ = vectorcraft_cad::is_dxf(bytes);
     survive(what, || {
         let mut s = vectorcraft_engine::Session::new();
-        s.execute("file.new", &json!({"width": 300, "height": 200})).ok()?;
+        no_panic(s.execute("file.new", &json!({"width": 300, "height": 200}))).ok()?;
         let p = json!({"name": "x.dxf", "dataBase64": vectorcraft_format::base64_encode(bytes), "dxf": {"fit": fit}, "thumbnail": 8});
-        let _ = s.execute("file.place.info", &p);
-        let _ = s.execute("file.place", &p);
-        let _ = s.execute("document.dxfInfo", &p);
+        let _ = no_panic(s.execute("file.place.info", &p));
+        let _ = no_panic(s.execute("file.place", &p));
+        let _ = no_panic(s.execute("document.dxfInfo", &p));
         Some((*s.doc().ok()?.doc).clone())
     })
 }
@@ -1569,7 +1578,7 @@ fn survive_metafile(what: &str, name: &str, bytes: &[u8]) -> Result<(), TestCase
     let r = catch_quiet(|| {
         let mut s = vectorcraft_engine::Session::new();
         s.execute("file.new", &json!({"width": 100, "height": 100})).unwrap();
-        let _ = s.execute("file.place", &json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(bytes)}));
+        let _ = no_panic(s.execute("file.place", &json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(bytes)})));
     });
     prop_assert!(r.is_ok(), "{what}: placing panicked: {:?}", r.err());
     Ok(())
@@ -2083,7 +2092,7 @@ proptest! {
         survive("hostile editing data in an EPS of its art's box", || vectorcraft_engine::cmd::fileio::load("x.eps", &boxed).ok().map(|l| l.doc))?;
     }
 
-    /// The testkit's sample damaged, as it is and compressed, in EPS and `.ai` files.
+    /// The testkit's sample damaged, as it is and compressed, in EPS, `.ai` and PDF files.
     #[test]
     fn ai_mutated_sample_never_panics(cut in 0usize..4_000, edits in prop::collection::vec((0usize..4_000, any::<u8>()), 0..12)) {
         use vectorcraft_testkit::ai;
@@ -2098,6 +2107,8 @@ proptest! {
             bytes.truncate(cut.max(4));
             let file = ai::ai(&bytes, ai::page_pdf());
             survive(what, || vectorcraft_engine::cmd::fileio::load("x.ai", &file).ok().map(|l| l.doc))?;
+            let file = ai::pdf(&bytes, ai::page_pdf());
+            survive(what, || vectorcraft_engine::cmd::fileio::load("x.pdf", &file).ok().map(|l| l.doc))?;
             let file = ai::eps(&bytes, ai::page_ps());
             survive(what, || vectorcraft_engine::cmd::fileio::load("x.eps", &file).ok().map(|l| l.doc))?;
         }

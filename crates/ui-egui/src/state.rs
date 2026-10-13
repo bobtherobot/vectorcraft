@@ -274,6 +274,12 @@ pub struct UiState {
     /// Tool flyouts torn off the toolbar into floating panels.
     #[serde(default)]
     pub floating_flyouts: Vec<FloatingFlyout>,
+    /// The Basic and Advanced toolbars as Edit Toolbar left them (none: as they ship).
+    #[serde(default)]
+    pub toolbar_edits: ToolbarEdits,
+    /// Edit Toolbar's All Tools drawer is open beside the toolbar (`window.editToolbar`).
+    #[serde(skip)]
+    pub tools_drawer: bool,
     /// Panels dragged out of the dock: each group floats as its own stack of tabs.
     #[serde(default)]
     pub floating_panels: Vec<FloatingPanels>,
@@ -354,6 +360,10 @@ pub struct UiState {
     /// swatches) or "" (none) (`ui.colorGuideLimit`).
     #[serde(default)]
     pub color_guide_limit: String,
+    /// Align panel: the Align To choice, Selection or Artboard, which Object → Align and the align
+    /// buttons follow ([`crate::panels::align::with_align_to`]).
+    #[serde(default, deserialize_with = "crate::panels::align::deserialize_align_to")]
+    pub align_to: crate::panels::align::AlignTo,
     /// The SVG Options chosen last (`svg` object of the export/save commands; null: never used).
     #[serde(default)]
     pub svg_options: Value,
@@ -376,12 +386,20 @@ pub struct UiState {
     /// dialog is gone.
     #[serde(skip)]
     pub dialog_search: Option<u64>,
+    /// The search the Find Linked Files dialog started (`links.findFiles`'s `id`), stopped once the
+    /// dialog is gone.
+    #[serde(skip)]
+    pub links_search: Option<u64>,
     /// The DXF Options chosen last (`document.exportDxf` options; null: never used).
     #[serde(default)]
     pub dxf_options: Value,
     /// The EPS Options chosen last (`document.exportEps` options; null: never used).
     #[serde(default)]
     pub eps_options: Value,
+    /// The Offset Path fields confirmed last (offset, joins, miterLimit; null: never used): its
+    /// dialog opens on them (#1152).
+    #[serde(default)]
+    pub offset_path: Value,
     /// The DXF Import Options chosen last (fit, scaleLineweights, center, mergeLayers; null:
     /// never used).
     #[serde(default)]
@@ -424,6 +442,25 @@ pub struct FloatingFlyout {
     pub tools: Vec<String>,
     /// Top-left corner in screen points.
     pub pos: [f32; 2],
+}
+
+/// A category of an edited toolbar: its name (one of the Basic toolbar's; none in the Advanced
+/// toolbar) and its slots, each a tool group (the first tool is the slot's default).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToolbarCategory {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub slots: Vec<Vec<String>>,
+}
+
+/// The toolbars Edit Toolbar changed: each one is `None` while it is as it ships.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToolbarEdits {
+    #[serde(default)]
+    pub basic: Option<Vec<ToolbarCategory>>,
+    #[serde(default)]
+    pub advanced: Option<Vec<ToolbarCategory>>,
 }
 
 /// Where the Contextual Task Bar sits once its handle has moved it (`window.taskBar.pin`,
@@ -531,6 +568,7 @@ impl UiState {
     pub fn sanitized(mut self) -> Self {
         self.dialog = None;
         self.flyout = None;
+        self.tools_drawer = false;
         self.palette_open = false;
         self.status.clear();
         self.about = false;
@@ -545,6 +583,7 @@ impl UiState {
             f.tools.first().is_some_and(|k| seen.insert(k.clone()))
         });
         FloatingPanels::sanitize(&mut self.floating_panels, &mut self.toolbar_pos);
+        crate::edit_toolbar::sanitize(&mut self.toolbar_edits);
         self.docking = self.docking.filter(crate::panel_docking::valid);
         self.docking_icons.retain(|id| ICON_PANELS.iter().any(|entry| entry.0 == id));
         // Overrides that can't fire (modifier-only chords recorded by older versions, #487) give
@@ -570,6 +609,8 @@ impl Default for UiState {
             task_bar_place: TaskBarPlace::default(),
             slot_tool: Default::default(),
             floating_flyouts: vec![],
+            toolbar_edits: ToolbarEdits::default(),
+            tools_drawer: false,
             floating_panels: vec![],
             docking: None,
             docking_hidden: Default::default(),
@@ -602,14 +643,17 @@ impl Default for UiState {
             library_panel: None,
             flattener_preview: Default::default(),
             color_guide_limit: String::new(),
+            align_to: Default::default(),
             svg_options: Value::Null,
             place_link: true,
             dialog_file: None,
             pending_fonts: vec![],
             fonts_dialog: None,
             dialog_search: None,
+            links_search: None,
             dxf_options: Value::Null,
             eps_options: Value::Null,
+            offset_path: Value::Null,
             dxf_import: Value::Null,
             home: None,
             layers_panel: Default::default(),

@@ -1114,6 +1114,23 @@
 	Graph	Діаграма
 	Graph Data	Дані діаграми
 	Graph Type	Тип діаграми
+	Graph Design	Дизайн діаграми
+	Graph Marker	Маркер діаграми
+	New Design	Новий дизайн
+	Delete Design	Видалити дизайн
+	Paste Design	Вставити дизайн
+	Select Unused	Вибрати невикористані
+	Import Data…	Імпорт даних…
+	Transpose	Транспонувати
+	Switch x/y	Поміняти x/y
+	Number of Decimals:	Кількість десяткових знаків:
+	Column Width:	Ширина стовпця:
+	No Legend	Без легенди
+	Standard Legend	Стандартна легенда
+	Legends in Wedges	Легенди в секторах
+	Ratio	Пропорційно
+	Even	Однаково
+	Stacked	Стосом
 	Graphic Style	Графічний стиль
 	Graphic Style Libraries	Бібліотеки графічних стилів
 	Graphic Style Libraries Menu	Меню "Бібліотеки графічних стилів"
@@ -1335,6 +1352,7 @@
 	Last Effect…	Останній ефект…
 	Last Page	Остання сторінка
 	Latin	Латиниця
+	Thai	Тайська
 	Latin Extended	Розширена латиниця
 	Latin-1 Supplement	Додаток Latin-1
 	Layer	Шар
@@ -1557,6 +1575,7 @@
 	Move Rows	Перемістити рядки
 	Move Slices	Перемістити фрагменти
 	Move Spine Point	Перемістити точку осі
+	Reshape Spine Segment	Змінити форму сегмента осі
 	Move Swatch	Перемістити зразок
 	Move Up	Перемістити вгору
 	Move…	Перемістити…
@@ -2044,6 +2063,10 @@
 	Proof Setup	Налаштування кольоропроби
 	Properties	Властивості
 	Proportional Metrics	Пропорційні метрики
+	Digits	Цифри
+	Arabic	Арабські
+	Hindi	Гінді
+	Farsi	Фарсі
 	Proportional Oldstyle	Пропорційні цифри старого стилю
 	Pucker & Bloat…	Зморщування та роздування …
 	Pucker Tool	Інструмент «Зморщування»
@@ -2134,6 +2157,9 @@
 	Rectangle: Sunshine	Прямокутник: Сонце
 	Rectangle…	Прямокутник…
 	Rectangular Grid	Прямокутна сітка
+# Rectangular Grid click dialog.
+	Horizontal Dividers:	Горизонтальні розділювачі:
+	Vertical Dividers:	Вертикальні розділювачі:
 	Rectangular Grid Tool	Інструмент «Прямокутна сітка»
 	Red	Червоний
 	Redefine Character Style	Перевизначити стиль символу
@@ -2143,6 +2169,9 @@
 	Redefine Symbol	Перевизначити символ
 	Redefine {kind} Style	Перевизначити стиль {kind}
 	Redo	Повторити
+	List Folder	Показати вміст теки
+	Begin Undo Group	Почати групу скасування
+	End Undo Group	Завершити групу скасування
 	Redo {name}	Повторити {name}
 	Redo {}	Повторити {}
 	Reduce Colors	Скоротити кількість кольорів
@@ -2195,6 +2224,13 @@
 	Relinked {n} image(s); not in that folder: {}	Відновлено зв’язок із зображеннями: {n}; немає в цій папці: {}
 	Relinked {} image(s)	Відновлено зв’язок із зображеннями: {}
 	Relink…	Відновити зв’язок…
+	Find Linked Files	Знайти пов’язані файли
+	Find Linked Files in Folder…	Знайти пов’язані файли в папці…
+	Choose the file to relink each linked file to. Files with the size and contents saved with the link come first.	Виберіть для кожного пов’язаного файлу файл, з яким потрібно відновити зв’язок. Спершу йдуть файли з розміром і вмістом, збереженими разом зі зв’язком.
+	Same file	Той самий файл
+	Same size	Той самий розмір
+	Don't Relink	Не відновлювати зв’язок
+	Copy into the document's folder	Копіювати в папку документа
 	Reload Plug-ins	Перезавантажити модулі
 	Remove	Прибрати
 	Remove Anchor Points	Забрати опорні точки
@@ -2463,6 +2499,7 @@
 	Select an image to see its Link Info.	Виберіть зображення, щоб побачити зв’язок.
 	Select an image to trace	Виберіть зображення для трасування
 	Select Anchors	Виділити опорні точки
+	Select Segments	Виділити сегменти
 	Select Appearance Item	Виділити елемент оформлення
 	Select Art	Виділити малюнок
 	Select art and choose Object › Pattern › Make.	Виділіть малюнок та виберіть «Об’єкт › Візерунок › Створити».
@@ -2508,7 +2545,6 @@
 	Set base color to the current color	Зробити поточний колір базовим
 	Set Bounds	Задати межі
 	Set Current Layer	Зробити шар поточним
-	Set Key Object	Задати ключовий об’єкт
 	Set Keyboard Shortcut	Задати клавіші
 	Set Mesh Point Color	Задати колір точки сітки
 	Set Preference	Задати налаштування
@@ -2626,6 +2662,8 @@
 	Size Tile to Art	Підігнати плитку за малюнком
 	Size/Leading	Розмір/інтерліньяж
 	Size:	Розмір:
+	Ridges per segment:	Гребенів на сегмент:
+effect	Points	Точки
 	Size: {size}  Tracking: {tracking}	Розмір: {size} Трекінг: {tracking}
 	Skew	Скіс
 	Skin Tone Ramps	Шкали тонів шкіри
@@ -2895,6 +2933,9 @@
 	Tool Options…	Параметри інструменту…
 	Toolbar: Advanced / Basic	Панель інструментів: розширена/основна
 	Toolbar: Single/Double Column	Панель інструментів: один/два стовпці
+	Toolbar: Add Tool	Панель інструментів: додати інструмент
+	Toolbar: Remove Tool	Панель інструментів: вилучити інструмент
+	Toolbar: Reset	Панель інструментів: скинути
 	Toolbars	Панелі інструментів
 	Tools	Інструменти
 	Top	Вгорі
@@ -3097,6 +3138,7 @@
 	Vertical %	По вертикалі, %
 	Vertical Align Bottom	Вирівняти по нижньому краю по вертикалі
 	Vertical Align Center	Вирівняти по центру по вертикалі
+	Horizontal & Vertical Align Center	Вирівняти по центру по горизонталі й вертикалі
 	Vertical Align Top	Вирівняти по верхньому краю по вертикалі
 	Vertical Area Type Tool	Інструмент «Вертикальний текст в області»
 	Vertical Distribute Bottom	Розподілити по нижньому краю по вертикалі
@@ -3468,6 +3510,7 @@ axis	Both	Обидві
 @msg	antiAlias `{id}`: none, art or type	antiAlias `{id}`: none, art або type
 @msg	artboard {0} does not exist	монтажна область {0} не існує
 @msg	at this scale the drawing is {w} × {h} pt, more than the canvas holds: choose a smaller scale or fit it to the artboard	при цьому масштабі малюнок має розмір {w} × {h} пт, що більше полотна: виберіть менший масштаб або впишіть його в монтажну область
+@msg	axis must be "vertical", "horizontal" or an angle in degrees, not `{v}`	axis має бути "vertical", "horizontal" або кутом у градусах, а не `{v}`
 @msg	background {other}: transparent, white, black or a colour such as "#ff8800"	фон {other}: transparent, white, black або колір, наприклад "#ff8800"
 @msg	bad color {v}	неприпустимий колір {v}
 @msg	bad colour `{hex}` (#rrggbb)	неприпустимий колір `{hex}` (#rrggbb)
@@ -3509,7 +3552,8 @@ axis	Both	Обидві
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	довільній точці {i} потрібні `at` [x, y] та допустимий `color`
 @msg	freeform line {i} must be an array of point indices	довільна лінія {i} має бути масивом індексів точок
 @msg	give both `start` and `end` [x, y] (or neither)	вкажіть `start`, `end` [x, y] (або жодного)
-@msg	give corners of the path: anchors between two straight sides	вкажіть кути контуру: опорні точки між двома прямими сторонами
+@msg	give corners of the path: anchors where its sides meet at an angle	вкажіть кути контуру: опорні точки, у яких його сторони сходяться під кутом
+@msg	give horizontal or vertical	вкажіть horizontal або vertical
 @msg	give the path `id` and the width point `index`	вкажіть `id` контуру та `index` точки ширини
 @msg	guides are locked	напрямні заблоковані
 @msg	image '{key}' has no pixels and was left out	зображення '{key}' не має пікселів і було пропущено
@@ -3650,6 +3694,7 @@ axis	Both	Обидві
 @msg	nothing to wrap	нічого обтікати
 @msg	object {0} cannot have children	об’єкт {0} не може мати нащадків
 @msg	object {id} is not a path	об’єкт {id} не є контуром
+@msg	object {id} is not a selected top-level object	об’єкт {id} не є виділеним об’єктом верхнього рівня
 @msg	page size {w} × {h}	розмір сторінки {w} × {h}
 @msg	page {0} does not exist (the PDF has {1})	сторінка {0} не існує (в PDF{1})
 @msg	paste unavailable	вставка недоступна
@@ -3902,6 +3947,9 @@ axis	Both	Обидві
 @msg	larger than 256 MB	більше 256 МБ
 @msg	the files come to more than 1 GB: add fewer at a time	файли займають понад 1 ГБ: додавайте менше за раз
 @msg	every numbered name for it is taken in the Fonts folder	усі нумеровані імена для нього вже зайняті в папці Fonts
+@msg	every numbered name for {name} is taken in the document's folder	усі нумеровані імена для {name} уже зайняті в папці документа
+@msg	No linked files to look for	Немає пов’язаних файлів для пошуку
+@msg	Relinked {n} image(s); {name} couldn't be relinked: {reason}	Відновлено зв’язок із зображеннями: {n}; не вдалося відновити зв’язок із {name}: {reason}
 	Services	Служби
 	Hide VectorCraft	Приховати VectorCraft
 	Zoom	Масштаб
@@ -3913,6 +3961,8 @@ axis	Both	Обидві
 	Images: link to the file instead of only embedding it.	Зображення: пов’язувати із файлом замість простого впровадження.
 	VectorCraft documents: one locked object, updated when the file changes.	Документи VectorCraft: один заблокований об’єкт, який оновлюється під час зміни файлу.
 	A file dialog is open: choose there first	Відкрито вікно вибору файлу: спочатку зробіть вибір у ньому
+	The document was closed while its file dialog was open	Документ було закрито, поки було відкрито його вікно вибору файлу
+	The dialog was closed before its file dialog answered	Діалогове вікно було закрито раніше, ніж відповіло його вікно вибору файлу
 	Shaper	Формоутворення
 	Expand Shaper Group	Розібрати групу формоутворення
 	Release Shaper Group	Звільнити групу формоутворення
@@ -4114,3 +4164,15 @@ lighting	Light	Світло
 @msg	invalid native panel set	Неприпустимий власний набір панелей
 @msg	missing panel layout	Відсутнє розташування панелей
 @msg	unsupported native docking operation	Непідтримувана власна операція прикріплення
+	Linux Display Server	Дисплейний сервер Linux
+	X11 (XWayland)	X11 (XWayland)
+	Ruler Origin	Початок координат лінійок
+	Reset Ruler Origin	Скинути початок координат лінійок
+	Artistic	Художні
+	Film Grain…	Зернистість плівки…
+	Highlight Area	Область світлих тонів
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	стислий файл розпаковується в обсяг більший, ніж читає VectorCraft ({_1} МБ документа, {_2} МБ на зображення)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	документ завеликий для збереження зі стиском ({0}): збережіть його з вимкненим параметром «Використовувати стиск»
+@msg	the file stopped being read (please report this bug)	читання файлу перервалося (будь ласка, повідомте про цю помилку)
+	Concentric Dividers:	Концентричні розділювачі:
+	Radial Dividers:	Радіальні розділювачі:
