@@ -4,9 +4,11 @@
 #            its tool; cursorcraft's file name without the extension
 #   id_fp    the fingerprint of the cursor's drawing in cursorcraft (absent while status =
 #            "needed"; optional when "obsolete")
-#   info_fp  its 00-INFO.md description's fingerprint (without the needed marker)
+#   info_fp  its 00-INFO.md description's fingerprint (without the needed marker and any
+#            "To fix:" notes)
 #   status   wired | skipped | needed | obsolete
-#   slots    the Cursor variants it draws (wired), or asks for (needed)
+#   slots    the Cursor variants it draws (wired), or asks for (needed; a needed cursor may
+#            have a placeholder SVG VectorCraft exported, and stays needed until it's redrawn)
 #   note     why: the decision and anything the designer clarified
 cursorcraft = "1550b59-dirty"
 
@@ -67,6 +69,13 @@ slots = ["BlendObject"]
 note = "Its own slot (the Blend tool over an object it can blend)."
 
 [[cursor]]
+id = "BlobBrush"
+info_fp = "a9bf7bbb"
+status = "needed"
+slots = ["BlobBrush"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
 id = "CornerRadius"
 id_fp = "57b72740"
 info_fp = "287b26da"
@@ -77,10 +86,17 @@ note = "Its own slot (Selection and Direct Selection over or dragging a Live Cor
 [[cursor]]
 id = "Crosshair"
 id_fp = "02880ef8"
-info_fp = "73c8265c"
+info_fp = "85391bee"
 status = "wired"
 slots = ["Crosshair"]
-note = "Its own slot (the generic drawing cursor, and every Use Precise Cursors state)."
+note = "Its own slot (the generic drawing cursor, and every Use Precise Cursors state). Its open centre is drawn about 2 pt across where the description says 4 pt: shipped as drawn, with a \"To fix:\" note in its description."
+
+[[cursor]]
+id = "Curvature"
+info_fp = "c5c2e344"
+status = "needed"
+slots = ["Curvature"]
+note = "Its SVG is VectorCraft's placeholder (the hand-drawn pen with a curve badge), exported for the designer; VectorCraft keeps drawing its own until it's redrawn."
 
 [[cursor]]
 id = "DirectAnchor"
@@ -97,6 +113,13 @@ info_fp = "fcdee53f"
 status = "wired"
 slots = ["DirectAnchorSelected"]
 note = "Drawn from VectorCraft's placeholder; its own slot (Direct Selection over an anchor of a selected path)."
+
+[[cursor]]
+id = "Eraser"
+info_fp = "65f8e9f2"
+status = "needed"
+slots = ["Eraser"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
 
 [[cursor]]
 id = "Eyedropper"
@@ -131,6 +154,55 @@ slots = ["HandGrab"]
 note = "Drawn from VectorCraft's placeholder; its own slot (panning: Hand or Space drag, middle-button drag). The thumb line's white fill was set to none (a zero-area fill drew a 240 pt spike)."
 
 [[cursor]]
+id = "Join"
+info_fp = "a2b7f77e"
+status = "needed"
+slots = ["Join"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "Knife"
+info_fp = "14c9538c"
+status = "needed"
+slots = ["Knife"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "Lasso"
+info_fp = "45d53926"
+status = "needed"
+slots = ["Lasso"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "LivePaintBucket"
+info_fp = "f5431967"
+status = "needed"
+slots = ["LivePaintBucket"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "MagicWand"
+info_fp = "c590daf3"
+status = "needed"
+slots = ["MagicWand"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "Measure"
+info_fp = "96a6af79"
+status = "needed"
+slots = ["Measure"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "MeshAdd"
+info_fp = "15a39c38"
+status = "needed"
+slots = ["MeshAdd"]
+note = "The Mesh tool off a mesh point; it borrows PenAdd until drawn. Deleting keeps PenDelete."
+
+[[cursor]]
 id = "Move"
 id_fp = "017b5d05"
 info_fp = "0c3d0174"
@@ -139,12 +211,33 @@ slots = ["Move"]
 note = "Redrawn; its own slot (Selection over a selected object or with Alt before the drag, Reshape, Curvature over a point, transform boxes, mesh and pin points, gradient and perspective handles)."
 
 [[cursor]]
+id = "NotAllowed"
+info_fp = "a67f98e6"
+status = "needed"
+slots = ["NotAllowed"]
+note = "Stays the system cursor until drawn. A tool's own cursor with a not-allowed badge may replace it per tool, as for the Scissors (user, 2026-10-13)."
+
+[[cursor]]
+id = "Paintbrush"
+info_fp = "4e9557a3"
+status = "needed"
+slots = ["Paintbrush"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
 id = "PathBracket"
 id_fp = "4eda4138"
 info_fp = "e4d9e3c4"
 status = "wired"
 slots = ["PathBracket"]
 note = "Its own slot (Selection and Direct Selection over or dragging a type-on-a-path bracket)."
+
+[[cursor]]
+id = "PathEraser"
+info_fp = "f95110e3"
+status = "needed"
+slots = ["PathEraser"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
 
 [[cursor]]
 id = "Pen"
@@ -201,6 +294,27 @@ info_fp = "233c1b92"
 status = "wired"
 slots = ["PenJoin"]
 note = "Redrawn; its own slot (Pen while drawing, over another open path's end)."
+
+[[cursor]]
+id = "Pencil"
+info_fp = "64ac8d15"
+status = "needed"
+slots = ["Pencil"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "PrintTiling"
+info_fp = "674c8a39"
+status = "needed"
+slots = ["PrintTiling"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "PuppetPin"
+info_fp = "c1350a7c"
+status = "needed"
+slots = ["PuppetPin"]
+note = "Puppet Warp where a pin can go; it borrows PenAdd until drawn."
 
 [[cursor]]
 id = "RemoveStop"
@@ -267,6 +381,20 @@ slots = [{ RotateToward = 1 }]
 note = "Drawn for octant 1 (top right); VectorCraft turns it in 45° steps for the other seven octants beside a bounding box (Selection, Free Transform)."
 
 [[cursor]]
+id = "Scissors"
+info_fp = "69b8e6a7"
+status = "needed"
+slots = ["Scissors"]
+note = "The Scissors over a segment: the main design (user, 2026-10-13); it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "ScissorsNotAllowed"
+info_fp = "32a4ee4e"
+status = "needed"
+slots = ["ScissorsNotAllowed"]
+note = "The Scissors away from a segment: the main design with a not-allowed badge rather than the system cursor's jump in size and shape (user, 2026-10-13); it borrows not-allowed until drawn."
+
+[[cursor]]
 id = "SelectionCopy"
 id_fp = "2c292102"
 info_fp = "5b3b8de9"
@@ -291,6 +419,13 @@ slots = ["ShapeBuilderErase"]
 note = "Its own slot (Shape Builder with Alt, erase mode)."
 
 [[cursor]]
+id = "Shaper"
+info_fp = "a2b81f4c"
+status = "needed"
+slots = ["Shaper"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
 id = "Slice"
 id_fp = "fef28b5b"
 info_fp = "c79b7821"
@@ -307,12 +442,82 @@ slots = ["SliceSelect"]
 note = "Its own slot (Slice Selection away from the selected slice's handles)."
 
 [[cursor]]
+id = "Smooth"
+info_fp = "308d7b19"
+status = "needed"
+slots = ["Smooth"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolScreener"
+info_fp = "b7fc6605"
+status = "needed"
+slots = ["SymbolScreener"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolScruncher"
+info_fp = "24e43b2e"
+status = "needed"
+slots = ["SymbolScruncher"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolShifter"
+info_fp = "7ea9fa57"
+status = "needed"
+slots = ["SymbolShifter"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolSizer"
+info_fp = "511189ed"
+status = "needed"
+slots = ["SymbolSizer"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolSpinner"
+info_fp = "1fb408f5"
+status = "needed"
+slots = ["SymbolSpinner"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolSprayer"
+info_fp = "c2ac25d4"
+status = "needed"
+slots = ["SymbolSprayer"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolStainer"
+info_fp = "aa4de5d0"
+status = "needed"
+slots = ["SymbolStainer"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
+id = "SymbolStyler"
+info_fp = "d52f82bb"
+status = "needed"
+slots = ["SymbolStyler"]
+note = "A variant of its own, returned by its tool; it borrows the crosshair until drawn."
+
+[[cursor]]
 id = "Text"
 id_fp = "e855824f"
 info_fp = "dce4ead1"
 status = "wired"
 slots = ["Text"]
 note = "Its own slot (every type tool, vertical forms included, except Area / Path type over a suitable path)."
+
+[[cursor]]
+id = "TypeVertical"
+info_fp = "f34d6bed"
+status = "needed"
+slots = ["TypeVertical"]
+note = "A variant of its own for the three vertical type tools; it borrows the I-beam (Text) until drawn."
 
 [[cursor]]
 id = "TypeWidget"
@@ -341,10 +546,10 @@ note = "Its own slot (the Width tool over a stroke, away from its width points).
 [[cursor]]
 id = "WidthPoint"
 id_fp = "006fd01c"
-info_fp = "700cf8db"
+info_fp = "3c9bec74"
 status = "wired"
 slots = ["WidthPoint"]
-note = "Its own slot (the Width tool over a width point or handle end, and any Width drag)."
+note = "Its own slot (the Width tool over a width point or handle end, and any Width drag). Its bar is drawn diagonal where the description says vertical: shipped as drawn, with a \"To fix:\" note in its description."
 
 [[cursor]]
 id = "ZoomIn"

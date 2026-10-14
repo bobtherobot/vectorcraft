@@ -401,12 +401,17 @@ fn magnifier(p: &mut Ink, o: Pos2, out: bool) {
 const ROTATE_TOWARD_DRAWN: u8 = 1;
 
 /// The shapes of cursor `c` with its hotspot at `p`; `None` for cursors that stay system cursors
-/// (the busy states): its generated glyph ([`glyphs`]) if it has one, else the hand-drawn one.
+/// (the busy states): its generated glyph ([`glyphs`]) if it has one, else the hand-drawn one,
+/// else the glyph of the cursor it borrows ([`Cursor::stand_in`]).
 fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
     let ink = &mut Ink::default();
     if let Some(g) = glyphs::generated(c) {
         glyphs::draw_glyph(ink, p, g, 0.0);
         return Some(std::mem::take(&mut ink.0));
+    }
+    // A cursor not drawn yet: the one it borrows.
+    if let Some(stand_in) = c.stand_in() {
+        return glyph(stand_in, p);
     }
     // The rotate cursor beside a box: the one drawn glyph, turned to the pointer's side.
     if let Cursor::RotateToward(octant) = c
@@ -604,7 +609,7 @@ mod tests {
     use crate::VectorcraftApp;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 45] = [
+    const GLYPHS: [Cursor; 71] = [
         Cursor::Hand,
         Cursor::HandGrab,
         Cursor::ZoomIn,
@@ -650,6 +655,32 @@ mod tests {
         Cursor::TypeWidget,
         Cursor::ShapeBuilder,
         Cursor::ShapeBuilderErase,
+        Cursor::Lasso,
+        Cursor::MagicWand,
+        Cursor::Pencil,
+        Cursor::Paintbrush,
+        Cursor::BlobBrush,
+        Cursor::Eraser,
+        Cursor::Smooth,
+        Cursor::PathEraser,
+        Cursor::Join,
+        Cursor::Knife,
+        Cursor::Shaper,
+        Cursor::LivePaintBucket,
+        Cursor::Measure,
+        Cursor::PrintTiling,
+        Cursor::SymbolSprayer,
+        Cursor::SymbolShifter,
+        Cursor::SymbolScruncher,
+        Cursor::SymbolSizer,
+        Cursor::SymbolSpinner,
+        Cursor::SymbolStainer,
+        Cursor::SymbolScreener,
+        Cursor::SymbolStyler,
+        Cursor::TypeVertical,
+        Cursor::Scissors,
+        Cursor::MeshAdd,
+        Cursor::PuppetPin,
     ];
 
     /// Every cursor's bitmap at 1× and 2× as `<dir>/<Cursor>@<n>.png`, for /update-cursors'
@@ -778,6 +809,16 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_not_drawn_yet_looks_like_the_one_it_borrows() {
+        for c in GLYPHS {
+            let Some(stand_in) = c.stand_in() else { continue };
+            if glyphs::generated(c).is_none() {
+                assert_eq!(rasterize(c, 2.0), rasterize(stand_in, 2.0), "{c:?} borrows {stand_in:?}");
+            }
+        }
+    }
+
+    #[test]
     fn every_glyph_becomes_a_bitmap_with_its_hotspot_inside() {
         for ppp in [1.0, 1.25, 1.5, 2.0, 3.0] {
             for c in GLYPHS {
@@ -799,6 +840,7 @@ mod tests {
             assert!(pixel(&dropper, hx, hy)[3] > 0, "the tip covers the hotspot at {ppp}");
         }
         assert!(rasterize(Cursor::NotAllowed, 1.0).is_none(), "the busy states stay system cursors");
+        assert!(rasterize(Cursor::ScissorsNotAllowed, 1.0).is_none(), "it borrows the system not-allowed cursor");
         for ppp in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e9] {
             assert!(rasterize(Cursor::Arrow, ppp).is_none(), "{ppp}");
         }

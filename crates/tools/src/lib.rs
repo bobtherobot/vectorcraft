@@ -496,6 +496,60 @@ pub enum Cursor {
     ShapeBuilder,
     /// ...or, with Alt held, a minus (erase mode).
     ShapeBuilderErase,
+    /// The Lasso tool.
+    Lasso,
+    /// The Magic Wand tool.
+    MagicWand,
+    /// The Pencil tool.
+    Pencil,
+    /// The Paintbrush tool.
+    Paintbrush,
+    /// The Blob Brush tool.
+    BlobBrush,
+    /// The Eraser tool.
+    Eraser,
+    /// The Smooth tool.
+    Smooth,
+    /// The Path Eraser tool.
+    PathEraser,
+    /// The Join tool.
+    Join,
+    /// The Knife tool.
+    Knife,
+    /// The Shaper tool.
+    Shaper,
+    /// The Live Paint Bucket.
+    LivePaintBucket,
+    /// The Measure tool.
+    Measure,
+    /// The Print Tiling tool.
+    PrintTiling,
+    /// The Symbol Sprayer tool.
+    SymbolSprayer,
+    /// The Symbol Shifter tool.
+    SymbolShifter,
+    /// The Symbol Scruncher tool.
+    SymbolScruncher,
+    /// The Symbol Sizer tool.
+    SymbolSizer,
+    /// The Symbol Spinner tool.
+    SymbolSpinner,
+    /// The Symbol Stainer tool.
+    SymbolStainer,
+    /// The Symbol Screener tool.
+    SymbolScreener,
+    /// The Symbol Styler tool.
+    SymbolStyler,
+    /// The vertical type tools: a turned I-beam.
+    TypeVertical,
+    /// The Scissors over a path segment (a click splits the path there)...
+    Scissors,
+    /// ...or away from every segment (a click does nothing).
+    ScissorsNotAllowed,
+    /// The Mesh tool off a mesh point: a click adds one.
+    MeshAdd,
+    /// Puppet Warp over the selection's mesh where a pin can go: a click adds one.
+    PuppetPin,
 }
 
 impl Cursor {
@@ -528,8 +582,69 @@ impl Cursor {
             | Cursor::BlendObject
             | Cursor::BlendAnchor
             | Cursor::ShapeBuilder
-            | Cursor::ShapeBuilderErase => Cursor::Crosshair,
+            | Cursor::ShapeBuilderErase
+            | Cursor::Lasso
+            | Cursor::MagicWand
+            | Cursor::Pencil
+            | Cursor::Paintbrush
+            | Cursor::BlobBrush
+            | Cursor::Eraser
+            | Cursor::Smooth
+            | Cursor::PathEraser
+            | Cursor::Join
+            | Cursor::Knife
+            | Cursor::Shaper
+            | Cursor::LivePaintBucket
+            | Cursor::Measure
+            | Cursor::PrintTiling
+            | Cursor::SymbolSprayer
+            | Cursor::SymbolShifter
+            | Cursor::SymbolScruncher
+            | Cursor::SymbolSizer
+            | Cursor::SymbolSpinner
+            | Cursor::SymbolStainer
+            | Cursor::SymbolScreener
+            | Cursor::SymbolStyler
+            | Cursor::Scissors
+            | Cursor::MeshAdd
+            | Cursor::PuppetPin => Cursor::Crosshair,
             c => c,
+        }
+    }
+
+    /// The cursor this one borrows until cursorcraft draws it: the generic crosshair for the
+    /// tools, the I-beam for vertical type, the Pen's add cursor for the Mesh tool and Puppet
+    /// Warp, not-allowed for the Scissors away from a path. `None` for a cursor with a look of
+    /// its own.
+    pub fn stand_in(self) -> Option<Self> {
+        match self {
+            Cursor::Lasso
+            | Cursor::MagicWand
+            | Cursor::Pencil
+            | Cursor::Paintbrush
+            | Cursor::BlobBrush
+            | Cursor::Eraser
+            | Cursor::Smooth
+            | Cursor::PathEraser
+            | Cursor::Join
+            | Cursor::Knife
+            | Cursor::Shaper
+            | Cursor::LivePaintBucket
+            | Cursor::Measure
+            | Cursor::PrintTiling
+            | Cursor::SymbolSprayer
+            | Cursor::SymbolShifter
+            | Cursor::SymbolScruncher
+            | Cursor::SymbolSizer
+            | Cursor::SymbolSpinner
+            | Cursor::SymbolStainer
+            | Cursor::SymbolScreener
+            | Cursor::SymbolStyler
+            | Cursor::Scissors => Some(Cursor::Crosshair),
+            Cursor::TypeVertical => Some(Cursor::Text),
+            Cursor::MeshAdd | Cursor::PuppetPin => Some(Cursor::PenAdd),
+            Cursor::ScissorsNotAllowed => Some(Cursor::NotAllowed),
+            _ => None,
         }
     }
 }
@@ -750,5 +865,73 @@ pub(crate) mod testutil {
             screen: None,
             plane_widget: Some(Default::default()),
         }
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::testutil::{cx, doc_with_rect, paint};
+    use super::*;
+
+    fn cursor_at(id: &str, d: &Document, p: Point) -> Cursor {
+        let (s, paint) = (Selection::default(), paint());
+        create(id).cursor(&cx(d, &s, &paint), p, Mods::default())
+    }
+
+    /// Each of these tools has a cursor of its own (borrowing the crosshair until it's drawn), and
+    /// Use Precise Cursors turns it into the crosshair.
+    #[test]
+    fn drawing_tools_show_their_own_cursor() {
+        let (d, _) = doc_with_rect();
+        let away = Point::new(400.0, 400.0);
+        for (id, c) in [
+            ("lasso", Cursor::Lasso),
+            ("magicWand", Cursor::MagicWand),
+            ("pencil", Cursor::Pencil),
+            ("paintbrush", Cursor::Paintbrush),
+            ("blobBrush", Cursor::BlobBrush),
+            ("eraser", Cursor::Eraser),
+            ("smooth", Cursor::Smooth),
+            ("pathEraser", Cursor::PathEraser),
+            ("join", Cursor::Join),
+            ("knife", Cursor::Knife),
+            ("shaper", Cursor::Shaper),
+            ("livePaintBucket", Cursor::LivePaintBucket),
+            ("measure", Cursor::Measure),
+            ("printTiling", Cursor::PrintTiling),
+            ("symbolSprayer", Cursor::SymbolSprayer),
+            ("symbolShifter", Cursor::SymbolShifter),
+            ("symbolScruncher", Cursor::SymbolScruncher),
+            ("symbolSizer", Cursor::SymbolSizer),
+            ("symbolSpinner", Cursor::SymbolSpinner),
+            ("symbolStainer", Cursor::SymbolStainer),
+            ("symbolScreener", Cursor::SymbolScreener),
+            ("symbolStyler", Cursor::SymbolStyler),
+            ("mesh", Cursor::MeshAdd),
+        ] {
+            assert_eq!(cursor_at(id, &d, away), c, "{id}");
+            assert_eq!(c.precise(), Cursor::Crosshair, "{id}");
+            assert_eq!(c.stand_in(), Some(if id == "mesh" { Cursor::PenAdd } else { Cursor::Crosshair }), "{id}");
+        }
+    }
+
+    #[test]
+    fn the_vertical_type_tools_show_the_turned_i_beam() {
+        let (d, _) = doc_with_rect();
+        let away = Point::new(400.0, 400.0);
+        for id in ["verticalType", "verticalAreaType", "verticalTypeOnPath"] {
+            assert_eq!(cursor_at(id, &d, away), Cursor::TypeVertical, "{id}");
+        }
+        assert_eq!(cursor_at("type", &d, away), Cursor::Text);
+        assert_eq!(Cursor::TypeVertical.stand_in(), Some(Cursor::Text));
+    }
+
+    #[test]
+    fn the_scissors_say_whether_a_click_cuts() {
+        let (d, _) = doc_with_rect();
+        assert_eq!(cursor_at("scissors", &d, Point::new(100.0, 150.0)), Cursor::Scissors, "over a segment");
+        assert_eq!(cursor_at("scissors", &d, Point::new(400.0, 400.0)), Cursor::ScissorsNotAllowed, "away from paths");
+        assert_eq!(Cursor::ScissorsNotAllowed.stand_in(), Some(Cursor::NotAllowed));
+        assert_eq!(Cursor::ScissorsNotAllowed.precise(), Cursor::ScissorsNotAllowed, "nothing to aim at");
     }
 }

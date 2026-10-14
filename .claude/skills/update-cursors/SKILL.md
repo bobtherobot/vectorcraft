@@ -41,10 +41,13 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   `git -C <folder> status --porcelain -- .` isn't empty (warn the designer).
 
 ## 2. Diff
-- `… -- status <folder>` → JSON rows `{id, file, const, id_fp, info_fp, needed, drawn, error}`.
+- `… -- status <folder>` → JSON rows `{id, file, const, id_fp, info_fp, needed, drawn, placeholder,
+  fix, error}`. `placeholder`: the SVG is VectorCraft's own stand-in drawing (its section's first
+  line says so), so it counts as not drawn yet. `fix`: the section has a `To fix:` note or the SVG
+  doesn't convert.
 - Compare with `crates/ui-egui/src/cursors/cursors.toml` by `id`:
   new (no entry) · redrawn (id_fp differs) · re-described (info_fp differs) · needed-now-drawn
-  (entry `needed`, row `drawn`) · removed (entry, no row) · rename (removed + new with the same
+  (entry `needed`, row `drawn` and not `placeholder`) · removed (entry, no row) · rename (removed + new with the same
   id_fp: keep the decision) · unchanged.
 - A first sync or one with more than ~15 cursors to decide: work in groups (the `group` argument,
   else ask). Order: pen family + eyedropper + knife + mesh; selection and direct selection; type;
@@ -57,9 +60,10 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   and the old entry's `note`. Propose per cursor one of:
   - existing slot(s) → `GENERATED` entries;
   - a new `Cursor` variant + the tool change that returns it (doc comment on the variant; add it
-    to `Cursor::precise()` if it's a drawing tool's pointer; `cursor_icon` in
-    `crates/ui-egui/src/canvas.rs` must cover it; add it to `GLYPHS` in `cursors.rs` tests;
-    a tool test for the state);
+    to `Cursor::precise()` if it's a drawing tool's pointer; until it's drawn it borrows the
+    cursor the state showed before, in `Cursor::stand_in()`, so nothing changes on screen;
+    `cursor_icon` in `crates/ui-egui/src/canvas.rs` must cover it; add it to `GLYPHS` in
+    `cursors.rs` tests unless it borrows a system cursor; a tool test for the state);
   - skip (VectorCraft has no such tool or state).
 - Removed: propose falling back to the hand-drawn glyph (drop it from `GENERATED`, entry removed),
   or dropping a variant nothing else draws.
@@ -67,6 +71,10 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   bitmap once wired: update `every_glyph_becomes_a_bitmap_with_its_hotspot_inside`'s system-cursor
   list and say so in the review.
 - Only the marker line removed (info_fp unchanged, the row no longer `needed`): no decision.
+
+- An art/description mismatch shipped as drawn: add a paragraph to the section starting
+  `To fix:` that says what differs and to redraw or re-describe it. `info_fp` ignores these
+  notes; the preview lists the cursor as `[f]`. Remove the note once the designer has fixed it.
 
 ## 4. Converse
 - Batch every uncertain call into one round of questions, asked in plain text (not
@@ -102,6 +110,8 @@ Design: `plan/cursor-sync-design.md`. Every decision is yours; the record test k
   an SVG the designer drew. In its section (append it first if missing), replace the marker line
   with: `Cursor::<Id>`. Placeholder drawn by VectorCraft as a starting point: redraw it or touch it up.
   Run `check` and `gen` on the file; tell the user which SVGs you wrote and what changed.
+  Record it `needed` (no `id_fp`) and keep VectorCraft's own drawing: the preview lists it as
+  `[p]` until the designer redraws it and deletes the placeholder line; then wire it.
 - A `needed` entry VectorCraft no longer needs: set `status = "obsolete"`, `slots = []` (no
   `id_fp` needed), and ask the designer to delete the section.
 

@@ -539,6 +539,34 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         Cursor::Width | Cursor::WidthAdd => C::Crosshair,
         Cursor::WidthPoint => C::Move,
         Cursor::Blend | Cursor::BlendObject | Cursor::BlendAnchor | Cursor::ShapeBuilder | Cursor::ShapeBuilderErase => C::Crosshair,
+        Cursor::TypeVertical => C::VerticalText,
+        // Not drawn yet: the cursor each borrows.
+        Cursor::Lasso
+        | Cursor::MagicWand
+        | Cursor::Pencil
+        | Cursor::Paintbrush
+        | Cursor::BlobBrush
+        | Cursor::Eraser
+        | Cursor::Smooth
+        | Cursor::PathEraser
+        | Cursor::Join
+        | Cursor::Knife
+        | Cursor::Shaper
+        | Cursor::LivePaintBucket
+        | Cursor::Measure
+        | Cursor::PrintTiling
+        | Cursor::SymbolSprayer
+        | Cursor::SymbolShifter
+        | Cursor::SymbolScruncher
+        | Cursor::SymbolSizer
+        | Cursor::SymbolSpinner
+        | Cursor::SymbolStainer
+        | Cursor::SymbolScreener
+        | Cursor::SymbolStyler
+        | Cursor::Scissors
+        | Cursor::ScissorsNotAllowed
+        | Cursor::MeshAdd
+        | Cursor::PuppetPin => cursor_icon(c.stand_in().unwrap_or(Cursor::Crosshair)),
     }
 }
 

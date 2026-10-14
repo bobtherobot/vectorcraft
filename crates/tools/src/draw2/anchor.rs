@@ -207,9 +207,9 @@ impl Tool for AnchorTool {
             "deleteAnchor" => Cursor::PenAdd,
             "scissors" => {
                 if hit_segment(cx, p, cx.pick_tol()).is_some() {
-                    Cursor::Crosshair
+                    Cursor::Scissors
                 } else {
-                    Cursor::NotAllowed
+                    Cursor::ScissorsNotAllowed
                 }
             }
             _ => match self.state {
