@@ -132,8 +132,29 @@ fn text_keys(d: &Document) -> Vec<usize> {
 
 /// More type than the glyph cache's budget holds: the entries kept stay from frame to frame (the
 /// rest is laid out again), where emptying the cache when full laid out every object every frame.
+///
+/// The renderer rightly empties its glyph cache when the available fonts change, and the font
+/// database is global: a test running alongside that adds a font (or loads a fallback family)
+/// does that mid-run. A run that saw the fonts change proves nothing, so it runs again; one that
+/// saw the same fonts throughout must pass.
 #[test]
 fn type_over_the_text_budget_keeps_its_entries_between_frames() {
+    const ATTEMPTS: usize = 10;
+    let fonts = || vectorcraft_text::FontDb::global().generation();
+    for _ in 0..ATTEMPTS {
+        let before = fonts();
+        let run = std::panic::catch_unwind(text_budget_run);
+        if fonts() == before {
+            if let Err(e) = run {
+                std::panic::resume_unwind(e);
+            }
+            return;
+        }
+    }
+    panic!("the fonts changed during each of {ATTEMPTS} runs");
+}
+
+fn text_budget_run() {
     let d = text_doc(40, "Type");
     let opts = RenderOptions::default();
     let mut r = Renderer::new();
