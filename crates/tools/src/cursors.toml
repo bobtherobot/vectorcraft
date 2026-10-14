@@ -4,6 +4,7 @@
 # `cargo xtask cursors` wires their drawings in by id. Designers never decide what a cursor is for:
 # this file does. Adding a cursor: CLAUDE.md › Adding a cursor.
 #
+#   app         the app's name as designers read it
 #   id          the `Cursor` variant's name (PenAdd); the designer draws `<id>` in cursorcraft
 #   group       the heading it's listed under for designers
 #   shown_when  every situation that shows it, one plain sentence each
@@ -15,6 +16,8 @@
 #
 # Wording: plain sentences for a designer, behaviour only. `cargo xtask brands` rejects vendor
 # names here.
+
+app = "VectorCraft"
 
 # ── Selection ─────────────────────────────────────────────────────────────────────────────────────
 
