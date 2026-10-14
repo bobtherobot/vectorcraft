@@ -6,6 +6,7 @@
 //!   MCP tool definitions…). Comments and test code (`tests*.rs`, `*_tests.rs`, `tests/` and
 //!   `benches/` folders, items under `#[cfg(test)]`) are skipped;
 //! * the `description` of every `Cargo.toml`;
+//! * the cursor manifest `crates/tools/src/cursors.toml` (designers read it);
 //! * every text file under `packaging/`, and under `docs/` except Markdown pages: Markdown docs
 //!   (like `README.md` and `ROADMAP.md`) may name the reference app and compare against it.
 //!
@@ -34,6 +35,9 @@ const DENY: &[&str] = &[
 
 /// Marks a line that keeps a legacy name on purpose.
 const ALLOW: &str = "brand-ok";
+
+/// The cursor manifest, which designers read (as cursorcraft's CURSORS.md).
+const CURSOR_MANIFEST: &str = "crates/tools/src/cursors.toml";
 
 /// This file lists the names it rejects.
 const SELF: &str = "xtask/src/brands.rs";
@@ -89,7 +93,7 @@ enum Kind {
 }
 
 fn kind_of(path: &str) -> Option<Kind> {
-    if (path.starts_with("docs/") && !path.ends_with(".md")) || path.starts_with("packaging/") {
+    if (path.starts_with("docs/") && !path.ends_with(".md")) || path.starts_with("packaging/") || path == CURSOR_MANIFEST {
         Some(Kind::Text)
     } else if path == "Cargo.toml" || path.ends_with("/Cargo.toml") {
         Some(Kind::Manifest)
