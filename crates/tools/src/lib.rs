@@ -566,7 +566,7 @@ impl Cursor {
     }
 
     /// General › Use Precise Cursors: the drawing tools' pointers (the Pen's in every state, the
-    /// Eyedropper's, the Slice and Blend tools') become a plain crosshair at the hotspot.
+    /// Anchor Point and Curvature tools', the Eyedropper's, the Slice and Blend tools') become a plain crosshair at the hotspot.
     pub fn precise(self) -> Self {
         match self {
             Cursor::Pen
@@ -576,6 +576,8 @@ impl Cursor {
             | Cursor::PenContinue
             | Cursor::PenJoin
             | Cursor::PenConvert
+            | Cursor::AnchorPoint
+            | Cursor::Curvature
             | Cursor::Eyedropper
             | Cursor::Slice
             | Cursor::Blend

@@ -1,6 +1,10 @@
 # Control protocol
 
-`vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). One JSON request per line:
+> **Last updated:** 2026-10-13 · **Change:** synthetic input budgets (#1709); bounded transport waits (#1726).
+
+`vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). The port must be a number
+from 1 to 65535 (`--control=<port>` works too), given once; otherwise the app prints an error and exits
+before it starts. One JSON request per line:
 `{"id": 1, "method": "ui.inspect", "params": {}}` → `{"id": 1, "ok": true, "result": {...}}` or `{"id":1,"ok":false,"error":"..."}`.
 
 Set `VECTORCRAFT_CONFIG_DIR` to a dedicated directory for an isolated native test profile. Preferences,
@@ -16,7 +20,34 @@ an object without `method`, invalid UTF-8, and a line longer than 4 MiB. An HTTP
 web page's cross-origin `fetch` to `127.0.0.1:<port>`) therefore can't smuggle a command in its body:
 its request line is rejected first. At most 16 connections are served at once; further ones get an error
 line and are closed. Clients that get an error reply should reconnect. The port has no authentication,
-so only enable it while you use it. Transport: `apps/vectorcraft/src/control_server.rs`.
+so only enable it while you use it. Idle clients have 5 minutes to start their next line; once the
+first byte arrives, the complete line must arrive within an absolute 30 seconds (trickled bytes do not
+renew it). A reply has 60 seconds to be written. Expiration closes the connection and returns its slot
+(an idle connection is closed without a line, so nothing waits where the next reply would be; a line
+that stalls gets the usual error line first);
+persistent clients can send further requests within these bounds, or reconnect after idle expiration.
+These transport budgets are separate from the existing 60-second command-processing wait.
+Transport: `apps/vectorcraft/src/control_server.rs`.
+
+## Synthetic input budgets
+
+`ui.drag` accepts at most **256** `steps`; `ui.click` and `ui.drag` accept at most **16** `count`.
+They must be non-negative JSON integers. Omitted values keep their defaults (8 steps, one click);
+explicit zero still acts as one, as before. Oversized or malformed values return an error before
+any move, press or release is queued.
+
+All synthetic methods (`ui.key`, `ui.text`, `ui.move`, `ui.click`, `ui.drag`, `ui.wheel`) share a
+**1,024-event** pending-queue limit. The whole request must fit; rejection preserves existing input
+and does not append a partial gesture. Clients can retry once earlier input has drained. At most
+**64 control requests** run per frame; later requests remain on the channel and another frame is
+scheduled. These limits cover synthetic input admission, separately from socket transport and
+command-processing timeouts.
+
+A request the app hasn't answered after **60 s** gets `{"ok": false, "error": "timeout: …"}`. If the
+app had not started it (it was busy, or its window wasn't being drawn), the request is withdrawn
+and never runs, and the error says "will not run": retrying is safe. If the app was already
+running it, the error says "still running": it may yet complete, so check the document before
+retrying.
 
 ## Confining file access
 
@@ -53,15 +84,17 @@ the two can still win that race.
 
 | Method | Params | |
 |---|---|---|
-| `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
+| `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`). A key of `params` that the command's params description doesn't name is an error naming it and the nearest key the command takes, before anything runs (`unknown parameter `widht`; did you mean `width`?`); see [Parameter keys](mcp.md#parameter-keys) |
 | `engine.commands` | | every command with label, shortcut, params doc, enablement |
-| `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, the key object (`key`, null without one), history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does |
+| `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, the key object (`key`, null without one), history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does. Each node reports `opacity` below 1 and `blend` when it isn't Normal; objects and compound paths report `fill`, `stroke` and `strokeWidth`, a compound path's members `compoundMember: true` instead |
 | `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), `taskBar` (`pinned`, and `rect` `[x, y, w, h]` while the Contextual Task Bar shows), `freeTransformWidget` (`[x, y, w, h]` while the Free Transform widget shows), view, canvas rect, window size, perf, background saves and exports still running, `nativeMenuBar` (true when the menus are in the macOS menu bar rather than the window; `ui.menu.list` lists the in-window menus either way), `fileDialog` (`"open"`, `"place"`, `"save"` or `"folder"` while a native file dialog is open, `null` otherwise; see below) |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
 | `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
 | `ui.tool.select` / `ui.tool.list` | `{tool}` | |
 | `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse: `mods.cmd` held at a press with any tool but a selection tool drags with the selection tool chosen last (Direct Selection with the Pen until one is), and the release gives the tool back as it was; the reply lists `selection`, `key` (the key object, null without one) and `tool` |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | synthetic keyboard input |
+| `ui.move` | `{x, y}` | screen-point pointer move |
+| `ui.click` / `ui.drag` | `{x, y, button?, count?, shift?, alt?, ctrl?, cmd?}` / `{x, y, toX, toY, steps?, count?, button?, shift?, alt?, ctrl?, cmd?}` | egui pointer input; see synthetic input budgets above |
 | `ui.wheel` | `{x, y, dy?, dx?, unit?: "line"\|"point", shift?, alt?, cmd?}` | a mouse wheel turn over screen point (x, y): `dy` notches up (+) or down, `dx` sideways. Over the canvas the wheel scrolls and Cmd- or Alt-wheel (Option on the Mac) zooms about the pointer; with the `zoomWithMouseWheel` preference the wheel and Alt-wheel zoom about the pointer, Shift-wheel scrolls up and down and Cmd-wheel (Ctrl on Windows and Linux) sideways. Over a focused numeric field (click it first) each notch steps its value as Up/Down do (Shift: ten, Cmd/Ctrl: a tenth) and the panel stays put; over anything else in a panel the wheel scrolls it |
 | `ui.set` | `{brightness?, panel?, rulers?, outline?, grid?, smartGuides?, boundingBox?, controlBar?}` | |
 | `ui.dialog.set` / `.confirm` / `.cancel` | `{field, value}` | fill and submit the open dialog |
@@ -111,6 +144,9 @@ Graphic styles: `ui.graphicStyleOptions {name}` opens the `graphicStyleOptions` 
 dialog open); without `name` it names a new style made from the selection (`graphicStyle.new`).
 `ui.mergeGraphicStyles {names}` opens the same dialog to name the style `ui.dialog.confirm` merges from them
 (`graphicStyle.merge`). Deleting styles from the panel asks first with a `confirm` dialog (`graphicStyle.delete`).
+
+Symbols: `ui.symbolOptions` opens the `symbolOptions` dialog (field `name`) that the Symbols panel's New Symbol asks
+first; `ui.dialog.confirm` makes the symbol from the selection with that name (`symbol.new`).
 
 Gradient panel: double-clicking a stop on the panel's slider opens the same `gradientStop` popover, with a `screen`
 field (`[x, y]`, screen points) in place of `x`/`y`. The panel's stop eyedropper selects the Eyedropper tool with the
@@ -256,7 +292,12 @@ drawer beside the toolbar; Escape or a click outside closes it. While it is open
 toolbar to add it (onto a button's top or bottom edge: its own slot before or after; onto its middle: into its
 group), from the toolbar into it to remove it, or within the toolbar to move it. `toolbar.addTool {tool, slot?,
 place?}`, `toolbar.removeTool {tool, group?}` and `toolbar.reset` do the same for the current Basic or Advanced
-toolbar and return its slots; the edits (`ui.toolbar_edits`) are saved with the preferences.
+toolbar and return its slots; the edits (`ui.toolbar_edits`) are saved with the preferences. The drawer lists
+the tools one per row (icon, name, shortcut), each flyout group framed together under its heading; its ☰ menu
+has Reset and the Basic and Advanced toolbars. Its Show section (`toolbar.show {control?, on?}`, `control` one
+of `fillStroke`, `coloring`, `drawMode`, `screenMode`) shows or hides the controls under the toolbar's tools,
+saved with the preferences (`ui.toolbar_show`). The toolbar names its groups only with Preferences › User
+Interface › Show Tool Group Labels, off as it ships (#1736).
 
 The Contextual Task Bar: its handle (the grip at its left end) drags it anywhere on the canvas, which always holds
 it whole, also when the window shrinks. Unpinned, the bar keeps that offset as it follows the selection, until
@@ -388,7 +429,7 @@ Perspective plane options: double-clicking a plane widget of the perspective gri
 opens the `perspectivePlane` dialog (fields `plane`: left, right or ground; `location`: points along the plane's
 normal; `objects`: none, move or copy). `ui.dialog.confirm` runs `perspective.plane.move` with them.
 
-Units: dialog distance fields (Move's `dx`/`dy`, shape sizes, Offset Path's `offset`, Split Into Grid's `gutter`,
+Units: dialog distance fields (Move's `dx`/`dy`, shape sizes, Offset Path's `offset`, Split Into Grid's gutters and totals,
 Artboard Options' sizes, effects' distances, `transformEach`'s `moveH`/`moveV`, New Document's `width`/`height`, the
 length preferences in `preferences`) show in the General unit (the active document's units, or `unitsGeneral` without a
 document). Through `ui.dialog.set` a number is in points and a string may carry its unit (`"10 mm"`; a bare number in a
@@ -505,7 +546,8 @@ type with those options (`file.place {text: {…}}`).
 
 System clipboard formats: through the desktop app, `edit.copy` and `edit.cut` publish what `clipboard.flavours`
 lists to the system clipboard, and every Paste command first loads what another app copied (`clipboard.importSvg`,
-`importPdf`, `importText` or `importImage`, centred in the view); an import error answers the Paste with that error
+`importPdf`, `importEps`, `importText` or `importImage`, centred in the view; the desktop app reads PDF and EPS from
+the Windows clipboard and, with SVG, from the macOS pasteboard, and an `.eps` file copied in a file manager anywhere); an import error answers the Paste with that error
 and pastes nothing. Cmd+V also pastes a bitmap or PDF with no text beside it (on the key's release, as egui sends no
 Paste event for it). Screenshots paste on every platform: Windows reads `PNG`, else `CF_DIBV5`/`CF_DIB`, macOS the
 pasteboard's PNG or TIFF, Linux `image/png`, and the web the picture the browser's paste event carries (#457).
@@ -786,3 +828,22 @@ resizes the root divider (`false`/`true` path entries select first/second childr
 `SetStackOpen {panel,open}` / `ResizeStack {panel,height}` control accordion entries.
 The UI dispatches these same commands. Unknown panel IDs, invalid geometry, and stale
 split paths return an error without changing the workspace.
+
+## Synthetic input hardening checklist
+
+- [x] Validate counts and reserve the whole gesture before queue mutation.
+- [x] Bound pending events across all synthetic methods, preserving rejected requests' prior queue.
+- [x] Yield after a finite control-request batch per frame; retain later requests and schedule another frame.
+
+## Transport hardening checklist
+
+- [x] Bound idle, partial-line and reply-write waits without renewing a partial-line deadline per byte.
+- [x] Release connection slots on worker exit, including timeout and failed worker creation.
+- [x] Preserve correlated replies and persistent connections within the transport budgets.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-13 | minor | Documented count, pending-event and per-frame request budgets (#1709). |
+| 2026-10-13 | minor | Documented transport deadlines and connection-slot recovery (#1726). |

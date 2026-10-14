@@ -247,6 +247,7 @@
 	Author Title:	Qualifica dell'autore:
 	Author:	Autore:
 	Auto	Auto
+	Auto Color	Colore automatico
 	Automatic	Automatico
 	Auto Size New Area Type	Dimensionamento automatico del nuovo testo in area
 	Auto Spell Check	Controllo ortografico automatico
@@ -368,6 +369,59 @@
 	Character Style Options	Opzioni stile carattere
 	Character Styles	Stili carattere
 	Check Links	Verifica collegamenti
+# Check Script (File › Scripts) and the report it shows on a script written for the reference app.
+	Check Script	Controlla script
+	Check Script…	Controlla script…
+	Copy Report	Copia rapporto
+	VectorCraft read this script without running it.	VectorCraft ha letto questo script senza eseguirlo.
+	Needs nothing beyond plain JavaScript	Richiede solo JavaScript semplice
+	Needs the script language's own objects or directives	Richiede oggetti o direttive propri del linguaggio dello script
+	Needs the document model	Richiede il modello del documento
+	Needs files	Richiede file
+	Needs menu commands	Richiede comandi di menu
+	Needs dialogs	Richiede finestre di dialogo
+	Needs features only the reference app has	Richiede funzioni che ha solo l'applicazione di riferimento
+	Outside the document	Fuori dal documento
+	Writes, moves or deletes files	Scrive, sposta o elimina file
+	Opens files in other apps	Apre file in altre app
+	Opens network connections	Apre connessioni di rete
+	Loads native code	Carica codice nativo
+	Sends messages to other apps	Invia messaggi ad altre app
+	Reads or sets environment variables	Legge o imposta variabili d'ambiente
+	Runs code the checker can't read	Esegue codice che il controllo non può leggere
+	Changes the reference app's preferences	Modifica le preferenze dell'applicazione di riferimento
+	Menu commands	Comandi di menu
+	Names the script builds as it runs: {count}	Nomi che lo script compone durante l'esecuzione: {count}
+	Document model	Modello del documento
+	Object types: {names}	Tipi di oggetto: {names}
+	Directives	Direttive
+	Includes	File inclusi
+	Checked	Controllato
+	Not followed: outside the script's folder	Ignorato: fuori dalla cartella dello script
+	Includes itself	Include se stesso
+	Not read	Non letto
+	Not read: a limit was reached	Non letto: è stato raggiunto un limite
+	Compiled or not text	Compilato o non testo
+	Problems	Problemi
+	String not closed	Stringa non chiusa
+	Comment not closed	Commento non chiuso
+	Regular expression not closed	Espressione regolare non chiusa
+	Template literal not closed	Letterale modello non chiuso
+	XML literal not closed	Letterale XML non chiuso
+	Bracket never closed	Parentesi mai chiusa
+	Closing bracket with no opening one	Parentesi di chiusura senza apertura
+	Syntax newer than ES3	Sintassi più recente di ES3
+	Unknown directive	Direttiva sconosciuta
+	Not valid UTF-8: unreadable bytes were replaced	UTF-8 non valido: i byte illeggibili sono stati sostituiti
+	Mixed line endings	Fine riga miste
+	Nesting too deep to follow	Annidamento troppo profondo da seguire
+	line {line}	riga {line}
+	lines {lines}	righe {lines}
+	{file}, line {line}	{file}, riga {line}
+	Compiled script: ask its author for the .jsx file	Script compilato: chiedi il file .jsx al suo autore
+	Too large to check	Troppo grande da controllare
+	Not a script for the reference app	Non è uno script per l'applicazione di riferimento
+	Some lists were cut short at their limit.	Alcuni elenchi sono stati troncati al loro limite.
 	Check Spelling…	Controlla ortografia…
 	Choose a folder	Scegli una cartella
 	Choose…	Scegli…
@@ -714,6 +768,8 @@
 	Do Not Move	Non spostare
 	Do you want to save the changes you made to “{name}”?	Vuoi salvare le modifiche apportate a “{name}”?
 	Can't open “{name}”.	Impossibile aprire «{name}».
+	Can't save “{name}”.	Impossibile salvare «{name}».
+	Can't export “{name}”.	Impossibile esportare «{name}».
 	Document	Documento
 	Document Color Mode	Metodo colore documento
 	Document Info	Informazioni documento
@@ -1143,6 +1199,8 @@
 	Graphic Style Library	Libreria stili grafici
 	Graphic Style Options	Opzioni stile grafico
 	Graphic Style Options…	Opzioni stile grafico…
+	Symbol Options	Opzioni simbolo
+	Symbol Options…	Opzioni simbolo…
 	Graphic Styles	Stili grafici
 	Graphic Styles Options	Opzioni stili grafici
 	Graphics	Grafica
@@ -1243,6 +1301,9 @@
 	Identify Objects By	Identifica oggetti per
 	Ignore	Ignora
 	Ignore Artboards (all the art as one page)	Ignora tavole da disegno (tutta la grafica come una sola pagina)
+	Auto Grouping	Raggruppamento automatico
+	Enhanced	Avanzato
+	Ignore Color	Ignora colore
 	Ignore White	Ignora bianco
 	Palette:	Palette:
 	Limited	Limitata
@@ -2716,6 +2777,7 @@
 	Snap to Glyph	Aggancia a glifo
 	Snap to Grid	Aggancia alla griglia
 	Snap to Pixel	Aggancia ai pixel
+	Precise Cursors	Cursori di precisione
 	Snap to Point	Aggancia al punto
 	Snapping Tolerance	Tolleranza di aggancio
 	Social Square Post 1080×1080	Post quadrato per social 1080×1080
@@ -2741,6 +2803,8 @@
 	Spiral Tool	Strumento Spirale
 	Split Freeform Line	Dividi linea libera
 	Split Into Grid	Dividi in griglia
+	Total:	Totale:
+	Add Guides	Aggiungi guide
 	Split Into Grid…	Dividi in griglia…
 	Split Path	Dividi tracciato
 	spot	spot
@@ -3234,6 +3298,7 @@
 	{warning}: click to correct to the closest color ({hex})	{warning}: fai clic per correggere con il colore più vicino ({hex})
 	“{file}” is protected by a password.	“{file}” è protetto da password.
 	● Recording	● Registrazione in corso
+imageTrace	Outline	Contorno
 @plural	{n} item|{n} items	{n} elemento|{n} elementi
 @plural	Color Table ({n} color)|Color Table ({n} colors)	Tabella colori ({n} colore)|Tabella colori ({n} colori)
 @plural	Delete this {n} graphic style?|Delete these {n} graphic styles?	Eliminare {n} stile grafico?|Eliminare questi {n} stili grafici?
@@ -3390,6 +3455,7 @@ axis	Both	Entrambi
 @msg	its page has text, and its layers have no text objects to put it in	la sua pagina ha del testo e i suoi livelli non hanno oggetti di testo in cui metterlo
 @msg	its type is to come in as outlines, which only its page has	il suo testo deve arrivare come contorni, che ha solo la sua pagina
 @msg	the art on them differs from the page's in {_1}% of it	l'illustrazione dei livelli differisce da quella della pagina per il {_1}% della sua superficie
+@msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	l'illustrazione dei livelli differisce da quella della pagina per il {_1}% della sua superficie: provengono comunque dai suoi dati di modifica
 @msg	`to` must be "corner" or "smooth"	`to` deve essere "corner" o "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	I file BMP sono RGB o in scala di grigi: colorModel rgb o gray
 @msg	Blend colors: select at least three objects with filled colours	Fondi colori: seleziona almeno tre oggetti con riempimento colore
@@ -3397,6 +3463,7 @@ axis	Both	Entrambi
 @msg	Convert to Artboards: selection has no area	Converti in tavole da disegno: la selezione non ha area
 @msg	Convert to Shape: no rectangles or ellipses selected	Converti in forma: nessun rettangolo o ellisse selezionato
 @msg	Copied the CSS of {rules} object(s)	Copiato il CSS di {rules} oggetto/i
+@msg	Copied the script report	Rapporto dello script copiato
 @msg	Corners edits the corners of a path	Angoli modifica gli angoli di un tracciato
 @msg	Couldn't copy to the system clipboard: {e}	Impossibile copiare negli appunti di sistema: {e}
 @msg	Couldn't open {name}: {e}	Impossibile aprire {name}: {e}
@@ -3432,6 +3499,7 @@ axis	Both	Entrambi
 @msg	No saved selections (Select → Save Selection…)	Nessuna selezione salvata (Selezione → Salva selezione…)
 @msg	No saved views (View → New View…)	Nessuna vista salvata (Visualizza → Nuova vista…)
 @msg	Offset Path: select paths	Sposta tracciato: seleziona tracciati
+@msg	Offset Path: the offset leaves nothing of the selected paths (an inset larger than the shapes)	Sposta tracciato: lo spostamento non lascia nulla dei tracciati selezionati (uno spostamento verso l’interno maggiore delle forme)
 @msg	Opened with {_1} note(s): {_2}	Aperto con {_1} nota/e: {_2}
 @msg	Opened {url}	Aperto {url}
 @msg	Outline Stroke: no stroked paths selected	Contorna traccia: nessun tracciato con traccia selezionato
@@ -3738,6 +3806,8 @@ axis	Both	Entrambi
 @msg	recovery copy `{file}`: {e}	copia di recupero `{file}`: {e}
 @msg	resolutions must be between 1 and 2400 ppi	le risoluzioni devono essere comprese tra 1 e 2400 ppi
 @msg	result would exceed the canvas (coordinates out of range)	il risultato supererebbe l'area di disegno (coordinate fuori intervallo)
+@msg	objects can't be nested more than 32 deep	gli oggetti non possono essere nidificati oltre 32 livelli
+@msg	the SVG's elements are nested more than {0} deep	gli elementi dell'SVG sono nidificati oltre {0} livelli
 @msg	scale must be a number from {_1} to {_2}, not {_3}	la scala deve essere un numero da {_1} a {_2}, non {_3}
 @msg	scale must be a number from {_1} to {_2}, not {s}	la scala deve essere un numero da {_1} a {_2}, non {s}
 @msg	select (or target) objects whose appearance isn't basic	seleziona (o imposta come destinazione) oggetti con un aspetto non di base
@@ -3887,6 +3957,7 @@ axis	Both	Entrambi
 @msg	{name}: no such recovery entry	{name}: voce di recupero inesistente
 @msg	{path} can't be found: relink it first	impossibile trovare {path}: ricollegalo prima
 @msg	{path}: no file system here (pass dataBase64 to open; omit the path to get dataBase64)	{path}: nessun file system disponibile qui (passa dataBase64 per aprire; ometti il percorso per ottenere dataBase64)
+@msg	{path}: not a file	{path}: non è un file
 @msg	{path}: {e}	{path}: {e}
 @msg	{status} ({e})	{status} ({e})
 @msg	Couldn't place {name}: {e}	Impossibile inserire {name}: {e}
@@ -3943,6 +4014,8 @@ axis	Both	Entrambi
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	la sfumatura “{name}” non è definita nel file: la sostituisce un colore pieno
 @msg	an image VectorCraft can't read was left out	un'immagine che VectorCraft non può leggere è stata omessa
 @msg	an image whose data is cut short was left out	un'immagine con dati incompleti è stata omessa
+@msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	le immagini collegate mostrano l'anteprima a bassa risoluzione salvata nel file finché i loro file non vengono trovati: ricollegale nel pannello Collegamenti
+@msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	il testo in area in cornici troppo basse per una riga del font in cui viene mostrato ha ricevuto cornici più alte ({_1}): altrimenti non sarebbe visibile
 @msg	its editing data doesn't say where its art is	i suoi dati di modifica non dicono dove si trova la grafica
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	questo file è stato salvato senza compatibilità PDF e i suoi dati di modifica non si possono leggere ({why})
 @msg	No fonts are missing in this document	In questo documento non mancano font
@@ -4134,9 +4207,6 @@ effect	Regular	Normale
 	Rotation Y	Rotazione Y
 	Rotation Z	Rotazione Z
 	Shading	Ombreggiatura
-	Direction	Direzione
-	Elevation	Elevazione
-	Ambient	Luce ambientale
 	Segments	Segmenti
 	Show axis	Mostra asse
 	Reset all	Ripristina tutto
@@ -4196,3 +4266,77 @@ lighting	Light	Luce
 @msg	the file stopped being read (please report this bug)	la lettura del file si è interrotta (segnala questo errore)
 	Concentric Dividers:	Divisori concentrici:
 	Radial Dividers:	Divisori radiali:
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Inclinazione:
+	Inside	Interno
+	Outside	Esterno
+	Use Outside Rectangle As Frame	Usa rettangolo esterno come cornice
+	Create Compound Path From Ellipses	Crea tracciato composto dalle ellissi
+	Fill Grid	Riempi griglia
+	Select two or more objects, or a group	Selezionate due o più oggetti, oppure un gruppo
+# 3D and Materials › Extrude & Bevel, Inflate and Rotate: options, Position presets and bevel shapes.
+	Back	Retro
+	Both sides	Entrambi i lati
+	Classic	Classico
+	Cove	Guscio
+	Depth	Profondità
+	Front	Fronte
+	Isometric Bottom	Isometrica sotto
+	Isometric Left	Isometrica sinistra
+	Isometric Right	Isometrica destra
+	Isometric Top	Isometrica sopra
+	Off-Axis Back	Fuori asse retro
+	Off-Axis Bottom	Fuori asse sotto
+	Off-Axis Front	Fuori asse fronte
+	Off-Axis Left	Fuori asse sinistra
+	Off-Axis Right	Fuori asse destra
+	Off-Axis Top	Fuori asse sopra
+	Ogee	Gola
+	Reset all 3D settings to their defaults.	Ripristina i valori predefiniti di tutte le impostazioni 3D.
+	Step	Gradino
+	Taper	Rastremazione
+	Twist	Torsione
+	Volume	Volume
+3d	Cap	Chiusura
+3d	Solid	Pieno
+3d	Hollow	Cavo
+3d	Bevel	Smusso
+3d	Rounded	Arrotondato
+3d	Space	Spazio
+	Bevel Shape	Forma smusso
+	Bevel Inside	Smusso verso l'interno
+	Bevel both sides	Smusso su entrambi i lati
+	Presets	Predefiniti
+@msg	An object takes one 3D effect. Edit the existing effect's options, or remove it first.	Un oggetto può avere un solo effetto 3D. Modificate le opzioni dell'effetto esistente oppure rimuovetelo prima.
+@msg	{label} currently requires a path or compound path. Convert type, images and groups to paths first.	{label} richiede per ora un tracciato o un tracciato composto. Convertite prima testo, immagini e gruppi in tracciati.
+@msg	{label} requires a shape with at least two anchors	{label} richiede una forma con almeno due punti di ancoraggio
+@msg	The shape is too complex for a 3D effect	La forma è troppo complessa per un effetto 3D
+@msg	The 3D surface is too complex; simplify the shape	La superficie 3D è troppo complessa; semplificate la forma
+	Transform Objects	Trasforma oggetti
+@msg	unknown parameter `{key}`; did you mean `{near}`?	parametro sconosciuto `{key}`; forse intendevate `{near}`?
+@msg	unknown parameter `{key}`; the command takes no parameters	parametro sconosciuto `{key}`; il comando non ha parametri
+@msg	unknown parameter `{key}`; the command takes: {keys}	parametro sconosciuto `{key}`; il comando accetta: {keys}
+	Load EPS into Clipboard	Carica EPS negli appunti
+@msg	an image of {w} × {h} pixels is too large to draw	un'immagine di {w} × {h} pixel è troppo grande per essere disegnata
+	Basic	Base
+	Fill and Stroke Controls	Controlli di riempimento e traccia
+	Coloring Controls	Controlli colore
+	Draw Mode Controls	Controlli modalità di disegno
+	Screen Mode Controls	Controlli modalità schermo
+	Drawer menu	Menu del cassetto
+	Toolbar: Show Controls	Barra degli strumenti: Mostra controlli
+@msg	control must be fillStroke, coloring, drawMode or screenMode	control deve essere fillStroke, coloring, drawMode o screenMode
+@msg	unknown control `{name}`: fillStroke, coloring, drawMode or screenMode	controllo sconosciuto `{name}`: fillStroke, coloring, drawMode o screenMode
+@msg	give a fraction `t` from 0 to 1	specifica un valore `t` da 0 a 1
+@msg	give the path `id`	specifica l'`id` del tracciato
+@msg	invalid stroke widths	larghezze della traccia non valide
+@msg	object has no weighted stroke	l'oggetto non ha una traccia con spessore positivo valido
+# Corner Radius: a field per corner of a live rectangle.
+	Single Corner Radius	Raggio angolo unico
+	Top Left:	In alto a sinistra:
+	Top Right:	In alto a destra:
+	Bottom Left:	In basso a sinistra:
+	Bottom Right:	In basso a destra:
+	Softness	Morbidezza
+	Ambient Light	Luce ambientale
+	Light behind the object	Luce dietro l'oggetto

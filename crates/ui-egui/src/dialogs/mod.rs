@@ -52,7 +52,7 @@ mod new_document;
 pub mod new_swatch;
 pub mod office_export;
 pub mod package;
-mod path_ops;
+pub(crate) mod path_ops;
 pub mod pdf_presets;
 pub mod perspective_grid;
 pub mod perspective_options;
@@ -78,12 +78,14 @@ pub(crate) mod save_options;
 mod save_pdf;
 pub mod save_style_library;
 pub mod save_swatch_library;
+pub mod script_check;
 mod shapes;
 pub mod slices;
 pub mod spot_colors;
 pub(crate) mod svg_options;
 pub mod swatch_conflict;
 pub mod swatch_options;
+pub mod symbol_options;
 pub mod symbolism_options;
 mod text_export;
 pub mod text_import;
@@ -104,7 +106,8 @@ pub use effect::open as open_effect_dialog;
 pub use export_as::open as open_export_as;
 pub use export_for_screens::open as open_export_for_screens;
 pub(crate) use export_for_screens::{
-    KIND as EXPORT_FOR_SCREENS, formats as screen_formats, open_assets as open_export_for_screens_assets, saved_rows as screen_saved_rows,
+    KIND as EXPORT_FOR_SCREENS, formats as screen_formats, open_assets as open_export_for_screens_assets, saved_options as screen_saved_options,
+    saved_rows as screen_saved_rows,
 };
 pub(crate) use new_document::preset_name;
 pub use new_document::{open as open_new_document, preset_card};
@@ -284,12 +287,14 @@ registry! {
     PrintPreset: [print::PRESET_KIND] => print::PRESET_SPEC,
     PrintPresets: [print_presets::KIND] => print_presets::SPEC,
     Plugin: [plugin::KIND] => plugin::SPEC,
+    ScriptCheck: [script_check::KIND] => script_check::SPEC,
     VectorHalftone: [halftone::KIND] => halftone::SPEC,
     PerspectiveGrid: [perspective_grid::KIND] => perspective_grid::SPEC,
     Envelope: [envelope::WARP, envelope::MESH, envelope::OPTIONS] => envelope::SPEC,
     LiquifyOptions: [liquify::KIND] => liquify::SPEC,
     FreehandOptions: [freehand::KIND] => freehand::SPEC,
     FlareOptions: [flare_options::KIND] => flare_options::SPEC,
+    SymbolOptions: [symbol_options::KIND] => symbol_options::SPEC,
     SymbolismOptions: [symbolism_options::KIND] => symbolism_options::SPEC,
     PerspectiveGridPresets: [perspective_presets::KIND] => perspective_presets::SPEC,
     PerspectiveGridOptions: [perspective_options::KIND] => perspective_options::SPEC,
@@ -361,6 +366,7 @@ pub(crate) fn settle(app: &mut VectorcraftApp) {
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     about::show(app, ctx);
     settle(app);
+    confirm::show_waiting(app);
     // The kind of dialog shown last frame: a different one (or none) means this one just opened, and
     // its first field is to take the keyboard focus (`focus_id`, until a field takes it).
     let (shown_id, focus_id) = (egui::Id::new("dialog-shown"), egui::Id::new("dialog-focus-pending"));
@@ -383,6 +389,13 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         m.get_temp::<bool>(focus_id).unwrap_or(false)
     });
+    // Not in the frame of a click (the one on the menu item that opened it): egui takes the focus
+    // from a field the click missed, so the field takes it a frame later (#1367).
+    let clicked = ctx.input(|i| i.pointer.any_click());
+    if focus_first && clicked {
+        ctx.request_repaint();
+    }
+    let focus_first = focus_first && !clicked;
     let spec = spec(&d.kind);
     if let Some(window) = spec.window {
         return window(app, ctx);
@@ -405,8 +418,8 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         ui.set_max_width(spec.max_width.map_or(room, |w| w.min(room)));
         modal::heading(ui, &heading);
         ui.add_space(12.0);
-        // Just opened: its first field takes the keyboard focus, as in the reference app (type a
-        // value, press Enter). Only the body's fields can take it.
+        // Just opened: its first enabled field takes the keyboard focus, as in the reference app
+        // (type a value, press Enter). Only the body's fields can take it.
         if focus_first {
             ui.data_mut(|m| m.insert_temp(widgets::dialog_focus_flag(), true));
         }

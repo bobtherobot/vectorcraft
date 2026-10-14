@@ -12,6 +12,7 @@ mod cursor_sync;
 mod cursors;
 mod ico;
 mod layers;
+mod pngsuite;
 mod sha256;
 mod stats;
 mod version;
@@ -31,7 +32,7 @@ commands:
                   with cursorcraft's folder, bring the designers' cursor drawings in by id
   cleanroom       check the repository holds no copied vendor text or vendor-made fixtures (CLAUDE.md › Clean-room)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
+  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates and the web app
   ci              fmt --check, clippy -D warnings, test, assets, brands, cleanroom, cursors (warnings only), layers, wasm (stops at first failure)
   corpus [--download] [--affinity]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite,
@@ -149,8 +150,8 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell.
+/// Workspace packages that must build for wasm32: all L0–L5 crates, the egui
+/// shell, and the web app (its wasm-only code is compiled by nothing else).
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
@@ -158,7 +159,7 @@ fn wasm_set() -> Result<Vec<String>, String> {
         .filter(|c| match layers::classify(&c.name) {
             Some(layers::Class::Layer(l)) => l <= 5 || layers::short_name(&c.name) == "ui-egui",
             Some(layers::Class::Standalone) => true,
-            _ => false,
+            _ => layers::short_name(&c.name) == "web",
         })
         .map(|c| c.name)
         .collect())
@@ -235,16 +236,14 @@ fn cmd_ci() -> Result<(), String> {
     Ok(())
 }
 
-const PNGSUITE_URL: &str = "http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz";
-
 fn cmd_corpus(download: bool) -> Result<(), String> {
     let corpus = root().join("corpus");
     println!(
         "Test corpora live under {} (git-ignored, never committed).
 Tests that use a corpus skip cleanly when it is absent.
 
-  corpus/pngsuite/   PngSuite (public domain) — vectorcraft-codecs compares every file
-                     against the `image` crate. Fetch: cargo xtask corpus --download
+  corpus/pngsuite/   Original PngSuite PNGs (redistribution permitted), pinned and SHA-256
+                     verified. Fetch: cargo xtask corpus --download
   corpus/psd/        PSD samples from MIT/BSD projects (ag-psd, psd-tools test data).
                      Copy files in manually; licences must be MIT/BSD/CC0.
   corpus/tiff/       libtiff pics (optional)
@@ -258,17 +257,5 @@ Tests that use a corpus skip cleanly when it is absent.
     if !download {
         return Ok(());
     }
-    let dest = corpus.join("pngsuite");
-    std::fs::create_dir_all(&dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
-    let tgz = corpus.join("PngSuite-2017jul19.tgz");
-    let mut curl = Command::new("curl");
-    curl.args(["-fsSL", "-o"]).arg(&tgz).arg(PNGSUITE_URL);
-    run(curl, &format!("curl {PNGSUITE_URL}"))?;
-    let mut tar = Command::new("tar");
-    tar.arg("-xzf").arg(&tgz).arg("-C").arg(&dest);
-    run(tar, "tar -xzf PngSuite-2017jul19.tgz")?;
-    let _ = std::fs::remove_file(&tgz);
-    let n = std::fs::read_dir(&dest).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "png")).count()).unwrap_or(0);
-    println!("PngSuite: {n} PNG files in {}", dest.display());
-    if n == 0 { Err("no PNG files extracted".into()) } else { Ok(()) }
+    pngsuite::fetch()
 }
