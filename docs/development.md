@@ -228,6 +228,10 @@ VectorCraft decides which cursors exist; designers draw them in [cursorcraft](ht
 
 `cargo xtask brands` (part of `cargo xtask ci`) fails when user-visible text names another vendor's products or company: string literals in Rust sources (command labels and params docs, menus, panels, MCP tool definitions), `Cargo.toml` descriptions and packaging files. Comments and test code are not checked. Say "the reference app" or name the feature itself. A line that must keep an old name, such as an alias that files or preferences from earlier versions still use, carries a `brand-ok` comment.
 
+## Clean-room gate
+
+`cargo xtask cleanroom` (part of `cargo xtask ci`) fails when the repository holds Adobe-authored text or a file an Adobe application made (CLAUDE.md › Clean-room). It scans every tracked and untracked (not ignored) file for a copyright line naming Adobe as the holder in text (the mark of a pasted procset, prolog or sample file) and for creator metadata naming an Adobe application in fixtures (XMP `CreatorTool`, PDF `/Creator` and `/Producer`, PostScript `%%Creator:`, an exported SVG's generator comment; in binary files the application's name). Rust sources are only checked for notices, since importers and their tests name those headers in hand-written input. Credits for Adobe's open-source work (the CMap resources in `NOTICE`, the Source fonts' licence texts) are allowed by path in `xtask/src/cleanroom.rs`, each with its reason. Write test inputs from scratch from the public specifications instead.
+
 ## Robustness: VectorCraft never crashes
 
 A crash takes the user's unsaved work with it, and much of what the app reads is untrusted: SVG,

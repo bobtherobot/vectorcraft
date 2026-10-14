@@ -7,6 +7,7 @@ mod affinity_corpus;
 mod assets;
 mod brands;
 mod bundle;
+mod cleanroom;
 mod cursor_sync;
 mod cursors;
 mod ico;
@@ -28,9 +29,10 @@ commands:
   cursors [CURSORCRAFT]
                   warn about Cursor values with no entry in crates/tools/src/cursors.toml (never fails);
                   with cursorcraft's folder, bring the designers' cursor drawings in by id
+  cleanroom       check the repository holds no copied vendor text or vendor-made fixtures (CLAUDE.md › Clean-room)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
-  ci              fmt --check, clippy -D warnings, test, assets, brands, cursors (warnings only), layers, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, test, assets, brands, cleanroom, cursors (warnings only), layers, wasm (stops at first failure)
   corpus [--download] [--affinity]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite,
                   --affinity the pinned public Affinity documents into corpus/affinity
@@ -48,6 +50,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
         Some("brands") => brands::run(&root()),
+        Some("cleanroom") => cleanroom::run(&root()),
         Some("cursors") => cursors::run(&root(), &rest),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
@@ -207,6 +210,7 @@ fn cmd_ci() -> Result<(), String> {
         ),
         ("assets", Box::new(|| assets::run(&root()))),
         ("brands", Box::new(|| brands::run(&root()))),
+        ("cleanroom", Box::new(|| cleanroom::run(&root()))),
         ("cursors", Box::new(|| cursors::run(&root(), &[]))),
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),
