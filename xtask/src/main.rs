@@ -7,6 +7,7 @@ mod affinity_corpus;
 mod assets;
 mod brands;
 mod bundle;
+mod cursor_sync;
 mod cursors;
 mod ico;
 mod layers;
@@ -24,7 +25,9 @@ usage: cargo xtask <command>
 commands:
   assets          check that every icon/image/font/asset is attributed in ASSETS.md
   brands          check that user-visible text (labels, params docs, MCP, docs, packaging) names no other vendor's products
-  cursors         warn about Cursor values with no entry in crates/tools/src/cursors.toml (never fails)
+  cursors [CURSORCRAFT]
+                  warn about Cursor values with no entry in crates/tools/src/cursors.toml (never fails);
+                  with cursorcraft's folder, bring the designers' cursor drawings in by id
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   ci              fmt --check, clippy -D warnings, test, assets, brands, cursors (warnings only), layers, wasm (stops at first failure)
@@ -45,7 +48,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
         Some("brands") => brands::run(&root()),
-        Some("cursors") => cursors::run(&root()),
+        Some("cursors") => cursors::run(&root(), &rest),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
@@ -204,7 +207,7 @@ fn cmd_ci() -> Result<(), String> {
         ),
         ("assets", Box::new(|| assets::run(&root()))),
         ("brands", Box::new(|| brands::run(&root()))),
-        ("cursors", Box::new(|| cursors::run(&root()))),
+        ("cursors", Box::new(|| cursors::run(&root(), &[]))),
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),
     ];
