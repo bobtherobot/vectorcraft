@@ -220,6 +220,10 @@ locale such as `ru-RU`, `ru-BY` or `ru-KZ` resolves to it), Ukrainian (`uk`, com
   system font; the glyph test checks Latin and Cyrillic catalogs always and the CJK ones only with craft-fonts.
   A Traditional Chinese UI font is still to be added to craft-fonts for the web build.
 
+## Cursors: VectorCraft's list, cursorcraft's drawings
+
+VectorCraft decides which cursors exist; designers draw them in [cursorcraft](https://github.com/bobtherobot/cursorcraft). `crates/tools/src/cursors.toml` lists every `Cursor` value with when it shows and where its hotspot is (CLAUDE.md › Adding a cursor). Designers `pull` that list into cursorcraft, which shows them what's left to draw. To bring their drawings in, run `cargo xtask cursors PATH/TO/CURSORCRAFT`: it asks cursorcraft for each listed cursor by id and rewrites the generated part of `crates/ui-egui/src/cursors/glyphs.rs`, then prints what changed and the designers' notes. Look at the result (`write_cursor_pngs` in `cursors.rs` writes every cursor's bitmap), run `cargo xtask ci` and commit. A cursor nobody has drawn yet keeps its hand-drawn glyph or borrows another's (`Cursor::stand_in`). A `Cursor` value missing from the list only warns.
+
 ## Vendor names gate
 
 `cargo xtask brands` (part of `cargo xtask ci`) fails when user-visible text names another vendor's products or company: string literals in Rust sources (command labels and params docs, menus, panels, MCP tool definitions), `Cargo.toml` descriptions and packaging files. Comments and test code are not checked. Say "the reference app" or name the feature itself. A line that must keep an old name, such as an alias that files or preferences from earlier versions still use, carries a `brand-ok` comment.
