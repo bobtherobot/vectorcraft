@@ -11,13 +11,14 @@ use egui::epaint::{CircleShape, ColorMode, PathShape};
 use egui::{Color32, Pos2, Rect, Shape, pos2, vec2};
 use vectorcraft_tools::Cursor;
 
-use super::{GLYPHS, HALO, glyph, glyphs};
+use super::{GLYPHS, HALO, INK, glyph, glyphs};
 
 /// The side of cursorcraft's canvas (`viewBox="0 0 32 32"`), in points.
 const CANVAS: f32 = 32.0;
 
 /// Every cursor drawn by this crate's own code, as `(id, svg)`: the id is the cursor's name in
-/// `crates/tools/src/cursors.toml` (its `Cursor` value).
+/// `crates/tools/src/cursors.toml` (its `Cursor` value). A cursor whose shapes can't be written
+/// (a kind of shape or a colour this module doesn't know) is left out; the tests catch that.
 pub fn seed_svgs() -> Vec<(String, String)> {
     GLYPHS
         .iter()
@@ -58,6 +59,10 @@ impl Element {
 /// know give `Err`, so a new kind of hand-drawn part is noticed (by the tests) instead of dropped.
 fn element(s: &Shape) -> Result<Option<Element>, ()> {
     let ink = |c: Color32| c != Color32::TRANSPARENT;
+    // Cursors are black and white only: another colour would be written wrongly, so refuse it.
+    if shape_colours(s).unwrap_or_default().iter().any(|&c| ink(c) && c != INK && c != HALO) {
+        return Err(());
+    }
     // A white stroke is a halo: cursorcraft draws its own.
     let stroke = |w: f32, c: Color32| (w > 0.0 && ink(c) && c != HALO).then_some((w, c));
     Ok(match s {
@@ -65,6 +70,7 @@ fn element(s: &Shape) -> Result<Option<Element>, ()> {
         Shape::LineSegment { points, stroke: st } => {
             stroke(st.width, st.color).map(|st| Element::Polygon { points: points.to_vec(), closed: false, fill: None, stroke: Some(st) })
         }
+        Shape::Path(PathShape { points, .. }) if points.len() < 2 => None,
         Shape::Path(PathShape { points, closed, fill, stroke: st }) => {
             let ColorMode::Solid(colour) = st.color else { return Err(()) };
             let fill = (*closed && ink(*fill)).then_some(*fill);
@@ -78,6 +84,20 @@ fn element(s: &Shape) -> Result<Option<Element>, ()> {
         }
         _ => return Err(()),
     })
+}
+
+/// The colours a shape paints with, `None` for a shape [`element`] doesn't know.
+fn shape_colours(s: &Shape) -> Option<Vec<Color32>> {
+    match s {
+        Shape::Noop => Some(vec![]),
+        Shape::LineSegment { stroke, .. } => Some(vec![stroke.color]),
+        Shape::Path(PathShape { fill, stroke, .. }) => match stroke.color {
+            ColorMode::Solid(c) => Some(vec![*fill, c]),
+            ColorMode::UV(_) => None,
+        },
+        Shape::Circle(CircleShape { fill, stroke, .. }) => Some(vec![*fill, stroke.color]),
+        _ => None,
+    }
 }
 
 /// A fill followed by the outline of the same shape (how [`super::poly`] draws) as one element,
@@ -204,6 +224,16 @@ mod tests {
             }
             assert_eq!(svg.matches(r#"id="hotspot""#).count(), 1, "{id}");
         }
+    }
+
+    #[test]
+    fn shapes_it_cant_write_are_refused_not_drawn_wrong() {
+        let red = Shape::line_segment([Pos2::ZERO, pos2(4.0, 0.0)], egui::Stroke::new(1.0, Color32::RED));
+        assert!(element(&red).is_err(), "a colour cursors don't use");
+        assert!(svg("X", &[red]).is_none());
+        let empty = Shape::Path(PathShape::closed_line(vec![], egui::Stroke::new(1.0, INK)));
+        assert!(matches!(element(&empty), Ok(None)));
+        assert!(svg("X", &[empty]).is_none(), "nothing to draw");
     }
 
     #[test]
