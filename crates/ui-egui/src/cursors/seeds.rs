@@ -1,34 +1,64 @@
-//! The cursors drawn in this crate's own code, written out as SVG for cursorcraft
-//! (https://github.com/bobtherobot/cursorcraft): a designer starts a cursor from how VectorCraft
-//! draws it today. `vectorcraft --cursor-seeds DIR` writes them; cursorcraft's `pull` runs it.
+//! How VectorCraft draws its cursors today, written out as SVG for cursorcraft
+//! (https://github.com/bobtherobot/cursorcraft): a designer starts a cursor from it.
+//! `vectorcraft --cursor-seeds DIR` writes them; cursorcraft's `pull` runs it and keeps the seeds of
+//! the cursors that have no drawing there.
 //!
-//! Only cursors with a look of their own are seeds: not those drawn from a designer's SVG already
-//! ([`glyphs::GENERATED`]), not those that borrow another's ([`Cursor::stand_in`]), not system cursors.
-//! The white strokes in the hand-drawn glyphs are their halos, which cursorcraft adds by itself,
-//! so they're left out; white fills (hollow shapes) stay.
+//! Every cursor with a look of its own is written: one drawn from a designer's SVG
+//! ([`glyphs::GENERATED`], written back from its data, the inverse of cursorcraft's reading) or one
+//! drawn in this crate's code. Not those that borrow another's look ([`Cursor::stand_in`]), nor
+//! system cursors. The white strokes in the hand-drawn glyphs are their halos, which cursorcraft adds
+//! by itself, so they're left out; white fills (hollow shapes) stay.
 
 use egui::epaint::{CircleShape, ColorMode, PathShape};
 use egui::{Color32, Pos2, Rect, Shape, pos2, vec2};
 use vectorcraft_tools::Cursor;
 
+use super::glyphs::{Glyph, GlyphPart};
 use super::{GLYPHS, HALO, INK, glyph, glyphs};
 
 /// The side of cursorcraft's canvas (`viewBox="0 0 32 32"`), in points.
 const CANVAS: f32 = 32.0;
 
-/// Every cursor drawn by this crate's own code, as `(id, svg)`: the id is the cursor's name in
+/// Every cursor with a look of its own, as `(id, svg)`: the id is the cursor's name in
 /// `crates/tools/src/cursors.toml` (its `Cursor` value). A cursor whose shapes can't be written
 /// (a kind of shape or a colour this module doesn't know) is left out; the tests catch that.
 pub fn seed_svgs() -> Vec<(String, String)> {
     GLYPHS
         .iter()
-        .filter(|&&c| glyphs::generated(c).is_none() && c.stand_in().is_none())
         .filter_map(|&c| {
+            let elements = match glyphs::generated(c) {
+                Some(g) => drawn(g),
+                None if c.stand_in().is_none() => shape_elements(&glyph(c, Pos2::ZERO)?)?,
+                None => return None,
+            };
             let id = id(c);
-            let shapes = glyph(c, Pos2::ZERO)?;
-            Some((id.clone(), svg(&id, &shapes)?))
+            Some((id.clone(), svg(&id, &elements)?))
         })
         .collect()
+}
+
+/// A generated glyph's parts as elements: each as the designer drew it.
+fn drawn(g: &Glyph) -> Vec<Element> {
+    let colour = |white: bool| if white { HALO } else { INK };
+    let pts = |points: &[(f32, f32)]| points.iter().map(|&(x, y)| pos2(x, y)).collect::<Vec<_>>();
+    g.parts
+        .iter()
+        .filter_map(|part| match part {
+            GlyphPart::Fill { points, white, .. } if points.len() >= 3 => {
+                Some(Element::Polygon { points: pts(points), closed: true, fill: Some(colour(*white)), stroke: None })
+            }
+            GlyphPart::Stroke { points, closed, width, white } if points.len() >= 2 => {
+                Some(Element::Polygon { points: pts(points), closed: *closed, fill: None, stroke: Some((*width, colour(*white))) })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Hand-drawn shapes as elements; `None` if one can't be written.
+fn shape_elements(shapes: &[Shape]) -> Option<Vec<Element>> {
+    let parts = shapes.iter().map(element).collect::<Result<Vec<_>, ()>>().ok()?;
+    Some(merge_outlines(parts.into_iter().flatten().collect()))
 }
 
 /// The cursor's id: its `Cursor` value without a payload (`RotateToward(1)` is `RotateToward`).
@@ -130,11 +160,9 @@ fn colour(c: Color32) -> &'static str {
     if c == HALO { "#ffffff" } else { "#000000" }
 }
 
-/// Cursor `id`'s shapes as an SVG on cursorcraft's canvas, its hotspot marked; `None` if a shape
-/// can't be written.
-fn svg(id: &str, shapes: &[Shape]) -> Option<String> {
-    let parts = shapes.iter().map(element).collect::<Result<Vec<_>, ()>>().ok()?;
-    let elements = merge_outlines(parts.into_iter().flatten().collect());
+/// Cursor `id`'s elements as an SVG on cursorcraft's canvas, its hotspot marked; `None` when
+/// there's nothing to draw.
+fn svg(id: &str, elements: &[Element]) -> Option<String> {
     let bounds = elements.iter().map(Element::bounds).reduce(|a, b| a.union(b))?;
     // The glyph centred on the canvas, the hotspot on a half point.
     let hotspot = ((pos2(CANVAS, CANVAS) / 2.0 - bounds.center().to_vec2()) * 2.0).round() / 2.0;
@@ -150,9 +178,9 @@ fn svg(id: &str, shapes: &[Shape]) -> Option<String> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 32 32\">\n  \
          <title>{id}</title>\n  \
-         <!-- How VectorCraft draws its {id} cursor today, from its own code. Without the white halos: cursorcraft adds those. -->\n"
+         <!-- How VectorCraft draws its {id} cursor today. Without the white halos: cursorcraft adds those. -->\n"
     );
-    for e in &elements {
+    for e in elements {
         match e {
             Element::Polygon { points, closed, fill, stroke } => {
                 let mut d = String::new();
@@ -177,28 +205,44 @@ fn svg(id: &str, shapes: &[Shape]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cursors::Ink;
 
     fn seed(id: &str) -> String {
         seed_svgs().into_iter().find(|(i, _)| i == id).map(|(_, s)| s).unwrap_or_else(|| panic!("no seed for {id}"))
     }
 
-    #[test]
-    fn the_seeds_are_the_cursors_drawn_in_code() {
-        let ids: Vec<String> = seed_svgs().into_iter().map(|(id, _)| id).collect();
-        // Drawn from a designer's SVG already, borrowed, or a system cursor: no seed.
-        for c in [Cursor::Pen, Cursor::Arrow, Cursor::Lasso, Cursor::TypeVertical, Cursor::NotAllowed] {
-            assert!(!ids.contains(&id(c)), "{c:?} has a seed: {ids:?}");
-        }
-        for c in GLYPHS {
-            let own = glyphs::generated(c).is_none() && c.stand_in().is_none();
-            assert_eq!(ids.contains(&id(c)), own, "{c:?}");
-        }
-        assert!(ids.contains(&"Crosshair".to_string()), "{ids:?}");
+    /// The SVG of a cursor drawn in code, whether or not a designer's drawing replaces it today.
+    fn hand_drawn(id: &str, draw: impl FnOnce(&mut Ink)) -> String {
+        let ink = &mut Ink::default();
+        draw(ink);
+        svg(id, &shape_elements(&ink.0).unwrap()).unwrap()
     }
 
     #[test]
-    fn the_crosshair_seed_is_its_four_black_arms_round_the_hotspot() {
-        let crosshair = seed("Crosshair");
+    fn the_seeds_are_every_cursor_with_a_look_of_its_own() {
+        let ids: Vec<String> = seed_svgs().into_iter().map(|(id, _)| id).collect();
+        for c in GLYPHS {
+            let own = glyphs::generated(c).is_some() || (c.stand_in().is_none() && glyph(c, Pos2::ZERO).is_some());
+            assert_eq!(ids.contains(&id(c)), own, "{c:?}");
+        }
+        // Borrowed or a system cursor: no seed.
+        assert!(!ids.contains(&"NotAllowed".to_string()), "{ids:?}");
+        assert!(ids.contains(&"Pen".to_string()) && ids.contains(&"Crosshair".to_string()), "{ids:?}");
+    }
+
+    #[test]
+    fn a_designers_glyph_is_written_back_part_for_part() {
+        for &(c, g) in glyphs::GENERATED {
+            let svg = seed(&id(c));
+            assert_eq!(svg.matches("<path ").count(), g.parts.len(), "{c:?}\n{svg}");
+            let white = g.parts.iter().any(|p| matches!(p, GlyphPart::Fill { white: true, .. } | GlyphPart::Stroke { white: true, .. }));
+            assert_eq!(svg.contains("#ffffff"), white, "{c:?}\n{svg}");
+        }
+    }
+
+    #[test]
+    fn the_hand_drawn_crosshair_is_its_four_black_arms_round_the_hotspot() {
+        let crosshair = hand_drawn("Crosshair", |ink| super::super::crosshair(ink, Pos2::ZERO));
         assert!(crosshair.contains(r#"viewBox="0 0 32 32""#));
         assert!(crosshair.contains(r##"<circle id="hotspot" cx="16" cy="16" r="0.25" fill="#ff0000"/>"##), "{crosshair}");
         // The halos are left out: only the 1.2-point black arms.
@@ -210,10 +254,10 @@ mod tests {
     #[test]
     fn hollow_parts_keep_their_white_fill() {
         // Away from art the Blend tool's square is hollow: a white fill in a black outline.
-        let blend = seed("Blend");
+        let blend = hand_drawn("Blend", |ink| super::super::blend(ink, Pos2::ZERO, Cursor::Blend));
         assert!(blend.contains(r##"fill="#ffffff" stroke="#000000" stroke-width="1""##), "{blend}");
         // Over an object it's filled.
-        assert!(!seed("BlendObject").contains("#ffffff"));
+        assert!(!hand_drawn("BlendObject", |ink| super::super::blend(ink, Pos2::ZERO, Cursor::BlendObject)).contains("#ffffff"));
     }
 
     #[test]
@@ -230,10 +274,10 @@ mod tests {
     fn shapes_it_cant_write_are_refused_not_drawn_wrong() {
         let red = Shape::line_segment([Pos2::ZERO, pos2(4.0, 0.0)], egui::Stroke::new(1.0, Color32::RED));
         assert!(element(&red).is_err(), "a colour cursors don't use");
-        assert!(svg("X", &[red]).is_none());
+        assert!(shape_elements(&[red]).is_none());
         let empty = Shape::Path(PathShape::closed_line(vec![], egui::Stroke::new(1.0, INK)));
         assert!(matches!(element(&empty), Ok(None)));
-        assert!(svg("X", &[empty]).is_none(), "nothing to draw");
+        assert!(svg("X", &shape_elements(&[empty]).unwrap()).is_none(), "nothing to draw");
     }
 
     #[test]
