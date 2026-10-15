@@ -5,6 +5,9 @@
 # this file does. Adding a cursor: CLAUDE.md › Adding a cursor.
 #
 #   app         the app's name as designers read it
+#   seeds       the command, run in this checkout, that writes the cursors drawn in code as
+#               `<id>.svg` into the folder added after it: `pull` gives designers those as starting
+#               points (`<id>-vectorcraft-rendered.svg`)
 #   id          the `Cursor` variant's name (PenAdd); the designer draws `<id>` in cursorcraft
 #   group       the heading it's listed under for designers
 #   shown_when  every situation that shows it, one plain sentence each
@@ -18,6 +21,7 @@
 # names here.
 
 app = "VectorCraft"
+seeds = ["cargo", "run", "--release", "-p", "vectorcraft", "--", "--cursor-seeds"]
 
 # ── Selection ─────────────────────────────────────────────────────────────────────────────────────
 
