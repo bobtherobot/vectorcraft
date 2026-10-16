@@ -262,7 +262,7 @@ shown_when = [
     "The left and right handles of the bounding box (or whichever handle reads as left/right once the box is rotated) with Selection, Free Transform, Artboard, Slice Selection and Crop Image.",
     "Over or dragging a vertical ruler guide.",
     "Perspective Grid extent handles and near-horizontal Perspective Selection handles.",
-    "The freeform gradient's spread ring, and Free Transform's Cmd/Ctrl side-shear.",
+    "The freeform gradient's spread ring.",
 ]
 hotspot = "The centre."
 look = "A horizontal double arrow. ResizeV, ResizeNwSe and ResizeNeSw are the same arrow turned."
@@ -297,6 +297,26 @@ shown_when = [
 ]
 hotspot = "The centre."
 look = "The ResizeH arrow, diagonal from bottom-left to top-right."
+
+[[cursor]]
+id = "ShearH"
+group = "Transform and resize"
+shown_when = [
+    "Free Transform with Cmd/Ctrl held over the top or bottom handle of the bounding box, and while that drag shears the object sideways.",
+    "Without Cmd/Ctrl the same handles show ResizeV.",
+]
+hotspot = "The centre, between the two arrows."
+look = "Two single arrows side by side, one above the other, pointing opposite ways (left and right): one side sliding past the other."
+
+[[cursor]]
+id = "ShearV"
+group = "Transform and resize"
+shown_when = [
+    "Free Transform with Cmd/Ctrl held over the left or right handle of the bounding box, and while that drag shears the object up or down.",
+    "Without Cmd/Ctrl the same handles show ResizeH.",
+]
+hotspot = "The centre, between the two arrows."
+look = "The ShearH arrows turned upright."
 
 [[cursor]]
 id = "Rotate"

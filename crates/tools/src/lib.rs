@@ -438,6 +438,12 @@ pub enum Cursor {
     ResizeV,
     ResizeNwSe,
     ResizeNeSw,
+    /// Free Transform with Cmd/Ctrl over the top or bottom side, where a drag shears the object
+    /// sideways: two arrows side by side, pointing opposite ways along that side.
+    ShearH,
+    /// Free Transform with Cmd/Ctrl over the left or right side, where a drag shears the object up
+    /// or down: the ShearH arrows turned upright.
+    ShearV,
     Rotate,
     /// The rotate cursor beside a bounding box, bowed toward the pointer's side of the box: off
     /// its centre in direction `0..8` (0 straight up, then clockwise in 45° steps). Its arc wraps

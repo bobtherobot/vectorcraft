@@ -208,6 +208,19 @@ fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
     }
 }
 
+/// Two single arrows side by side across the hotspot, pointing opposite ways along `dir`: a side
+/// sliding past its opposite one, as a shear does.
+fn shear(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
+    let d = dir.normalized() * 7.0;
+    let n = vec2(-d.y, d.x) / 7.0;
+    for (side, way) in [(-3.5, 1.0), (3.5, -1.0)] {
+        let (c, d) = (o + n * side, d * way);
+        line(p, c - d, c + d * 0.55);
+        let back = c + d * 0.4;
+        poly(p, vec![c + d, back + n * 2.6, back - n * 2.6], INK, INK);
+    }
+}
+
 /// A curved double arrow over the hotspot: an arc with an arrowhead at each end, pointing on along
 /// the arc (#701). The arc bows up, or toward `octant` (0 up, then clockwise in 45° steps): beside a
 /// bounding box it wraps the corner the pointer is at.
@@ -400,7 +413,7 @@ fn magnifier(p: &mut Ink, o: Pos2, out: bool) {
 }
 
 /// Every cursor with a glyph: its own, generated or drawn here, or the one it borrows.
-const GLYPHS: [Cursor; 71] = [
+const GLYPHS: [Cursor; 73] = [
     Cursor::Hand,
     Cursor::HandGrab,
     Cursor::ZoomIn,
@@ -418,6 +431,8 @@ const GLYPHS: [Cursor; 71] = [
     Cursor::ResizeV,
     Cursor::ResizeNwSe,
     Cursor::ResizeNeSw,
+    Cursor::ShearH,
+    Cursor::ShearV,
     Cursor::Rotate,
     Cursor::RotateToward(1),
     Cursor::CornerRadius,
@@ -517,6 +532,8 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::ResizeV => double_arrow(ink, p, vec2(0.0, 1.0)),
         Cursor::ResizeNwSe => double_arrow(ink, p, vec2(1.0, 1.0)),
         Cursor::ResizeNeSw => double_arrow(ink, p, vec2(1.0, -1.0)),
+        Cursor::ShearH => shear(ink, p, vec2(1.0, 0.0)),
+        Cursor::ShearV => shear(ink, p, vec2(0.0, -1.0)),
         Cursor::Rotate => rotate(ink, p, 0),
         Cursor::RotateToward(octant) => rotate(ink, p, octant),
         Cursor::CornerRadius => corner_radius(ink, p),
