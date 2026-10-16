@@ -12,6 +12,7 @@ mod cursor_sync;
 mod cursors;
 mod ico;
 mod layers;
+mod pdf_deps;
 mod pngsuite;
 mod sha256;
 mod stats;
@@ -31,9 +32,10 @@ commands:
                   warn about Cursor values with no entry in crates/tools/src/cursors.toml (never fails);
                   with cursorcraft's folder, bring the designers' cursor drawings in by id
   cleanroom       check the repository holds no copied vendor text or vendor-made fixtures (CLAUDE.md › Clean-room)
+  pdf-deps        verify immutable shared PDF writer and patched Krilla sources
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates and the web app
-  ci              fmt --check, clippy -D warnings, test, assets, brands, cleanroom, cursors (warnings only), layers, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, test, no-bundled-fonts, pdf-deps, assets, brands, cleanroom, cursors (warnings only), layers, wasm (stops at first failure)
   corpus [--download] [--affinity]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite,
                   --affinity the pinned public Affinity documents into corpus/affinity
@@ -54,6 +56,7 @@ fn main() -> ExitCode {
         Some("cleanroom") => cleanroom::run(&root()),
         Some("cursors") => cursors::run(&root(), &rest),
         Some("layers") => cmd_layers(),
+        Some("pdf-deps") => pdf_deps::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
         Some("corpus") if rest.contains(&"--affinity") => affinity_corpus::fetch(),
@@ -209,6 +212,16 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo test --workspace")
             }),
         ),
+        (
+            "no-bundled-fonts",
+            Box::new(|| {
+                // vectorcraft-text as embedders that bring their own fonts build it.
+                let mut c = cargo();
+                c.args(["test", "-p", "vectorcraft-text", "--no-default-features", "--test", "without_bundled_fonts"]);
+                run(c, "cargo test -p vectorcraft-text --no-default-features --test without_bundled_fonts")
+            }),
+        ),
+        ("pdf-deps", Box::new(|| pdf_deps::run(&root()))),
         ("assets", Box::new(|| assets::run(&root()))),
         ("brands", Box::new(|| brands::run(&root()))),
         ("cleanroom", Box::new(|| cleanroom::run(&root()))),

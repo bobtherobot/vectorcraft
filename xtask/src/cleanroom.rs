@@ -17,6 +17,7 @@ const ALLOWED: &[(&str, &str)] = &[
     ("NOTICE", "credits Adobe's CMap resources (BSD 3-Clause) and open-source fonts"),
     ("assets/fonts/OFL-SourceSans3.txt", "Source Sans 3's SIL Open Font License, kept verbatim"),
     ("assets/fonts/OFL-SourceSerif4.txt", "Source Serif 4's SIL Open Font License, kept verbatim"),
+    ("licenses/pdf-backend/hayro-cmap/LICENSE.txt", "the BSD licence of Adobe's CMap resources that the hayro-cmap PDF crate ships, kept verbatim"),
 ];
 
 /// This file spells out what it looks for.

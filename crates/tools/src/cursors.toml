@@ -136,12 +136,22 @@ look = "Arrow with a type badge (a letter T)."
 id = "Pen"
 group = "Pen"
 shown_when = [
-    "The Pen tool by default: starting a path or placing the next point.",
+    "The Pen tool where a click starts a new path.",
     "The Curvature tool away from its points.",
     "With Use Precise Cursors on, the crosshair shows instead.",
 ]
 hotspot = "The nib's tip."
 look = "A pen nib. Every Pen-family cursor is this nib with a different badge."
+
+[[cursor]]
+id = "PenDrawing"
+group = "Pen"
+shown_when = [
+    "The Pen tool while a path is being drawn, where a click adds the path's next point.",
+    "The close, join and convert badges still show over the points they act on.",
+]
+hotspot = "The nib's tip."
+look = "The Pen nib with no badge."
 
 [[cursor]]
 id = "PenAdd"

@@ -125,6 +125,7 @@ mod tests {
     #[test]
     fn reads_this_checkout_with_git() {
         // Without git on the machine there is nothing to read; with it, this checkout has a commit.
+        let _child = crate::CHILD_PROCESSES.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         if Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
             let status = run_git_status(checkout().unwrap()).expect("git status");
             assert!(parse_git_status(&status).1.is_some(), "{status}");

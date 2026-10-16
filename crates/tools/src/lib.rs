@@ -13,11 +13,13 @@ pub mod catalog;
 pub mod corners;
 pub mod cropimage;
 pub mod cut;
+pub mod dimension;
 pub mod direct;
 pub mod distort;
 pub mod draw2;
 pub mod extra;
 pub mod guides;
+pub mod intertwine;
 pub mod meshblend;
 pub mod meshedit;
 pub mod params;
@@ -452,7 +454,10 @@ pub enum Cursor {
     RotateToward(u8),
     /// Over a Live Corners widget (drag to round the corners).
     CornerRadius,
+    /// The Pen with the new-path asterisk: a click starts a new path.
     Pen,
+    /// The Pen without a badge, while a path is being drawn: a click adds its next anchor.
+    PenDrawing,
     PenAdd,
     PenDelete,
     PenClose,
@@ -576,6 +581,7 @@ impl Cursor {
     pub fn precise(self) -> Self {
         match self {
             Cursor::Pen
+            | Cursor::PenDrawing
             | Cursor::PenAdd
             | Cursor::PenDelete
             | Cursor::PenClose
@@ -650,6 +656,7 @@ impl Cursor {
             | Cursor::SymbolStyler
             | Cursor::Scissors => Some(Cursor::Crosshair),
             Cursor::TypeVertical => Some(Cursor::Text),
+            Cursor::PenDrawing => Some(Cursor::Pen),
             Cursor::MeshAdd | Cursor::PuppetPin => Some(Cursor::PenAdd),
             Cursor::ScissorsNotAllowed => Some(Cursor::NotAllowed),
             _ => None,
@@ -740,6 +747,7 @@ pub fn create(id: &str) -> Box<dyn Tool> {
         "directSelection" => Box::new(direct::DirectSelectionTool::new(false)),
         "groupSelection" => Box::new(direct::DirectSelectionTool::new(true)),
         "pen" => Box::new(pen::PenTool::default()),
+        "dimension" => Box::new(dimension::DimensionTool::default()),
         "type" | "areaType" | "typeOnPath" | "verticalType" | "verticalAreaType" | "verticalTypeOnPath" => Box::new(text::TypeTool::new(id)),
         "rectangle" | "roundedRectangle" | "ellipse" | "polygon" | "star" | "lineSegment" => Box::new(shape::ShapeTool::new(id)),
         // Not in the toolbar: `file.place.queue` loads it.
@@ -755,6 +763,7 @@ pub fn create(id: &str) -> Box<dyn Tool> {
             .or_else(|| printtiling::create(other))
             .or_else(|| cropimage::create(other))
             .or_else(|| cut::create(other))
+            .or_else(|| intertwine::create(other))
             .unwrap_or_else(|| Box::new(NoopTool(tool_info(other).map(|t| t.id).unwrap_or("selection")))),
     }
 }

@@ -413,7 +413,7 @@ fn magnifier(p: &mut Ink, o: Pos2, out: bool) {
 }
 
 /// Every cursor with a glyph: its own, generated or drawn here, or the one it borrows.
-const GLYPHS: [Cursor; 73] = [
+const GLYPHS: [Cursor; 74] = [
     Cursor::Hand,
     Cursor::HandGrab,
     Cursor::ZoomIn,
@@ -437,6 +437,7 @@ const GLYPHS: [Cursor; 73] = [
     Cursor::RotateToward(1),
     Cursor::CornerRadius,
     Cursor::Pen,
+    Cursor::PenDrawing,
     Cursor::PenAdd,
     Cursor::PenDelete,
     Cursor::PenClose,
@@ -857,6 +858,20 @@ mod tests {
         let [bx, by] = big.hotspot.map(usize::from);
         let body = pixel(&big, bx + 4, by + 16);
         assert!(body[3] == 255 && body[..3].iter().all(|&c| c < 40), "{body:?}");
+    }
+
+    /// The Pen drawing a path shows the Pen's own drawing until a designer draws it: the nib, at
+    /// the same hotspot, so the pointer doesn't jump when the first anchor goes down.
+    #[test]
+    fn the_drawing_pen_borrows_the_pen_until_drawn() {
+        if glyphs::generated(Cursor::PenDrawing).is_some() {
+            return;
+        }
+        for ppp in [1.0, 2.0] {
+            let (new, drawing) = (rasterize(Cursor::Pen, ppp).unwrap(), rasterize(Cursor::PenDrawing, ppp).unwrap());
+            assert_eq!((new.hotspot, new.size), (drawing.hotspot, drawing.size), "at {ppp}");
+            assert_eq!(new.rgba, drawing.rgba, "at {ppp}");
+        }
     }
 
     #[test]

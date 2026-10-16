@@ -36,7 +36,7 @@ fn at(d: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
 fn fx(id: &str, p: serde_json::Value) -> PixelFx {
     let e = Effect { id: id.into(), params: p, visible: true };
     match raster_effects(&[e]).first() {
-        Some(RasterFx::Pixel(p)) => *p,
+        Some(RasterFx::Pixel(p)) => p.clone(),
         other => panic!("{id}: {other:?}"),
     }
 }
@@ -465,11 +465,22 @@ fn params_take_defaults_and_stay_in_range() {
         PixelFx::RadialBlur { amount: 100.0, zoom: true, passes: 8 }
     );
     assert_eq!(fx("blur.radial", json!({"amount": -5, "quality": "nonsense"})), PixelFx::RadialBlur { amount: 1.0, zoom: false, passes: 6 });
-    assert_eq!(fx("blur.smart", json!({})), PixelFx::SmartBlur { radius: 3.0, threshold: 25.0, samples: 7 });
+    assert_eq!(fx("blur.smart", json!({})), PixelFx::SmartBlur { radius: 3.0, threshold: 25.0, samples: 7, mode: SmartBlurMode::Normal });
     assert_eq!(
-        fx("blur.smart", json!({"radius": "1e999", "threshold": -1, "quality": "low"})),
-        PixelFx::SmartBlur { radius: 3.0, threshold: 0.1, samples: 5 }
+        fx("blur.smart", json!({"radius": "1e999", "threshold": -1, "quality": "low", "blurMode": "EDGEONLY"})),
+        PixelFx::SmartBlur { radius: 3.0, threshold: 0.1, samples: 5, mode: SmartBlurMode::EdgeOnly }
     );
+    assert_eq!(
+        fx("blur.smart", json!({"blurMode": "overlayEdge"})),
+        PixelFx::SmartBlur { radius: 3.0, threshold: 25.0, samples: 7, mode: SmartBlurMode::OverlayEdge }
+    );
+    assert_eq!(fx("blur.smart", json!({"blurMode": "overlay"})), fx("blur.smart", json!({})));
+    // Every Mode menu value is documented in the catalogue and parses to a mode of its own.
+    let doc = crate::effect_info("blur.smart").unwrap().params;
+    for (i, (_, v)) in SMART_BLUR_MODES.iter().enumerate() {
+        assert!(doc.contains(&format!("\"{v}\"")), "{v}");
+        assert_eq!(SmartBlurMode::parse(v), [SmartBlurMode::Normal, SmartBlurMode::EdgeOnly, SmartBlurMode::OverlayEdge][i], "{v}");
+    }
     assert_eq!(fx("sharpen.unsharpMask", json!({})), PixelFx::UnsharpMask { amount: 0.5, radius: 1.0, threshold: 0.0 });
     assert_eq!(
         fx("sharpen.unsharpMask", json!({"amount": 1e9, "radius": 0, "threshold": 1e9})),
@@ -614,6 +625,105 @@ fn smart_blur_smooths_noise_and_keeps_edges() {
     let mut all = src.clone();
     fx("blur.smart", json!({"radius": 3, "threshold": 100})).apply(&mut all, w, h, &space(w, h));
     assert_eq!(at(&all, w, 20, 10)[0], 255, "a 155-level step is still past 100");
+}
+
+/// FNV-1a of `bytes`.
+fn digest(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
+}
+
+#[test]
+fn smart_blur_normal_mode_keeps_its_pixels() {
+    let (w, h) = (48, 40);
+    let src = image(w, h, |x, y| {
+        let a = if x > 4 && y < 36 { 255 } else { 128 };
+        [((x * 5 + y) as u8).min(a), ((y * 6) as u8).min(a), (((x * y) % 97) as u8).min(a), a]
+    });
+    let mut sums = Vec::new();
+    for p in [json!({}), json!({"radius": 2, "threshold": 10, "quality": "high"}), json!({"radius": 12, "threshold": 40, "quality": "low"})] {
+        let mut d = src.clone();
+        fx("blur.smart", p.clone()).apply(&mut d, w, h, &space(w, h));
+        let mut normal = src.clone();
+        let mut p = p;
+        p["blurMode"] = json!("normal");
+        fx("blur.smart", p).apply(&mut normal, w, h, &space(w, h));
+        assert_eq!(d, normal);
+        sums.push(digest(&d));
+    }
+    // The pixels Smart Blur gave before it had a mode.
+    assert_eq!(sums, [11495339692959753241, 14281410954765351056, 5111933201350526354]);
+}
+
+/// Smart Blur's test image: grays 56 and 64 in a checkerboard for x < 3 and 66 and 74 for x in 3..6
+/// (steps of 2 or 18 levels at x = 3, under the threshold), gray 200 from x = 6 on (steps of 126 or
+/// 134 levels). Its edges at threshold 25 are the pixels on the raster's border (transparency is
+/// beyond it) and column 6, the step's lighter side.
+fn smart_blur_steps() -> (usize, usize, Vec<u8>, impl Fn(usize, usize) -> bool) {
+    let (w, h) = (12, 8);
+    let src = image(w, h, |x, y| match x {
+        0..3 => grey(if (x + y) % 2 == 0 { 56 } else { 64 }),
+        3..6 => grey(if (x + y) % 2 == 0 { 66 } else { 74 }),
+        _ => grey(200),
+    });
+    (w, h, src, move |x, y| x == 0 || y == 0 || x == w - 1 || y == h - 1 || x == 6)
+}
+
+#[test]
+fn smart_blur_edge_only_draws_the_edges_white_on_black() {
+    let (w, h, src, edge) = smart_blur_steps();
+    let mut d = src.clone();
+    fx("blur.smart", json!({"blurMode": "edgeOnly"})).apply(&mut d, w, h, &space(w, h));
+    let want = image(w, h, |x, y| if edge(x, y) { [255; 4] } else { [0, 0, 0, 255] });
+    assert_eq!(d, want);
+    // The radius changes only the blur.
+    let mut wide = src.clone();
+    fx("blur.smart", json!({"blurMode": "edgeOnly", "radius": 40})).apply(&mut wide, w, h, &space(w, h));
+    assert_eq!(wide, want);
+    // A threshold under the checkerboard's 8 levels makes its lighter squares edges too.
+    let mut low = src.clone();
+    fx("blur.smart", json!({"blurMode": "edgeOnly", "threshold": 5})).apply(&mut low, w, h, &space(w, h));
+    for y in 1..h - 1 {
+        for x in 1..6 {
+            let lighter = matches!(at(&src, w, x, y)[0], 64 | 74);
+            assert_eq!(at(&low, w, x, y)[0] == 255, lighter, "({x}, {y})");
+        }
+    }
+    // White and black keep each pixel's coverage, and transparency stays.
+    let (w, h) = (8, 8);
+    let shape = image(w, h, |x, y| if (2..6).contains(&x) && (2..6).contains(&y) { [64, 0, 0, 128] } else { [0; 4] });
+    let mut s = shape.clone();
+    fx("blur.smart", json!({"blurMode": "edgeOnly"})).apply(&mut s, w, h, &space(w, h));
+    let ring = |x: usize, y: usize| (2..6).contains(&x) && (2..6).contains(&y) && !((3..5).contains(&x) && (3..5).contains(&y));
+    let inside = |x: usize, y: usize| (3..5).contains(&x) && (3..5).contains(&y);
+    let want = image(w, h, |x, y| match (ring(x, y), inside(x, y)) {
+        (true, _) => [128; 4],
+        (_, true) => [0, 0, 0, 128],
+        _ => [0; 4],
+    });
+    assert_eq!(s, want);
+}
+
+#[test]
+fn smart_blur_overlay_edge_draws_the_edges_white_over_the_blur() {
+    let (w, h, src, edge) = smart_blur_steps();
+    let mut normal = src.clone();
+    fx("blur.smart", json!({})).apply(&mut normal, w, h, &space(w, h));
+    assert_ne!(normal, src, "the checkerboard is blurred");
+    let mut d = src.clone();
+    fx("blur.smart", json!({"blurMode": "overlayEdge"})).apply(&mut d, w, h, &space(w, h));
+    for y in 0..h {
+        for x in 0..w {
+            let want = if edge(x, y) { [255; 4] } else { at(&normal, w, x, y) };
+            assert_eq!(at(&d, w, x, y), want, "({x}, {y})");
+        }
+    }
+    // Parameters past their ranges, at any resolution, still finish.
+    for mode in ["edgeOnly", "overlayEdge"] {
+        for s in [PixelSpace { px: 1e-9, ..space(w, h) }, PixelSpace { px: 1e9, ..space(w, h) }] {
+            let mut e = src.clone();
+            fx("blur.smart", json!({"blurMode": mode, "radius": 1e308, "threshold": 1e308, "quality": "high"})).apply(&mut e, w, h, &s);
+        }
+    }
 }
 
 #[test]
@@ -1307,6 +1417,68 @@ fn glass_bends_the_image_by_its_texture() {
     }
     // Smoother glass bends the stripes differently (more gently).
     assert_ne!(run(json!({"distortion": 12, "smoothness": 15})), run(json!({"distortion": 12, "smoothness": 1})));
+}
+
+/// The stored form of a `w` × `h` texture whose straight RGBA pixels `f` gives.
+fn stored(w: usize, h: usize, f: impl Fn(usize, usize) -> [u8; 4]) -> String {
+    LoadedTexture::from_rgba(w as u32, h as u32, &image(w, h, f)).and_then(|t| t.to_stored()).unwrap()
+}
+
+#[test]
+fn a_loaded_texture_is_its_gray_over_middle_gray() {
+    let t = stored(3, 1, |x, _| [[255, 255, 255, 255], [0, 0, 0, 0], [255, 0, 0, 255]][x]);
+    let loaded = texture(&t).unwrap();
+    assert_eq!(loaded.size(), (3, 1));
+    assert_eq!(texture(&t), Some(loaded.clone()), "read again from the cache");
+    // A white pixel is 1 high, a transparent one is middle gray and a red one is its luma. Heights
+    // between pixel centers are interpolated, and the image repeats: x = -1 is the first pixel's
+    // center, and x = 2 is the same pixel again.
+    let h = |x: f64| loaded.height(Point::new(x, 0.0));
+    assert_eq!(h(-1.0), 1.0);
+    assert_eq!(h(0.0), 128.0 / 255.0);
+    assert_eq!(h(1.0), 76.0 / 255.0);
+    assert_eq!(h(2.0), 1.0);
+    assert_eq!(h(-0.5), 0.5 * (1.0 + 128.0 / 255.0));
+    assert!(LoadedTexture::from_rgba(0, 4, &[]).is_none() && LoadedTexture::from_rgba(2, 2, &[0; 12]).is_none());
+    assert!(texture("not base64!").is_none() && texture("aGVsbG8=").is_none(), "base64 of a PNG only");
+}
+
+#[test]
+fn glass_bends_the_image_by_a_loaded_texture() {
+    let (w, h) = (48, 40);
+    let src = stripes(w, h);
+    let run = |p: serde_json::Value| {
+        let mut d = src.clone();
+        fx("distort.glass", p).apply(&mut d, w, h, &space(w, h));
+        d
+    };
+    // Rings around the texture's center, 9 × 7 pixels, repeated.
+    let rings = stored(9, 7, |x, y| grey((((x as f64 - 4.0).hypot(y as f64 - 3.0) * 60.0) as u32 % 256) as u8));
+    let loaded = json!({"texture": "loaded", "textureImage": rings, "distortion": 12});
+    let bent = run(loaded.clone());
+    assert_ne!(bent, src);
+    for (_, texture) in GLASS_TEXTURES {
+        assert_ne!(bent, run(json!({"texture": texture, "distortion": 12})), "differs from {texture}");
+    }
+    assert_ne!(run(json!({"texture": "loaded", "textureImage": rings, "distortion": 12, "invert": true})), bent, "inverted");
+    assert_ne!(run(json!({"texture": "loaded", "textureImage": rings, "distortion": 12, "scaling": 200})), bent, "scaled");
+    for (x, y) in (6..w - 6).flat_map(|x| (6..h - 6).map(move |y| (x, y))) {
+        let p = at(&bent, w, x, y);
+        assert!(p[3] == 255 && p[0] >= 20 && p[0] <= 230, "at ({x}, {y}): {p:?}");
+    }
+    assert_eq!(run(json!({"texture": "loaded", "textureImage": rings, "distortion": 0})), src, "no distortion, no change");
+    // A flat texture bends nothing, whatever its gray; so does a transparent one (middle gray).
+    for flat in [grey(0), grey(200), [0, 0, 0, 0]] {
+        assert_eq!(run(json!({"texture": "loaded", "textureImage": stored(5, 5, |_, _| flat), "distortion": 20})), src, "{flat:?}");
+    }
+    // The image is kept but not used with a built-in texture; without one, "loaded" is Frosted.
+    assert_eq!(run(json!({"texture": "blocks", "textureImage": rings, "distortion": 12})), run(json!({"texture": "blocks", "distortion": 12})));
+    assert_eq!(fx("distort.glass", json!({"texture": "loaded"})), fx("distort.glass", json!({})));
+    assert_eq!(fx("distort.glass", json!({"texture": "LOADED", "textureImage": "not a texture"})), fx("distort.glass", json!({})));
+    assert_eq!(
+        fx("distort.glass", loaded),
+        PixelFx::Glass { distortion: 12.0, smoothness: 3.0, texture: GlassTexture::Loaded(texture(&rings).unwrap()), scaling: 1.0, invert: false }
+    );
 }
 
 #[test]
