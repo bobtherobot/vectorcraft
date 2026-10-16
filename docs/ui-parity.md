@@ -167,9 +167,10 @@ tools, never checked side by side) isn't captured row by row.
 | Shape tools: Shift constrains, Alt from centre, Space moves while dragging, arrows change sides/points/rows | done | |
 | Tool double-click opens its options | done | |
 | Per-platform mapping (Cmd ↔ Ctrl, Option ↔ Alt) | done | |
+| Mesh tool cursor | partial | the plus (MeshAdd) only where a click adds a mesh line or makes a mesh; over a mesh point and over nothing the Mesh pointer has none (borrowing the crosshair until drawn); Alt over a point shows the Pen's minus (undocumented) |
 | Cursors of their own for Lasso, Magic Wand, the freehand tools, Shaper, Live Paint Bucket, Measure, Print Tiling, the symbolism tools, vertical type, Scissors (over a segment and away), Mesh and Puppet Warp | partial | each tool returns its own cursor and Use Precise Cursors turns them into the crosshair; until cursorcraft draws them they borrow the crosshair, the I-beam, the Pen's add cursor or not-allowed |
 | Busy cursor during long operations | missing | VectorCraft has no busy state yet (gap G1) |
-| Eyedropper cursor; Use Precise Cursors | partial | original pipette at the sampling tip (cursorcraft design), distinct from the precise crosshair at five DPI scales (#1269); OS cursor display and Caps Lock unverified; a Precise Cursors command toggles the preference and can take a shortcut (#1663); cursors are painted into the window on Wayland (#1652, not run on Linux) |
+| Eyedropper cursor; Use Precise Cursors | partial | original pipette at the sampling tip, with a small T over type (EyedropperType, borrowing the pipette until drawn) (cursorcraft design), distinct from the precise crosshair at five DPI scales (#1269); OS cursor display and Caps Lock unverified; a Precise Cursors command toggles the preference and can take a shortcut (#1663); cursors are painted into the window on Wayland (#1652, not run on Linux) |
 | Every tool's modifiers checked against the shortcut reference | missing | this is the fidelity pass |
 
 ## Keyboard shortcuts
@@ -229,6 +230,7 @@ re-measure of the panels added since. Slider rails show on Medium Dark (#1808, #
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Eyedropper shows a small T over type (EyedropperType); the Mesh tool's plus shows only where a click adds, a plain Mesh pointer over points and empty canvas |
 | 2026-10-14 | minor | Effect > Warp: style, orientation and percent controls; focused checks passed and original captures reviewed; scores and hours unchanged |
 | 2026-10-14 | minor | G11: open-path anchor Delete leaves separate surviving runs; dedicated Remove Anchors remains connected. Keyboard and history regression coverage added; scores and hours unchanged. |
 | 2026-10-14 | minor | Curvature: the Curvature tool's curve: each stretch of three points follows the circle through them (handles along its tangent, chord/(3·cos²(α/2)) long, shorter in a turn tighter than 30°), and the ends of an open path curve in, so uneven spacing neither overshoots nor loops; the rubber band, dragged, inserted and converted points use the same rule; the Pencil's fitting unchanged (#1236, in part); scores unchanged (estimated) |

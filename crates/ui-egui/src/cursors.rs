@@ -413,7 +413,7 @@ fn magnifier(p: &mut Ink, o: Pos2, out: bool) {
 }
 
 /// Every cursor with a glyph: its own, generated or drawn here, or the one it borrows.
-const GLYPHS: [Cursor; 74] = [
+const GLYPHS: [Cursor; 76] = [
     Cursor::Hand,
     Cursor::HandGrab,
     Cursor::ZoomIn,
@@ -448,6 +448,7 @@ const GLYPHS: [Cursor; 74] = [
     Cursor::Curvature,
     Cursor::Text,
     Cursor::Eyedropper,
+    Cursor::EyedropperType,
     Cursor::AddStop,
     Cursor::RemoveStop,
     Cursor::Slice,
@@ -487,6 +488,7 @@ const GLYPHS: [Cursor; 74] = [
     Cursor::TypeVertical,
     Cursor::Scissors,
     Cursor::MeshAdd,
+    Cursor::Mesh,
     Cursor::PuppetPin,
 ];
 

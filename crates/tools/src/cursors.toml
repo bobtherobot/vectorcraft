@@ -101,7 +101,6 @@ shown_when = [
     "Reshape over a path or while dragging.",
     "Inside the Free Transform and Crop Image boxes.",
     "Puppet Warp over a pin.",
-    "The Mesh tool over a mesh point or handle.",
     "The Artboard tool inside an artboard.",
     "The Gradient tool over the annotator's handles and during most gradient drags.",
     "The Perspective Grid and Perspective Selection over plane widgets and handles.",
@@ -392,9 +391,23 @@ designer = false
 [[cursor]]
 id = "Eyedropper"
 group = "Colour and gradient"
-shown_when = ["The Eyedropper tool, whatever the modifier keys. With Use Precise Cursors on, the crosshair shows instead."]
+shown_when = [
+    "The Eyedropper tool away from type, whatever the modifier keys.",
+    "Over type the Eyedropper shows EyedropperType.",
+    "With Use Precise Cursors on, the crosshair shows instead.",
+]
 hotspot = "The pipette's tip."
 look = "A pipette."
+
+[[cursor]]
+id = "EyedropperType"
+group = "Colour and gradient"
+shown_when = [
+    "The Eyedropper tool over type, where a click samples the type's attributes.",
+    "With Use Precise Cursors on, the crosshair shows instead.",
+]
+hotspot = "The pipette's tip."
+look = "The Eyedropper pipette with a small T."
 
 [[cursor]]
 id = "AddStop"
@@ -421,9 +434,20 @@ id = "MeshAdd"
 group = "Colour and gradient"
 shown_when = [
     "The Mesh tool over a mesh or a path, off a mesh point: a click adds a mesh point (turning a path into a mesh).",
-    "Elsewhere the Mesh tool shows PenDelete (Alt over a mesh point) and Move (over a point or handle).",
+    "Elsewhere the Mesh tool shows Mesh, or PenDelete with Alt over a mesh point.",
 ]
 hotspot = "Where the mesh point goes."
+
+[[cursor]]
+id = "Mesh"
+group = "Colour and gradient"
+shown_when = [
+    "The Mesh tool over a mesh point or handle, where a drag moves it.",
+    "The Mesh tool away from any mesh or path, where a click adds nothing.",
+    "With Use Precise Cursors on, the crosshair shows instead.",
+]
+hotspot = "The same point as MeshAdd's."
+look = "MeshAdd without its plus."
 
 [[cursor]]
 id = "LivePaintBucket"

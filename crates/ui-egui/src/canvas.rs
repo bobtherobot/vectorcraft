@@ -619,6 +619,8 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         | Cursor::Scissors
         | Cursor::ScissorsNotAllowed
         | Cursor::MeshAdd
+        | Cursor::Mesh
+        | Cursor::EyedropperType
         | Cursor::PuppetPin => cursor_icon(c.stand_in().unwrap_or(Cursor::Crosshair)),
     }
 }
@@ -2443,6 +2445,7 @@ mod tests {
             Cursor::PenJoin,
             Cursor::PenConvert,
             Cursor::Eyedropper,
+            Cursor::EyedropperType,
             Cursor::Slice,
             Cursor::Blend,
             Cursor::BlendObject,
