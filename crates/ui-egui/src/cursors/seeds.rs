@@ -23,9 +23,14 @@ const CANVAS: f32 = 32.0;
 /// `crates/tools/src/cursors.toml` (its `Cursor` value). A cursor whose shapes can't be written
 /// (a kind of shape or a colour this module doesn't know) is left out; the tests catch that.
 pub fn seed_svgs() -> Vec<(String, String)> {
+    // A designer can draw a cursor that only borrows a look in code (ScissorsNotAllowed), so it
+    // isn't in GLYPHS.
+    let drawn_only = glyphs::GENERATED.iter().map(|&(c, _)| c).filter(|c| !GLYPHS.contains(c));
     GLYPHS
         .iter()
-        .filter_map(|&c| {
+        .copied()
+        .chain(drawn_only)
+        .filter_map(|c| {
             let elements = match glyphs::generated(c) {
                 Some(g) => drawn(g),
                 None if c.stand_in().is_none() => shape_elements(&glyph(c, Pos2::ZERO)?)?,
