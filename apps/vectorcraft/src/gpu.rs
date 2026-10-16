@@ -1434,10 +1434,13 @@ mod tests {
     }
 
     /// A log folder of its own for each test.
-    fn start_dir(tag: &str) -> std::path::PathBuf {
+    /// A fresh folder for the start file, and a hold on [`crate::CHILD_PROCESSES`] for as long as
+    /// the test locks that file.
+    fn start_dir(tag: &str) -> (std::path::PathBuf, std::sync::RwLockReadGuard<'static, ()>) {
+        let no_children = crate::CHILD_PROCESSES.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = std::env::temp_dir().join(format!("vectorcraft-gpu-start-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        d
+        (d, no_children)
     }
 
     /// What a start in `dir` leaves out; it then ends without crashing.
@@ -1463,7 +1466,7 @@ mod tests {
     /// it, without a status-bar note.
     #[test]
     fn a_start_that_never_showed_a_frame_leaves_its_adapter_out_of_the_next() {
-        let dir = start_dir("crash");
+        let (dir, _no_children) = start_dir("crash");
         let c = issue_2243();
         let first = Startup::default();
         assert_eq!(first.track(&dir, None, false), LeftOut::default());
@@ -1494,7 +1497,7 @@ mod tests {
     /// an error, a restart on another adapter), leaves nothing out of the next.
     #[test]
     fn a_start_that_showed_its_first_frame_or_ended_is_cleared() {
-        let dir = start_dir("shown");
+        let (dir, _no_children) = start_dir("shown");
         let c = issue_2243();
         for end in [Startup::presented as fn(&Startup), Startup::ended] {
             let first = Startup::default();
@@ -1518,7 +1521,7 @@ mod tests {
     /// macOS, where wgpu has none.
     #[test]
     fn a_crash_while_listing_lists_opengl_alone() {
-        let dir = start_dir("listing");
+        let (dir, _no_children) = start_dir("listing");
         let first = Startup::default();
         first.track(&dir, None, false);
         drop(first);
@@ -1545,7 +1548,7 @@ mod tests {
     /// start shows its first frame on the adapter that crashed, the adapter counts again.
     #[test]
     fn wgpu_backend_or_adapter_name_ignores_the_crashes() {
-        let dir = start_dir("explicit");
+        let (dir, _no_children) = start_dir("explicit");
         let c = issue_2243();
         let first = Startup::default();
         first.track(&dir, None, false);
@@ -1566,7 +1569,7 @@ mod tests {
     /// are ignored: the start goes on with nothing left out.
     #[test]
     fn a_damaged_or_unreadable_start_file_is_ignored() {
-        let dir = start_dir("damaged");
+        let (dir, _no_children) = start_dir("damaged");
         std::fs::create_dir_all(&dir).unwrap();
         let damaged: [&[u8]; 9] = [
             b"",
