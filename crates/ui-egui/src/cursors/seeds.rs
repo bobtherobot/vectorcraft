@@ -1,12 +1,12 @@
-//! How VectorCraft draws its cursors today, written out as SVG for cursorcraft
-//! (https://github.com/bobtherobot/cursorcraft): a designer starts a cursor from it.
-//! `vectorcraft --cursor-seeds DIR` writes them; cursorcraft's `pull` runs it and keeps the seeds of
+//! How VectorCraft draws its cursors today, written out as SVG for nibcraft
+//! (https://github.com/bobtherobot/nibcraft): a designer starts a cursor from it.
+//! `vectorcraft --cursor-seeds DIR` writes them; nibcraft's `pull` runs it and keeps the seeds of
 //! the cursors that have no drawing there.
 //!
 //! Every cursor with a look of its own is written: one drawn from a designer's SVG
-//! ([`glyphs::GENERATED`], written back from its data, the inverse of cursorcraft's reading) or one
+//! ([`glyphs::GENERATED`], written back from its data, the inverse of nibcraft's reading) or one
 //! drawn in this crate's code. Not those that borrow another's look ([`Cursor::stand_in`]), nor
-//! system cursors. The white strokes in the hand-drawn glyphs are their halos, which cursorcraft adds
+//! system cursors. The white strokes in the hand-drawn glyphs are their halos, which nibcraft adds
 //! by itself, so they're left out; white fills (hollow shapes) stay.
 
 use egui::epaint::{CircleShape, ColorMode, PathShape};
@@ -16,7 +16,7 @@ use vectorcraft_tools::Cursor;
 use super::glyphs::{Glyph, GlyphPart};
 use super::{GLYPHS, HALO, INK, glyph, glyphs};
 
-/// The side of cursorcraft's canvas (`viewBox="0 0 32 32"`), in points.
+/// The side of nibcraft's canvas (`viewBox="0 0 32 32"`), in points.
 const CANVAS: f32 = 32.0;
 
 /// Every cursor with a look of its own, as `(id, svg)`: the id is the cursor's name in
@@ -98,7 +98,7 @@ fn element(s: &Shape) -> Result<Option<Element>, ()> {
     if shape_colours(s).unwrap_or_default().iter().any(|&c| ink(c) && c != INK && c != HALO) {
         return Err(());
     }
-    // A white stroke is a halo: cursorcraft draws its own.
+    // A white stroke is a halo: nibcraft draws its own.
     let stroke = |w: f32, c: Color32| (w > 0.0 && ink(c) && c != HALO).then_some((w, c));
     Ok(match s {
         Shape::Noop => None,
@@ -165,7 +165,7 @@ fn colour(c: Color32) -> &'static str {
     if c == HALO { "#ffffff" } else { "#000000" }
 }
 
-/// Cursor `id`'s elements as an SVG on cursorcraft's canvas, its hotspot marked; `None` when
+/// Cursor `id`'s elements as an SVG on nibcraft's canvas, its hotspot marked; `None` when
 /// there's nothing to draw.
 fn svg(id: &str, elements: &[Element]) -> Option<String> {
     let bounds = elements.iter().map(Element::bounds).reduce(|a, b| a.union(b))?;
@@ -183,7 +183,7 @@ fn svg(id: &str, elements: &[Element]) -> Option<String> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 32 32\">\n  \
          <title>{id}</title>\n  \
-         <!-- How VectorCraft draws its {id} cursor today. Without the white halos: cursorcraft adds those. -->\n"
+         <!-- How VectorCraft draws its {id} cursor today. Without the white halos: nibcraft adds those. -->\n"
     );
     for e in elements {
         match e {

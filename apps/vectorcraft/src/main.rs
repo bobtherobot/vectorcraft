@@ -688,7 +688,7 @@ fn main() -> std::process::ExitCode {
                 println!("vectorcraft {}", env!("CARGO_PKG_VERSION"));
                 return std::process::ExitCode::SUCCESS;
             }
-            // For cursorcraft's `pull`: the cursors drawn in code, as SVG starting points.
+            // For nibcraft's `pull`: the cursors drawn in code, as SVG starting points.
             "--cursor-seeds" => {
                 let Some(dir) = args.next() else {
                     eprintln!("vectorcraft: --cursor-seeds needs a folder to write the SVGs into");

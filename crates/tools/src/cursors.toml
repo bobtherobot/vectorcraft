@@ -1,6 +1,6 @@
 # The cursors VectorCraft needs: one [[cursor]] per `Cursor` value (crates/tools/src/lib.rs).
 #
-# This is the source of truth. cursorcraft's `pull` turns it into CURSORS.md for designers, and
+# This is the source of truth. nibcraft's `pull` turns it into CURSORS.md for designers, and
 # `cargo xtask cursors` wires their drawings in by id. Designers never decide what a cursor is for:
 # this file does. Adding a cursor: CLAUDE.md › Adding a cursor.
 #
@@ -8,7 +8,7 @@
 #   seeds       the command, run in this checkout, that writes the cursors drawn in code as
 #               `<id>.svg` into the folder added after it: `pull` gives designers those as starting
 #               points (`<id>-vectorcraft-rendered.svg`)
-#   id          the `Cursor` variant's name (PenAdd); the designer draws `<id>` in cursorcraft
+#   id          the `Cursor` variant's name (PenAdd); the designer draws `<id>` in nibcraft
 #   group       the heading it's listed under for designers
 #   shown_when  every situation that shows it, one plain sentence each
 #   hotspot     where the click lands

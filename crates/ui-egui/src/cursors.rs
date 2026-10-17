@@ -492,7 +492,7 @@ const GLYPHS: [Cursor; 76] = [
     Cursor::PuppetPin,
 ];
 
-/// The octant of [`Cursor::RotateToward`] cursorcraft draws (the top-right corner); the other seven
+/// The octant of [`Cursor::RotateToward`] nibcraft draws (the top-right corner); the other seven
 /// are that glyph turned.
 const ROTATE_TOWARD_DRAWN: u8 = 1;
 

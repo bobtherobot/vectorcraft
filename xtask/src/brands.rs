@@ -36,7 +36,7 @@ const DENY: &[&str] = &[
 /// Marks a line that keeps a legacy name on purpose.
 const ALLOW: &str = "brand-ok";
 
-/// The cursor manifest, which designers read (as cursorcraft's CURSORS.md).
+/// The cursor manifest, which designers read (as nibcraft's CURSORS.md).
 const CURSOR_MANIFEST: &str = "crates/tools/src/cursors.toml";
 
 /// The gates that must name the vendors they look for: this file and the clean-room check.

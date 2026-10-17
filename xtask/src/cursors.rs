@@ -1,5 +1,5 @@
-//! `cargo xtask cursors [CURSORCRAFT]`: does the cursor manifest (`crates/tools/src/cursors.toml`)
-//! cover every `Cursor` value? With cursorcraft's folder, also bring the designers' drawings in
+//! `cargo xtask cursors [NIBCRAFT]`: does the cursor manifest (`crates/tools/src/cursors.toml`)
+//! cover every `Cursor` value? With nibcraft's folder, also bring the designers' drawings in
 //! ([`crate::cursor_sync`]).
 //!
 //! The manifest check only warns: a cursor without an entry still works in the app (it falls
@@ -23,8 +23,8 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     }
     match args {
         [] => Ok(()),
-        [cursorcraft] => crate::cursor_sync::run(root, Path::new(cursorcraft.trim_end_matches('/')), &enum_src, &manifest),
-        _ => Err("usage: cargo xtask cursors [PATH/TO/CURSORCRAFT]".into()),
+        [nibcraft] => crate::cursor_sync::run(root, Path::new(nibcraft.trim_end_matches('/')), &enum_src, &manifest),
+        _ => Err("usage: cargo xtask cursors [PATH/TO/NIBCRAFT]".into()),
     }
 }
 

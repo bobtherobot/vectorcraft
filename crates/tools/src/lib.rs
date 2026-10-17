@@ -639,7 +639,7 @@ impl Cursor {
         }
     }
 
-    /// The cursor this one borrows until cursorcraft draws it: the generic crosshair for the
+    /// The cursor this one borrows until nibcraft draws it: the generic crosshair for the
     /// tools, the I-beam for vertical type, the Pen's add cursor for the Mesh tool's plus and Puppet
     /// Warp, the pipette for the Eyedropper over type, not-allowed for the Scissors away from a
     /// path. `None` for a cursor with a look of its own.

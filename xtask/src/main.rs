@@ -28,9 +28,9 @@ usage: cargo xtask <command>
 commands:
   assets          check that every icon/image/font/asset is attributed in ASSETS.md
   brands          check that user-visible text (labels, params docs, MCP, docs, packaging) names no other vendor's products
-  cursors [CURSORCRAFT]
+  cursors [NIBCRAFT]
                   warn about Cursor values with no entry in crates/tools/src/cursors.toml (never fails);
-                  with cursorcraft's folder, bring the designers' cursor drawings in by id
+                  with nibcraft's folder, bring the designers' cursor drawings in by id
   cleanroom       check the repository holds no copied vendor text or vendor-made fixtures (CLAUDE.md › Clean-room)
   pdf-deps        verify immutable shared PDF writer and patched Krilla sources
   layers          enforce the crate dependency layering (plan/architecture.md §3)
